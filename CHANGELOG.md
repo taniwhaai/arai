@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-04-14
+
+### Added
+
+- *(site)* Add static landing page and install script
+- *(site)* Integrate PostHog analytics script for usage tracking
+
+
 ## [0.1.2] - 2026-04-14
 
 ### Miscellaneous
