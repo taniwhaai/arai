@@ -138,7 +138,7 @@ fn collect_imports(node: Node, source: &[u8], ext: &str, tools: &mut Vec<String>
 }
 
 #[cfg(feature = "code-graph")]
-fn node_text<'a>(node: Node, source: &'a [u8]) -> Option<String> {
+fn node_text(node: Node, source: &[u8]) -> Option<String> {
     node.utf8_text(source).ok().map(|s| s.to_string())
 }
 

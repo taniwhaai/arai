@@ -311,7 +311,7 @@ fn average_similarity(query: &[f32], candidates: &[Vec<f32>]) -> f32 {
 pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>) -> Result<usize, String> {
     let cmd = llm_command
         .map(String::from)
-        .or_else(|| detect_llm_command())
+        .or_else(detect_llm_command)
         .ok_or(
             "No LLM command configured. Set one of:\n\
              \n  ARAI_LLM_CMD=\"claude -p\"                # Claude Code\

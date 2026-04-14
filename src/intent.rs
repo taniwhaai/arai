@@ -359,8 +359,6 @@ pub fn classify_rule_with_subject(predicate: &str, object: &str, subject: Option
             Timing::Stop
         } else if start_score > stop_score && start_score > principle_score && start_score > 0 {
             Timing::Start
-        } else if principle_score > stop_score && principle_score > start_score && principle_score > 0 {
-            Timing::Principle
         } else {
             Timing::Principle
         }

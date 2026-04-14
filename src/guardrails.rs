@@ -67,7 +67,7 @@ fn extract_bash_terms(tool_input: &Value) -> Vec<String> {
     let mut terms = Vec::new();
 
     // Split on pipes, &&, ;
-    for segment in command.split(|c| c == '|' || c == ';') {
+    for segment in command.split(['|', ';']) {
         let segment = segment.trim();
         // Also split on &&
         for sub in segment.split("&&") {

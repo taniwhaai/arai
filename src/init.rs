@@ -213,7 +213,7 @@ fn display_path(path: &str, cfg: &config::Config) -> String {
     let root = cfg.project_root.to_string_lossy();
     if path.starts_with(root.as_ref()) {
         path[root.len()..].trim_start_matches('/').to_string()
-    } else if path.starts_with(&cfg.home_dir.to_string_lossy().as_ref()) {
+    } else if path.starts_with(cfg.home_dir.to_string_lossy().as_ref()) {
         format!("~{}", &path[cfg.home_dir.to_string_lossy().len()..])
     } else {
         path.to_string()

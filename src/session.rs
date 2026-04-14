@@ -102,11 +102,7 @@ pub fn extract_prerequisite(object: &str) -> Vec<String> {
         if let Some(pos) = lower.find(pattern) {
             let after = &lower[pos + pattern.len()..];
             // Take everything up to "first" or end of string
-            let prereq_text = if after.ends_with(" first") {
-                &after[..after.len() - 6]
-            } else {
-                after
-            };
+            let prereq_text = after.strip_suffix(" first").unwrap_or(after);
             let prereq_text = prereq_text.trim_end_matches('.').trim();
 
             // Extract tool-like terms from the prerequisite text

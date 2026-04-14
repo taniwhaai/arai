@@ -203,8 +203,7 @@ fn strip_markdown(text: &str) -> String {
     let re_link = Regex::new(r"\[([^]]+)]\([^)]+\)").unwrap();
     let s = re_link.replace_all(&s, "$1").to_string();
     // Strip em-dash separators for cleaner matching
-    let s = s.replace(" — ", " - ");
-    s
+    s.replace(" — ", " - ")
 }
 
 /// Match a list item against imperative patterns.
@@ -461,7 +460,7 @@ fn capitalize(s: &str) -> String {
 
 fn clean_object(s: &str) -> String {
     // Remove trailing punctuation and clean up
-    let s = s.trim_end_matches(|c: char| c == '.' || c == ',' || c == ';');
+    let s = s.trim_end_matches(['.', ',', ';']);
     s.trim().to_string()
 }
 
