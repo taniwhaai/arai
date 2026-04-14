@@ -69,8 +69,9 @@ jobs:
             chmod +x staged/arai-${{ matrix.platform }}
           fi
 
-      # Build full binary (with enrich), stage it
+      # Build full binary (with enrich) — optional, may fail on some platforms
       - name: Build full binary
+        continue-on-error: true
         shell: bash
         run: |
           BUILD_CMD="cargo"
@@ -78,13 +79,18 @@ jobs:
           $BUILD_CMD build --release --target ${{ matrix.target }} --features enrich
 
       - name: Stage full binary
+        continue-on-error: true
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/arai.exe staged/arai-full-${{ matrix.platform }}.exe
+            if [ -f target/${{ matrix.target }}/release/arai.exe ]; then
+              cp target/${{ matrix.target }}/release/arai.exe staged/arai-full-${{ matrix.platform }}.exe
+            fi
           else
-            cp target/${{ matrix.target }}/release/arai staged/arai-full-${{ matrix.platform }}
-            chmod +x staged/arai-full-${{ matrix.platform }}
+            if [ -f target/${{ matrix.target }}/release/arai ]; then
+              cp target/${{ matrix.target }}/release/arai staged/arai-full-${{ matrix.platform }}
+              chmod +x staged/arai-full-${{ matrix.platform }}
+            fi
           fi
 
       - name: Upload artifacts
