@@ -200,7 +200,7 @@ fn strip_markdown(text: &str) -> String {
     let re_code = Regex::new(r"`([^`]+)`").unwrap();
     let s = re_code.replace_all(&s, "$1").to_string();
     // Strip markdown links [text](url) → text
-    let re_link = Regex::new(r"\[([^\]]+)\]\([^)]+\)").unwrap();
+    let re_link = Regex::new(r"\[([^]]+)]\([^)]+\)").unwrap();
     let s = re_link.replace_all(&s, "$1").to_string();
     // Strip em-dash separators for cleaner matching
     let s = s.replace(" — ", " - ");
@@ -285,7 +285,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
                 let subject = if !label.is_empty() {
                     // Use the label as subject if it's meaningful
                     let label_lower = label.to_lowercase();
-                    if let Some(tool) = KNOWN_TOOLS.iter().find(|t| label_lower.contains(*t)) {
+                    if let Some(tool) = KNOWN_TOOLS.iter().find(|t| contains_word(&label_lower, t)) {
                         capitalize(tool)
                     } else {
                         label.to_string()
@@ -341,7 +341,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         "fix", "verify", "demonstrate", "prove", "show", "deploy", "build",
         "install", "configure", "enable", "disable", "start", "stop",
         "offload", "throw", "challenge", "pause", "diff", "ask",
-        "point", "go", "one",
+        "point",
     ];
 
     let first_word = lower.split_whitespace().next().unwrap_or("");
@@ -412,15 +412,29 @@ fn extract_first_noun(text: &str) -> String {
 
 /// Find the earliest known tool name in text (by position).
 /// Returns the tool closest to the start — typically the primary subject.
+/// Ambiguous tool names that need context to confirm they mean the tool.
+/// "go" can mean "go ahead" or the Go language — only match if followed by
+/// a subcommand like "test", "build", "run", "fmt", "mod", "get".
+const AMBIGUOUS_TOOLS: &[(&str, &[&str])] = &[
+    ("go", &["test", "build", "run", "fmt", "mod", "get", "install", "vet", "generate"]),
+];
+
 fn find_earliest_tool(text: &str) -> Option<&'static str> {
-    let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric()).collect();
-    // Walk through words in order, return the first that matches a known tool
-    for word in &words {
-        if !word.is_empty() {
-            for tool in KNOWN_TOOLS {
-                if *word == *tool {
-                    return Some(tool);
+    let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    for (i, word) in words.iter().enumerate() {
+        for tool in KNOWN_TOOLS {
+            if *word == *tool {
+                // Check if this is an ambiguous tool
+                if let Some((_, subcommands)) = AMBIGUOUS_TOOLS.iter().find(|(t, _)| t == tool) {
+                    // Only match if followed by a known subcommand
+                    let next_word = words.get(i + 1).unwrap_or(&"");
+                    if subcommands.contains(next_word) {
+                        return Some(tool);
+                    }
+                    // Otherwise skip — "go fix" means "go ahead and fix"
+                    continue;
                 }
+                return Some(tool);
             }
         }
     }
