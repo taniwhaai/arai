@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-04-14
+
+### Miscellaneous
+
+- *(workflows)* Switch release step to use `gh release upload` for better token support
+
+
 ## [0.1.4] - 2026-04-14
 
 ### Refactored
