@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-04-14
+
+### Added
+
+- *(site)* Add static landing page and install script
+
+
 ## [0.1.2] - 2026-04-14
 
 ### Miscellaneous
