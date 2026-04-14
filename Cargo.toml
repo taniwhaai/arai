@@ -1,0 +1,62 @@
+[package]
+name = "arai"
+version = "0.1.0"
+edition = "2021"
+description = "CLAUDE.md that actually works. Enforce AI coding assistant instruction files via hooks."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/taniwhaai/arai"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.39", features = ["bundled"] }
+regex = "1"
+walkdir = "2"
+ignore = "0.4"
+dirs = "6"
+sha2 = "0.11"
+toml = "1"
+
+# tree-sitter core
+tree-sitter = { version = "0.26", optional = true }
+
+# Sentence transformer for intent enrichment (optional)
+ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-native"] }
+ndarray = { version = "0.17", optional = true }
+tokenizers = { version = "0.22", optional = true, default-features = false, features = ["onig"] }
+
+# Language grammars (all optional, enabled by feature flags)
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
+tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+
+[features]
+default = ["code-graph"]
+code-graph = [
+    "tree-sitter",
+    "lang-python",
+    "lang-javascript",
+    "lang-typescript",
+    "lang-rust",
+    "lang-go",
+    "lang-ruby",
+    "lang-java",
+]
+enrich = ["ort", "ndarray", "tokenizers"]
+lang-python = ["tree-sitter-python"]
+lang-javascript = ["tree-sitter-javascript"]
+lang-typescript = ["tree-sitter-typescript"]
+lang-rust = ["tree-sitter-rust"]
+lang-go = ["tree-sitter-go"]
+lang-ruby = ["tree-sitter-ruby"]
+lang-java = ["tree-sitter-java"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

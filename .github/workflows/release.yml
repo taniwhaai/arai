@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: darwin-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: darwin-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # Build lean binary first, stage it
+      - name: Build lean binary
+        shell: bash
+        run: |
+          BUILD_CMD="cargo"
+          if [ "${{ matrix.cross }}" = "true" ]; then BUILD_CMD="cross"; fi
+          $BUILD_CMD build --release --target ${{ matrix.target }}
+
+      - name: Stage lean binary
+        shell: bash
+        run: |
+          mkdir -p staged
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/arai.exe staged/arai-${{ matrix.platform }}.exe
+          else
+            cp target/${{ matrix.target }}/release/arai staged/arai-${{ matrix.platform }}
+            chmod +x staged/arai-${{ matrix.platform }}
+          fi
+
+      # Build full binary (with enrich), stage it
+      - name: Build full binary
+        shell: bash
+        run: |
+          BUILD_CMD="cargo"
+          if [ "${{ matrix.cross }}" = "true" ]; then BUILD_CMD="cross"; fi
+          $BUILD_CMD build --release --target ${{ matrix.target }} --features enrich
+
+      - name: Stage full binary
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/${{ matrix.target }}/release/arai.exe staged/arai-full-${{ matrix.platform }}.exe
+          else
+            cp target/${{ matrix.target }}/release/arai staged/arai-full-${{ matrix.platform }}
+            chmod +x staged/arai-full-${{ matrix.platform }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.platform }}
+          path: staged/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd binaries
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: binaries/*
