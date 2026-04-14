@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arai — CLAUDE.md that actually works</title>
+    <meta name="description" content="Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --primary: #0A7B6B;
+            --primary-light: #A8D5CA;
+            --warm: #D4A574;
+            --text: #0D0D0D;
+            --text-secondary: #6B7280;
+            --border: #E5E7EB;
+            --bg-light: #F7F6F2;
+            --white: #FFFFFF;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        code, pre { font-family: 'JetBrains Mono', monospace; }
+
+        .container { max-width: 1120px; margin: 0 auto; padding: 0 2rem; }
+
+        /* Nav */
+        nav {
+            position: sticky; top: 0; z-index: 10;
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 0;
+        }
+        nav .container {
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        nav .logo {
+            font-weight: 700; font-size: 1.25rem;
+            color: var(--primary); text-decoration: none;
+        }
+        nav .links { display: flex; gap: 1.5rem; align-items: center; }
+        nav .links a {
+            color: var(--text-secondary); text-decoration: none;
+            font-size: 0.9rem; transition: color 0.2s;
+        }
+        nav .links a:hover { color: var(--text); }
+        nav .links a.gh-btn {
+            background: var(--primary); color: var(--white);
+            padding: 0.5rem 1rem; border-radius: 6px;
+            font-weight: 600; font-size: 0.85rem;
+            transition: opacity 0.2s;
+        }
+        nav .links a.gh-btn:hover { color: var(--white); opacity: 0.9; }
+
+        /* Hero */
+        .hero {
+            padding: 5rem 0 4rem; text-align: center;
+        }
+        .hero h1 {
+            font-size: 3rem; font-weight: 700; line-height: 1.15;
+            margin-bottom: 1.25rem;
+        }
+        .hero h1 span { color: var(--primary); }
+        .hero p {
+            font-size: 1.2rem; color: var(--text-secondary);
+            max-width: 600px; margin: 0 auto 2.5rem;
+        }
+
+        /* Install box */
+        .install-box {
+            background: var(--text); color: #E5E7EB;
+            border-radius: 8px; padding: 1rem 1.5rem;
+            display: inline-flex; align-items: center; gap: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem; cursor: pointer;
+            transition: transform 0.15s;
+            position: relative;
+        }
+        .install-box:hover { transform: scale(1.02); }
+        .install-box .prompt { color: var(--primary-light); user-select: none; }
+        .install-box .copy-hint {
+            color: var(--text-secondary); font-size: 0.75rem;
+            font-family: 'Inter', sans-serif;
+        }
+        .install-box.copied .copy-hint { color: var(--primary-light); }
+
+        /* Example */
+        .example {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+        }
+        .example h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 2rem;
+        }
+        .example-block {
+            background: var(--text); color: #E5E7EB;
+            border-radius: 8px; padding: 1.5rem 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem; line-height: 1.8;
+            max-width: 700px; margin: 0 auto;
+            overflow-x: auto;
+        }
+        .example-block .dim { color: var(--text-secondary); }
+        .example-block .accent { color: var(--primary-light); }
+        .example-block .warm { color: var(--warm); }
+
+        /* Features */
+        .features {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+        }
+        .features h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 2.5rem;
+        }
+        .feature-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+        .feature h3 {
+            font-size: 1rem; font-weight: 600;
+            margin-bottom: 0.5rem; color: var(--primary);
+        }
+        .feature p { font-size: 0.9rem; color: var(--text-secondary); }
+
+        /* Install methods */
+        .install-methods {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+        }
+        .install-methods h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 2rem;
+        }
+        .methods-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr);
+            gap: 1rem; max-width: 700px; margin: 0 auto;
+        }
+        .method {
+            background: var(--bg-light); border-radius: 8px;
+            padding: 1rem 1.25rem;
+        }
+        .method .label {
+            font-size: 0.8rem; font-weight: 600;
+            color: var(--text-secondary); text-transform: uppercase;
+            letter-spacing: 0.05em; margin-bottom: 0.5rem;
+        }
+        .method code {
+            font-size: 0.85rem; color: var(--primary);
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-light);
+            padding: 2rem 0; margin-top: 4rem;
+            text-align: center;
+            border-top: 1px solid var(--border);
+        }
+        footer p {
+            font-size: 0.85rem; color: var(--text-secondary);
+        }
+        footer a { color: var(--primary); text-decoration: none; }
+
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2rem; }
+            .feature-grid { grid-template-columns: 1fr; }
+            .methods-grid { grid-template-columns: 1fr; }
+            .install-box { font-size: 0.8rem; }
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="container">
+        <a class="logo" href="/">arai</a>
+        <div class="links">
+            <a href="https://github.com/taniwhaai/arai">Docs</a>
+            <a href="https://github.com/taniwhaai/arai/issues">Issues</a>
+            <a class="gh-btn" href="https://github.com/taniwhaai/arai">GitHub</a>
+        </div>
+    </div>
+</nav>
+
+<section class="hero">
+    <div class="container">
+        <h1><span>CLAUDE.md</span> that actually works.</h1>
+        <p>Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.</p>
+        <div class="install-box" onclick="copyInstall(this)">
+            <span class="prompt">$</span>
+            <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
+            <span class="copy-hint">click to copy</span>
+        </div>
+    </div>
+</section>
+
+<section class="example">
+    <div class="container">
+        <h2>Rules fire when they matter</h2>
+        <div class="example-block">
+            <span class="dim">You: "Create a new database migration"</span><br><br>
+            <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
+            <span class="warm">&rarr; Arai guardrails:</span><br>
+            <span class="warm">&nbsp;&nbsp;- Alembic never: hand-write migration files</span><br><br>
+            <span class="dim">Claude: "I should use alembic revision --autogenerate instead..."</span>
+        </div>
+    </div>
+</section>
+
+<section class="features">
+    <div class="container">
+        <h2>Smart, not noisy</h2>
+        <div class="feature-grid">
+            <div class="feature">
+                <h3>Intent-aware</h3>
+                <p>"Never hand-write migrations" fires on Write but not Edit. Editing existing migrations is fine.</p>
+            </div>
+            <div class="feature">
+                <h3>Code graph</h3>
+                <p>tree-sitter scans your codebase. Writing to migrations/ triggers alembic rules even without "alembic" in the file.</p>
+            </div>
+            <div class="feature">
+                <h3>Session tracking</h3>
+                <p>"Never push without tests" silences after cargo test runs. Arai remembers what happened this session.</p>
+            </div>
+            <div class="feature">
+                <h3>Zero noise</h3>
+                <p>Only fires domain-specific rules. Principles already in CLAUDE.md stay silent.</p>
+            </div>
+            <div class="feature">
+                <h3>Any LLM enrichment</h3>
+                <p>Classify rules via Claude, Ollama, or any LLM CLI. Or use the built-in sentence transformer.</p>
+            </div>
+            <div class="feature">
+                <h3>&lt;5ms latency</h3>
+                <p>SQLite lookups on the hook path. No network calls. No LLM calls at runtime.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="install-methods">
+    <div class="container">
+        <h2>Install</h2>
+        <div class="methods-grid">
+            <div class="method">
+                <div class="label">Script</div>
+                <code>curl -sSf https://arai.taniwha.ai/install | sh</code>
+            </div>
+            <div class="method">
+                <div class="label">Cargo</div>
+                <code>cargo install arai</code>
+            </div>
+            <div class="method">
+                <div class="label">Then</div>
+                <code>cd your-project && arai init</code>
+            </div>
+        </div>
+    </div>
+</section>
+
+<footer>
+    <div class="container">
+        <p>Built by <a href="https://taniwha.ai">Taniwha.ai</a> &middot; MIT / Apache-2.0 &middot; <a href="https://github.com/taniwhaai/arai">GitHub</a></p>
+    </div>
+</footer>
+
+<script>
+function copyInstall(el) {
+    navigator.clipboard.writeText('curl -sSf https://arai.taniwha.ai/install | sh');
+    el.classList.add('copied');
+    el.querySelector('.copy-hint').textContent = 'copied!';
+    setTimeout(() => {
+        el.classList.remove('copied');
+        el.querySelector('.copy-hint').textContent = 'click to copy';
+    }, 2000);
+}
+</script>
+
+</body>
+</html>
