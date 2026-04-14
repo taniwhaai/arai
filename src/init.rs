@@ -81,6 +81,59 @@ pub fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Remove all Arai hooks from .claude/settings.json.
+pub fn deinit() -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let settings_path = cfg.claude_settings_path();
+
+    if !settings_path.exists() {
+        println!("  No .claude/settings.json found. Nothing to remove.");
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read settings.json: {e}"))?;
+    let mut settings: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse settings.json: {e}"))?;
+
+    let mut removed = 0;
+
+    if let Some(hooks) = settings.get_mut("hooks").and_then(|v| v.as_object_mut()) {
+        for (_event, entries) in hooks.iter_mut() {
+            if let Some(arr) = entries.as_array_mut() {
+                let before = arr.len();
+                arr.retain(|entry| {
+                    if let Some(hooks_arr) = entry.get("hooks").and_then(|v| v.as_array()) {
+                        !hooks_arr.iter().any(|h| {
+                            h.get("command")
+                                .and_then(|v| v.as_str())
+                                .map(|cmd| cmd.contains("arai"))
+                                .unwrap_or(false)
+                        })
+                    } else {
+                        true
+                    }
+                });
+                removed += before - arr.len();
+            }
+        }
+    }
+
+    let output = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+    std::fs::write(&settings_path, output)
+        .map_err(|e| format!("Failed to write settings.json: {e}"))?;
+
+    if removed > 0 {
+        println!("  Removed {removed} Arai hook(s) from .claude/settings.json");
+    } else {
+        println!("  No Arai hooks found in .claude/settings.json");
+    }
+
+    println!("  Arai is no longer watching this project.");
+    Ok(())
+}
+
 fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     let settings_path = cfg.claude_settings_path();
 

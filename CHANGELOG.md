@@ -11,18 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial implementation of project import scanner, CLI installer, upgrade support, and release pipeline
-
-### Documentation
-
-- Add CONTRIBUTING.md with guidelines for contributions
-
-### Miscellaneous
-
-- *(workflows)* Update GitHub Actions to latest versions
-
-
-### Added
 - CLI with commands: init, status, guardrails, scan, add, upgrade
 - Instruction file discovery (CLAUDE.md, .cursorrules, copilot-instructions.md, .windsurfrules, Claude Code memory)
 - Rule extraction from markdown with 6 layers of pattern matching
@@ -37,3 +25,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm wrapper package
 - GitHub Actions CI for cross-platform releases
 - Configurable LLM command for enrichment (ARAI_LLM_CMD)
+- Anonymous telemetry with PostHog (opt-out via ARAI_TELEMETRY=off)

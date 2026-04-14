@@ -25,6 +25,8 @@ struct Cli {
 enum Commands {
     /// Discover instruction files, extract guardrails, set up hooks
     Init,
+    /// Remove Arai hooks from .claude/settings.json
+    Deinit,
     /// Show what's being enforced
     Status,
     /// List active guardrails or match against stdin
@@ -69,6 +71,7 @@ fn main() {
 
     let result = match cli.command {
         Commands::Init => init::run(),
+        Commands::Deinit => init::deinit(),
         Commands::Status => cmd_status(),
         Commands::Guardrails { match_stdin, json } => {
             if match_stdin {
