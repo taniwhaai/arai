@@ -1,6 +1,6 @@
 [package]
 name = "arai"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "CLAUDE.md that actually works. Enforce AI coding assistant instruction files via hooks."
 license = "MIT OR Apache-2.0"
