@@ -57,12 +57,13 @@ pub fn track(arai_base: &Path, event: &str, properties: serde_json::Value) {
 }
 
 /// Track that a guardrail rule fired.
-pub fn track_rule_fired(arai_base: &Path, subject: &str, predicate: &str, tool_name: &str, hook_event: &str) {
+pub fn track_rule_fired(arai_base: &Path, subject: &str, predicate: &str, tool_name: &str, hook_event: &str, match_pct: u8) {
     track(arai_base, "rule_fired", serde_json::json!({
         "subject": subject,
         "predicate": predicate,
         "tool_name": tool_name,
         "hook_event": hook_event,
+        "match_pct": match_pct,
     }));
 }
 

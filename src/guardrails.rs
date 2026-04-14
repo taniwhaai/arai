@@ -232,14 +232,16 @@ fn extract_generic_terms(tool_input: &Value) -> Vec<String> {
 }
 
 /// Match guardrails against extracted terms, filtering by classified intent and timing.
+/// Results are ranked by relevance — rules whose object text overlaps with the
+/// command terms are ranked higher.
 pub fn match_guardrails(
     guardrails: &[Guardrail],
     terms: &[String],
     tool_name: &str,
     hook_event: &str,
     store: &crate::store::Store,
-) -> Vec<Guardrail> {
-    guardrails
+) -> Vec<(Guardrail, u8)> {
+    let mut matched: Vec<(Guardrail, usize)> = guardrails
         .iter()
         .filter(|g| {
             // Check timing — only fire rules meant for this hook event
@@ -255,12 +257,9 @@ pub fn match_guardrails(
                     let subject_matches = terms.iter().any(|t| subj.contains(t));
                     subject_matches && crate::intent::tool_matches_intent(&intent, tool_name)
                 } else {
-                    // Stop/Start/Principle rules don't need subject matching —
-                    // they fire based on timing, not tool context
                     true
                 }
             } else {
-                // No intent classified — fall back to PreToolUse with subject matching
                 if hook_event != "PreToolUse" {
                     return false;
                 }
@@ -268,8 +267,75 @@ pub fn match_guardrails(
                 terms.iter().any(|t| subj.contains(t))
             }
         })
-        .cloned()
-        .collect()
+        .map(|g| {
+            let score = relevance_score(&g.object, terms);
+            (g.clone(), score)
+        })
+        .collect();
+
+    // Sort by relevance score (highest first), then by confidence
+    matched.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.confidence.partial_cmp(&a.0.confidence).unwrap_or(std::cmp::Ordering::Equal)));
+
+    // If we have high-relevance matches, suppress low-relevance ones
+    let top_score = matched.first().map(|(_, s)| *s).unwrap_or(0);
+    if top_score > 1 {
+        matched.retain(|(_, s)| *s >= top_score);
+    }
+
+    matched.into_iter().map(|(g, score)| {
+        let pct = relevance_percentage(score, terms.len(), g.confidence);
+        (g, pct)
+    }).collect()
+}
+
+/// Convert raw relevance score into a confidence percentage (0-100).
+/// Combines term overlap ratio with the base rule confidence.
+fn relevance_percentage(score: usize, total_terms: usize, base_confidence: f64) -> u8 {
+    if total_terms == 0 {
+        return (base_confidence * 100.0) as u8;
+    }
+    let overlap_ratio = (score as f64) / (total_terms as f64).min(5.0);
+    let combined = (overlap_ratio * 0.6 + base_confidence * 0.4) * 100.0;
+    (combined.clamp(1.0, 100.0)) as u8
+}
+
+/// Score how relevant a rule's object text is to the extracted terms.
+/// Higher score = more term overlap = more relevant.
+/// Command verbs that are semantically distinct — if a rule mentions one,
+/// the command should contain that same verb for a high relevance score.
+const COMMAND_VERBS: &[&str] = &[
+    "push", "pull", "commit", "merge", "rebase", "checkout", "clone", "fetch",
+    "stash", "reset", "revert", "cherry", "bisect", "tag", "branch",
+    "install", "uninstall", "build", "test", "run", "deploy", "publish",
+    "start", "stop", "create", "delete", "remove", "add", "update", "upgrade",
+];
+
+fn relevance_score(object: &str, terms: &[String]) -> usize {
+    let object_words: Vec<String> = object
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(String::from)
+        .collect();
+
+    let base_score: usize = terms.iter()
+        .filter(|t| object_words.iter().any(|w| w == *t))
+        .count();
+
+    // Penalty: if the rule contains command verbs and NONE of them match the terms,
+    // it's probably about a different action (e.g. rule says "push" but command is "pull")
+    let rule_verbs: Vec<&String> = object_words.iter()
+        .filter(|w| COMMAND_VERBS.contains(&w.as_str()))
+        .collect();
+    let has_verb_mismatch = !rule_verbs.is_empty()
+        && !rule_verbs.iter().any(|v| terms.contains(v));
+
+    if has_verb_mismatch && base_score > 0 {
+        // Still matches by subject, but penalise — halve the score (minimum 1)
+        base_score.div_ceil(2).max(1)
+    } else {
+        base_score
+    }
 }
 
 /// Maximum number of rules to include in a single hook response.
@@ -277,12 +343,12 @@ const MAX_RULES_PER_HOOK: usize = 5;
 
 /// Format matched guardrails as additionalContext string.
 /// Limits output to the top N rules by confidence to avoid context bloat.
-pub fn format_context(matched: &[Guardrail]) -> String {
+pub fn format_context(matched: &[(Guardrail, u8)]) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("Arai guardrails:".to_string());
     let limit = matched.len().min(MAX_RULES_PER_HOOK);
-    for g in &matched[..limit] {
-        lines.push(format!("- {} {}: {}", g.subject, g.predicate, g.object));
+    for (g, pct) in &matched[..limit] {
+        lines.push(format!("- {} {}: {} ({}% match)", g.subject, g.predicate, g.object, pct));
     }
     if matched.len() > MAX_RULES_PER_HOOK {
         lines.push(format!("  ({} more suppressed)", matched.len() - MAX_RULES_PER_HOOK));
@@ -459,5 +525,142 @@ mod tests {
     fn test_shell_tokenize_quotes() {
         let tokens = shell_tokenize("echo 'hello world' foo");
         assert_eq!(tokens, vec!["echo", "hello world", "foo"]);
+    }
+
+    #[test]
+    fn test_relevance_score() {
+        // "push" and "main" both overlap
+        let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
+        let score = relevance_score("git push to main without a PR", &terms);
+        assert!(score >= 3, "should match git, push, main — got {score}");
+
+        // Only "git" overlaps (commit ≠ push, verb mismatch penalty applies)
+        let score = relevance_score("git commit with signed commits", &terms);
+        assert!(score <= 2, "should be penalised for verb mismatch — got {score}");
+
+        // Push rule should score higher than commit rule for "git push origin main"
+        let push_score = relevance_score("git push to main without a PR", &terms);
+        let commit_score = relevance_score("git commit with signed commits", &terms);
+        assert!(push_score > commit_score, "push rule ({push_score}) should rank higher than commit rule ({commit_score})");
+    }
+
+    #[test]
+    fn test_relevance_verb_mismatch() {
+        // Rule says "push" but command is "pull" — should be penalised
+        let pull_terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
+        let push_rule_score = relevance_score("git push to main without a PR", &pull_terms);
+        let commit_rule_score = relevance_score("git commit with signed commits", &pull_terms);
+        assert!(commit_rule_score >= push_rule_score,
+            "commit ({commit_rule_score}) should rank >= push ({push_rule_score}) for a pull command");
+
+        // Rule says "install" but command is "uninstall" — different verbs
+        let terms = vec!["npm".to_string(), "uninstall".to_string(), "package".to_string()];
+        let score = relevance_score("npm install with --save-exact", &terms);
+        assert!(score <= 1, "install rule should be penalised for uninstall command — got {score}");
+    }
+
+    #[test]
+    fn test_relevance_no_penalty_when_verb_matches() {
+        // Exact verb match — no penalty
+        let terms = vec!["cargo".to_string(), "test".to_string()];
+        let score = relevance_score("run cargo test before pushing", &terms);
+        assert!(score >= 2, "exact verb match should score high — got {score}");
+    }
+
+    #[test]
+    fn test_relevance_no_verb_in_rule() {
+        // Rule has no command verb — pure term overlap, no penalty
+        let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
+        let score = relevance_score("always use feature branches for main", &terms);
+        assert!(score >= 1, "should match 'main' without penalty — got {score}");
+    }
+
+    #[test]
+    fn test_relevance_zero_overlap() {
+        // No terms match at all
+        let terms = vec!["docker".to_string(), "compose".to_string(), "up".to_string()];
+        let score = relevance_score("git push to main without a PR", &terms);
+        assert_eq!(score, 0, "no overlap should score 0 — got {score}");
+    }
+
+    #[test]
+    fn test_relevance_percentage() {
+        // High overlap: 3 of 4 terms match → high percentage
+        let pct = relevance_percentage(3, 4, 0.92);
+        assert!(pct >= 70, "3/4 overlap + 0.92 confidence should be >= 70% — got {pct}%");
+
+        // Low overlap: 1 of 4 terms match → lower percentage
+        let pct = relevance_percentage(1, 4, 0.92);
+        assert!(pct < 60, "1/4 overlap should be < 60% — got {pct}%");
+
+        // Zero terms → falls back to base confidence
+        let pct = relevance_percentage(0, 0, 0.90);
+        assert_eq!(pct, 90, "zero terms should use base confidence — got {pct}%");
+
+        // High overlap should always beat low overlap at same confidence
+        let high = relevance_percentage(3, 4, 0.90);
+        let low = relevance_percentage(1, 4, 0.90);
+        assert!(high > low, "high overlap ({high}%) should beat low overlap ({low}%)");
+    }
+
+    #[test]
+    fn test_relevance_ranking_with_db() {
+        use crate::store::Store;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR2: AtomicU64 = AtomicU64::new(200);
+
+        let id = CTR2.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_rank_test_{}", id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let store = Store::open(&db_path).unwrap();
+
+        let triples = vec![
+            crate::parser::Triple {
+                subject: "Git".to_string(),
+                predicate: "always".to_string(),
+                object: "git commit with signed commits".to_string(),
+                confidence: 0.95,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(1),
+                line_end: Some(1),
+            },
+            crate::parser::Triple {
+                subject: "Git".to_string(),
+                predicate: "never".to_string(),
+                object: "git push to main without a PR".to_string(),
+                confidence: 0.95,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(2),
+                line_end: Some(2),
+            },
+        ];
+
+        store.upsert_file("test", "test", &triples, "test").unwrap();
+        store.classify_all_guardrails().unwrap();
+
+        let guardrails = store.load_guardrails().unwrap();
+
+        // "git push origin main" should ONLY fire the push rule
+        let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        assert_eq!(matched.len(), 1, "only the relevant rule should fire");
+        assert!(matched[0].0.object.contains("push"), "push rule should fire, got: {}", matched[0].0.object);
+
+        // "git commit -m test" should ONLY fire the commit rule
+        let terms = vec!["git".to_string(), "commit".to_string(), "test".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        assert_eq!(matched.len(), 1, "only the relevant rule should fire");
+        assert!(matched[0].0.object.contains("commit"), "commit rule should fire, got: {}", matched[0].0.object);
+
+        // "git pull origin main" — push rule should be suppressed (pull ≠ push)
+        let terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        assert!(matched.is_empty() || matched[0].0.object.contains("commit"),
+            "push rule should not fire for pull command");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -121,20 +121,19 @@ pub fn handle_stdin() -> Result<(), String> {
     // Track rule firings + latency (queued file append, ~0.1ms)
     let latency = start.elapsed().as_millis();
     crate::telemetry::track_hook_latency(&cfg.arai_base_dir, event, latency, true);
-    for g in &matched {
-        crate::telemetry::track_rule_fired(&cfg.arai_base_dir, &g.subject, &g.predicate, tool_name, event);
+    for (g, pct) in &matched {
+        crate::telemetry::track_rule_fired(&cfg.arai_base_dir, &g.subject, &g.predicate, tool_name, event, *pct);
     }
 
     // Filter out rules whose prerequisites have already been met
     let matched: Vec<_> = if !session_id.is_empty() && event == "PreToolUse" {
         matched
             .into_iter()
-            .filter(|g| {
+            .filter(|(g, _)| {
                 let prereqs = session::extract_prerequisite(&g.object);
                 if prereqs.is_empty() {
-                    true // No prerequisite → always fire
+                    true
                 } else {
-                    // Prerequisite exists → only fire if NOT met
                     !session::prerequisite_met(&cfg.arai_base_dir, session_id, &prereqs)
                 }
             })
