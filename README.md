@@ -108,9 +108,6 @@ ARAI_FULL=1 curl -sSf https://arai.taniwha.ai/install | sh
 cargo install arai
 cargo install arai --features enrich   # with ONNX model support
 
-# npm
-npm install -g arai
-
 # Homebrew
 brew install taniwhaai/tap/arai
 ```
