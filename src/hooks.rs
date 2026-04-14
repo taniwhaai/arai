@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::io::Read;
 
 pub fn handle_stdin() -> Result<(), String> {
+    let start = std::time::Instant::now();
     let mut input = String::new();
     std::io::stdin()
         .read_to_string(&mut input)
@@ -115,6 +116,13 @@ pub fn handle_stdin() -> Result<(), String> {
 
     if matched.is_empty() {
         return Ok(());
+    }
+
+    // Track rule firings + latency (queued file append, ~0.1ms)
+    let latency = start.elapsed().as_millis();
+    crate::telemetry::track_hook_latency(&cfg.arai_base_dir, event, latency, true);
+    for g in &matched {
+        crate::telemetry::track_rule_fired(&cfg.arai_base_dir, &g.subject, &g.predicate, tool_name, event);
     }
 
     // Filter out rules whose prerequisites have already been met

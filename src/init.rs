@@ -66,6 +66,17 @@ pub fn run() -> Result<(), String> {
     inject_hooks(&cfg)?;
     println!("    \u{2713} .claude/settings.json updated");
 
+    // Track init event + flush queued telemetry
+    let enrichment = if model_dir.join("model.onnx").exists() { "model" } else { "taxonomy" };
+    crate::telemetry::track_init(
+        &cfg.arai_base_dir,
+        total_rules,
+        files.len(),
+        db.code_graph_tool_count().unwrap_or(0),
+        enrichment,
+    );
+    crate::telemetry::flush(&cfg.arai_base_dir);
+
     println!("\n  Done. Arai is now watching your rules.");
     Ok(())
 }

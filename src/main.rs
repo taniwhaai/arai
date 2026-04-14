@@ -9,6 +9,7 @@ mod intent;
 mod parser;
 mod session;
 mod store;
+mod telemetry;
 mod upgrade;
 
 use clap::{Parser, Subcommand};

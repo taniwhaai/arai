@@ -123,6 +123,22 @@ brew install taniwhaai/tap/arai
 | Hook check (with match) | <12ms |
 | Full init | <200ms |
 
+## Telemetry
+
+Arai collects anonymous usage data to help us understand if guardrails are actually useful. We track:
+
+- Whether a rule fired and on which tool
+- Hook response latency
+- Rule counts and enrichment tier on init
+
+We **never** collect file paths, rule text, code content, API keys, or anything that could identify you or your codebase.
+
+**Opt out** at any time:
+
+```bash
+export ARAI_TELEMETRY=off   # or DO_NOT_TRACK=1
+```
+
 ## Built By
 
 [Taniwha.ai](https://taniwha.ai) — extracted from the [Kete](https://github.com/taniwhaai/kete) code intelligence platform.
