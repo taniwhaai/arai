@@ -2,3 +2,4 @@
 changelog_config = "cliff.toml"
 git_release_enable = true
 git_tag_enable = true
+publish = false
