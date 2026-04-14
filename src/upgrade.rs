@@ -145,22 +145,14 @@ fn fetch_latest_version() -> Result<String, String> {
 
     let body = String::from_utf8_lossy(&output.stdout);
 
-    // Simple JSON extraction — find "tag_name": "v..."
-    for line in body.lines() {
-        if line.contains("\"tag_name\"") {
-            if let Some(start) = line.find('"') {
-                let rest = &line[start + 1..];
-                if let Some(start2) = rest.find('"') {
-                    let rest2 = &rest[start2 + 1..];
-                    if let Some(end) = rest2.find('"') {
-                        return Ok(rest2[..end].to_string());
-                    }
-                }
-            }
-        }
-    }
+    // Parse with serde_json for reliability
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
 
-    Err("Could not parse version from GitHub API response".to_string())
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| "No tag_name in GitHub API response".to_string())
 }
 
 fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
