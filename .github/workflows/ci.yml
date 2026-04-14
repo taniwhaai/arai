@@ -1,21 +1,71 @@
-name: Release
+name: CI
 
 on:
   push:
-    tags:
-      - 'v*'
-  release:
-    types: [published]
-  workflow_dispatch:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
 
 permissions:
+  pull-requests: write
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo clippy -- -D warnings
+
+  test-enrich:
+    name: Test (with enrich)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --features enrich
+
+  # After tests pass on main: create release PR + tag/publish on merge
+  release-plz:
+    name: Release-plz
+    needs: [test, test-enrich]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Release PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Build binaries on version tags
   build:
+    name: Build (${{ matrix.platform }})
+    needs: [test, test-enrich]
+    if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         include:
@@ -35,9 +85,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows-x86_64
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v6
 
@@ -50,7 +98,6 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # Build lean binary first, stage it
       - name: Build lean binary
         shell: bash
         run: |
@@ -69,7 +116,6 @@ jobs:
             chmod +x staged/arai-${{ matrix.platform }}
           fi
 
-      # Build full binary (with enrich) — optional, may fail on some platforms
       - name: Build full binary
         continue-on-error: true
         shell: bash
@@ -99,8 +145,10 @@ jobs:
           name: binaries-${{ matrix.platform }}
           path: staged/
 
-  release:
+  attach-binaries:
+    name: Attach binaries to release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -117,8 +165,7 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
-      - name: Create Release
+      - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
           files: binaries/*
