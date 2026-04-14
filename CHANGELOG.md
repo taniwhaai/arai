@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-04-14
+
+### Miscellaneous
+
+- *(workflows)* Consolidate CI and release workflows into a single workflow, remove redundant files
+
+### Refactored
+
+- *(core)* Simplify string handling and improve code clarity
+
+
 ## [0.1.1] - 2026-04-14
 
 ### Added
