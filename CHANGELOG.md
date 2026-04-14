@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-14
+
+### Added
+
+- Initial implementation of project import scanner, CLI installer, upgrade support, and release pipeline
+
+### Documentation
+
+- Add CONTRIBUTING.md with guidelines for contributions
+
+### Miscellaneous
+
+- *(workflows)* Update GitHub Actions to latest versions
+
+
 ### Added
 - CLI with commands: init, status, guardrails, scan, add, upgrade
 - Instruction file discovery (CLAUDE.md, .cursorrules, copilot-instructions.md, .windsurfrules, Claude Code memory)
