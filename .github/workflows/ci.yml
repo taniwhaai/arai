@@ -166,6 +166,11 @@ jobs:
           cat checksums.txt
 
       - name: Attach to release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: binaries/*
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          for file in binaries/*; do
+            echo "Uploading $(basename $file)..."
+            gh release upload "$TAG" "$file" --clobber
+          done
