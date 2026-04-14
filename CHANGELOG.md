@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-04-14
+
+### Refactored
+
+- *(upgrade)* Replace manual JSON parsing with serde_json for reliability
+
+
 ## [0.1.3] - 2026-04-14
 
 ### Added
