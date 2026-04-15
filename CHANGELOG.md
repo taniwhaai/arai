@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2026-04-15
+
+### Added
+
+- *(enrich)* Add advanced error handling and file-based enrichment support
+
+
 ## [0.1.8] - 2026-04-14
 
 ### Miscellaneous
