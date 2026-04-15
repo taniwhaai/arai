@@ -44,6 +44,15 @@ impl Timing {
         }
     }
 
+    pub fn is_valid(s: &str) -> bool {
+        matches!(s, "tool_call" | "stop" | "start" | "principle")
+    }
+
+    #[allow(dead_code)]
+    pub fn valid_values() -> &'static [&'static str] {
+        &["tool_call", "stop", "start", "principle"]
+    }
+
     /// Which hook event this timing maps to.
     pub fn hook_event(&self) -> &str {
         match self {
@@ -85,6 +94,15 @@ impl Action {
             "execute" => Action::Execute,
             _ => Action::General,
         }
+    }
+
+    pub fn is_valid(s: &str) -> bool {
+        matches!(s, "create" | "modify" | "execute" | "general")
+    }
+
+    #[allow(dead_code)]
+    pub fn valid_values() -> &'static [&'static str] {
+        &["create", "modify", "execute", "general"]
     }
 }
 
