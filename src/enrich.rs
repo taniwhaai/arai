@@ -308,7 +308,7 @@ fn average_similarity(query: &[f32], candidates: &[Vec<f32>]) -> f32 {
 /// Enrich guardrails by shelling out to an LLM CLI.
 /// Uses the configured command (ARAI_LLM_CMD env var or config.toml).
 /// Falls back to `claude -p` if nothing configured.
-pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>) -> Result<usize, String> {
+pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &Path) -> Result<usize, String> {
     let cmd = llm_command
         .map(String::from)
         .or_else(detect_llm_command)
@@ -375,45 +375,112 @@ Respond with ONLY a JSON array, no markdown, no explanation:
 
     let response = output;
 
-    // Extract JSON array from response (claude might wrap it in markdown)
-    let json_str = extract_json_array(&response)
-        .ok_or("Could not find JSON array in Claude's response")?;
+    // Extract JSON array from response
+    let json_str = match extract_json_array(&response) {
+        Some(s) => s,
+        None => {
+            // Save raw response for debugging
+            save_failed_response(arai_base_dir, &response);
+            let preview = if response.len() > 500 { &response[..500] } else { &response };
+            return Err(format!(
+                "Could not parse LLM response as JSON array.\n\
+                 Raw output (first 500 chars):\n{preview}\n\n\
+                 Full response saved to: {}/last-enrich-response.json",
+                arai_base_dir.display()
+            ));
+        }
+    };
+
+    let classifications: Vec<serde_json::Value> = match serde_json::from_str(&json_str) {
+        Ok(c) => c,
+        Err(e) => {
+            save_failed_response(arai_base_dir, &response);
+            return Err(format!(
+                "Failed to parse JSON: {e}\n\
+                 Full response saved to: {}/last-enrich-response.json",
+                arai_base_dir.display()
+            ));
+        }
+    };
+
+    apply_classifications(store, &guardrails, &classifications, arai_base_dir)
+}
+
+/// Save failed LLM response for debugging.
+fn save_failed_response(arai_base_dir: &Path, response: &str) {
+    let path = arai_base_dir.join("last-enrich-response.json");
+    std::fs::write(&path, response).ok();
+}
+
+/// Import enrichment from a JSON file (same format as LLM output).
+pub fn enrich_from_file(store: &Store, path: &str, arai_base_dir: &Path) -> Result<usize, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+
+    let json_str = extract_json_array(&content)
+        .ok_or_else(|| format!("Could not find JSON array in {path}"))?;
 
     let classifications: Vec<serde_json::Value> = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse Claude's response as JSON: {e}"))?;
+        .map_err(|e| format!("Failed to parse {path}: {e}"))?;
 
+    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    apply_classifications(store, &guardrails, &classifications, arai_base_dir)
+}
+
+/// Apply parsed classifications to guardrails with validation + fuzzy matching.
+fn apply_classifications(
+    store: &Store,
+    guardrails: &[crate::store::Guardrail],
+    classifications: &[serde_json::Value],
+    _arai_base_dir: &Path,
+) -> Result<usize, String> {
     let mut count = 0;
-    for entry in &classifications {
+    let mut partial_count = 0;
+
+    for entry in classifications {
         let id = entry.get("id").and_then(|v| v.as_i64()).unwrap_or(-1);
         if id < 0 {
             continue;
         }
 
-        // Find the guardrail with this ID
         let guardrail = guardrails.iter().find(|g| g.triple_id == id);
         if guardrail.is_none() {
             continue;
         }
+        let g = guardrail.unwrap();
 
-        let action_str = entry.get("action").and_then(|v| v.as_str()).unwrap_or("general");
-        let timing_str = entry.get("timing").and_then(|v| v.as_str()).unwrap_or("principle");
+        let raw_action = entry.get("action").and_then(|v| v.as_str()).unwrap_or("general");
+        let raw_timing = entry.get("timing").and_then(|v| v.as_str()).unwrap_or("principle");
         let allow_inverse = entry.get("allow_inverse").and_then(|v| v.as_bool()).unwrap_or(false);
 
         let tools: Vec<String> = entry
             .get("tools")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_else(|| vec!["*".to_string()]);
 
-        // Validate: tool_call timing requires the rule to reference a known tool.
-        // LLMs sometimes over-classify workflow rules as tool_call.
-        let mut timing = crate::intent::Timing::from_str(timing_str);
+        // Validate + fuzzy match each enum field
+        let mut is_partial = false;
+
+        let action = if Action::is_valid(raw_action) {
+            Action::from_str(raw_action)
+        } else {
+            eprintln!("    \u{26a0} Rule '{}': unrecognized action '{}', using fuzzy match", g.subject, raw_action);
+            is_partial = true;
+            fuzzy_match_action(raw_action, g)
+        };
+
+        let timing_raw = if crate::intent::Timing::is_valid(raw_timing) {
+            crate::intent::Timing::from_str(raw_timing)
+        } else {
+            eprintln!("    \u{26a0} Rule '{}': unrecognized timing '{}', using fuzzy match", g.subject, raw_timing);
+            is_partial = true;
+            fuzzy_match_timing(raw_timing, g)
+        };
+
+        // Validate tool_call timing requires a known tool reference
+        let mut timing = timing_raw;
         if timing == crate::intent::Timing::ToolCall {
-            let g = guardrail.unwrap();
             let full_text = format!("{} {}", g.subject.to_lowercase(), g.object.to_lowercase());
             let has_tool = crate::parser::KNOWN_TOOLS.iter().any(|tool| {
                 full_text.split(|c: char| !c.is_alphanumeric()).any(|w| w == *tool)
@@ -423,19 +490,76 @@ Respond with ONLY a JSON array, no markdown, no explanation:
             }
         }
 
+        if is_partial {
+            partial_count += 1;
+        }
+
         let intent = RuleIntent {
-            action: Action::from_str(action_str),
+            action,
             timing,
             tools,
             allow_inverse,
-            enriched_by: "llm".to_string(),
+            enriched_by: if is_partial { "llm-partial".to_string() } else { "llm".to_string() },
         };
 
         store.upsert_rule_intent(id, &intent).map_err(|e| e.to_string())?;
         count += 1;
     }
 
+    if partial_count > 0 {
+        eprintln!("    {partial_count} rule(s) had unrecognized values — used fuzzy match/taxonomy fallback");
+    }
+
     Ok(count)
+}
+
+/// Fuzzy match an unrecognized action value.
+/// Tries simple prefix/substring matching, then falls back to taxonomy.
+fn fuzzy_match_action(raw: &str, g: &crate::store::Guardrail) -> Action {
+    let lower = raw.to_lowercase();
+
+    // Common alternatives models might produce
+    if lower.contains("creat") || lower.contains("writ") || lower.contains("generat") {
+        return Action::Create;
+    }
+    if lower.contains("modif") || lower.contains("edit") || lower.contains("updat") || lower.contains("chang") {
+        return Action::Modify;
+    }
+    if lower.contains("exec") || lower.contains("run") || lower.contains("command") || lower.contains("invoke") {
+        return Action::Execute;
+    }
+    if lower.contains("forbid") || lower.contains("prevent") || lower.contains("block") || lower.contains("deny") {
+        // "forbid" is about the predicate, not the action — fall back to taxonomy
+        return crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject)).action;
+    }
+
+    // Fall back to taxonomy
+    crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject)).action
+}
+
+/// Fuzzy match an unrecognized timing value.
+/// Tries simple prefix/substring matching, then falls back to taxonomy.
+fn fuzzy_match_timing(raw: &str, g: &crate::store::Guardrail) -> crate::intent::Timing {
+    let lower = raw.to_lowercase();
+
+    if lower.contains("tool") || lower.contains("pre_tool") || lower.contains("pretool") {
+        return crate::intent::Timing::ToolCall;
+    }
+    if lower.contains("commit") || lower.contains("pre-commit") || lower.contains("precommit") {
+        return crate::intent::Timing::ToolCall;
+    }
+    if lower.contains("start") || lower.contains("begin") || lower.contains("prompt") {
+        return crate::intent::Timing::Start;
+    }
+    if lower.contains("stop") || lower.contains("end") || lower.contains("finish") || lower.contains("complet") {
+        return crate::intent::Timing::Stop;
+    }
+    if lower.contains("princip") || lower.contains("general") || lower.contains("always") {
+        return crate::intent::Timing::Principle;
+    }
+
+    // Fall back to taxonomy
+    crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject)).timing
 }
 
 /// Auto-detect which LLM CLI is available.
@@ -539,4 +663,226 @@ fn extract_json_array(text: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Fuzzy action matching ---
+
+    #[test]
+    fn test_fuzzy_action_forbid() {
+        // Qwen 2.5 reported this exact value
+        let g = crate::store::Guardrail {
+            triple_id: 1,
+            subject: "Git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            source_file: "test".to_string(),
+            file_path: "test".to_string(),
+        };
+        let action = fuzzy_match_action("forbid", &g);
+        // "forbid" is about predicate, not action — should fall back to taxonomy
+        assert_ne!(action, Action::Create, "forbid should not map to create");
+    }
+
+    #[test]
+    fn test_fuzzy_action_prevent() {
+        let g = dummy_guardrail();
+        let action = fuzzy_match_action("prevent", &g);
+        assert_ne!(action, Action::Create, "prevent should fall back to taxonomy");
+    }
+
+    #[test]
+    fn test_fuzzy_action_write_variant() {
+        let g = dummy_guardrail();
+        assert_eq!(fuzzy_match_action("writing", &g), Action::Create);
+        assert_eq!(fuzzy_match_action("create_file", &g), Action::Create);
+        assert_eq!(fuzzy_match_action("generate", &g), Action::Create);
+    }
+
+    #[test]
+    fn test_fuzzy_action_modify_variant() {
+        let g = dummy_guardrail();
+        assert_eq!(fuzzy_match_action("modify_file", &g), Action::Modify);
+        assert_eq!(fuzzy_match_action("editing", &g), Action::Modify);
+        assert_eq!(fuzzy_match_action("update_config", &g), Action::Modify);
+        assert_eq!(fuzzy_match_action("change", &g), Action::Modify);
+    }
+
+    #[test]
+    fn test_fuzzy_action_execute_variant() {
+        let g = dummy_guardrail();
+        assert_eq!(fuzzy_match_action("execute_command", &g), Action::Execute);
+        assert_eq!(fuzzy_match_action("run_cli", &g), Action::Execute);
+        assert_eq!(fuzzy_match_action("invoke", &g), Action::Execute);
+    }
+
+    #[test]
+    fn test_fuzzy_action_total_nonsense() {
+        // Completely unrecognizable — falls back to taxonomy
+        let g = dummy_guardrail();
+        let _action = fuzzy_match_action("xyzzy_plugh", &g);
+        // Should not panic, should return something valid
+    }
+
+    // --- Fuzzy timing matching ---
+
+    #[test]
+    fn test_fuzzy_timing_pre_commit() {
+        // Qwen 2.5 reported this exact value
+        let g = dummy_guardrail();
+        let timing = fuzzy_match_timing("pre-commit", &g);
+        assert_eq!(timing, crate::intent::Timing::ToolCall);
+    }
+
+    #[test]
+    fn test_fuzzy_timing_variants() {
+        let g = dummy_guardrail();
+        assert_eq!(fuzzy_match_timing("pre_tool_use", &g), crate::intent::Timing::ToolCall);
+        assert_eq!(fuzzy_match_timing("pretool", &g), crate::intent::Timing::ToolCall);
+        assert_eq!(fuzzy_match_timing("on_start", &g), crate::intent::Timing::Start);
+        assert_eq!(fuzzy_match_timing("before_finish", &g), crate::intent::Timing::Stop);
+        assert_eq!(fuzzy_match_timing("completion", &g), crate::intent::Timing::Stop);
+        assert_eq!(fuzzy_match_timing("general_principle", &g), crate::intent::Timing::Principle);
+        assert_eq!(fuzzy_match_timing("always_apply", &g), crate::intent::Timing::Principle);
+    }
+
+    #[test]
+    fn test_fuzzy_timing_nonsense() {
+        let g = dummy_guardrail();
+        let _timing = fuzzy_match_timing("banana", &g);
+        // Should not panic, falls back to taxonomy
+    }
+
+    // --- Valid enum detection ---
+
+    #[test]
+    fn test_action_is_valid() {
+        assert!(Action::is_valid("create"));
+        assert!(Action::is_valid("modify"));
+        assert!(Action::is_valid("execute"));
+        assert!(Action::is_valid("general"));
+        assert!(!Action::is_valid("forbid"));
+        assert!(!Action::is_valid("prevent"));
+        assert!(!Action::is_valid(""));
+    }
+
+    #[test]
+    fn test_timing_is_valid() {
+        assert!(crate::intent::Timing::is_valid("tool_call"));
+        assert!(crate::intent::Timing::is_valid("principle"));
+        assert!(crate::intent::Timing::is_valid("stop"));
+        assert!(crate::intent::Timing::is_valid("start"));
+        assert!(!crate::intent::Timing::is_valid("pre-commit"));
+        assert!(!crate::intent::Timing::is_valid("pre_tool_use"));
+        assert!(!crate::intent::Timing::is_valid(""));
+    }
+
+    // --- JSON extraction ---
+
+    #[test]
+    fn test_extract_json_from_markdown() {
+        let response = "Here is the result:\n```json\n[{\"id\": 1}]\n```\nDone.";
+        let result = extract_json_array(response);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("\"id\""));
+    }
+
+    #[test]
+    fn test_extract_json_plain() {
+        let response = "[{\"id\": 1, \"action\": \"create\"}]";
+        let result = extract_json_array(response);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_json_with_preamble() {
+        // Some models add explanation before the JSON
+        let response = "Sure, here are the classifications:\n\n[{\"id\": 1}]";
+        let result = extract_json_array(response);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_json_no_array() {
+        let response = "I don't understand what you want me to do.";
+        let result = extract_json_array(response);
+        assert!(result.is_none());
+    }
+
+    // --- Integration: apply_classifications with mixed valid/invalid ---
+
+    #[test]
+    fn test_apply_mixed_classifications() {
+        use crate::store::Store;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR: AtomicU64 = AtomicU64::new(500);
+
+        let id = CTR.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_enrich_test_{}", id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let store = Store::open(&db_path).unwrap();
+
+        let triples = vec![
+            crate::parser::Triple {
+                subject: "Git".to_string(),
+                predicate: "never".to_string(),
+                object: "git push to main without a PR".to_string(),
+                confidence: 0.92,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(1),
+                line_end: Some(1),
+            },
+            crate::parser::Triple {
+                subject: "Alembic".to_string(),
+                predicate: "forbids".to_string(),
+                object: "hand-write migration files".to_string(),
+                confidence: 0.92,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(2),
+                line_end: Some(2),
+            },
+        ];
+
+        store.upsert_file("test", "test", &triples, "test").unwrap();
+        let guardrails = store.load_guardrails().unwrap();
+
+        // Mixed: first entry has bad values, second has good values
+        let classifications: Vec<serde_json::Value> = serde_json::from_str(r#"[
+            {"id": 1, "action": "forbid", "timing": "pre-commit", "tools": ["Bash"], "allow_inverse": false},
+            {"id": 2, "action": "create", "timing": "tool_call", "tools": ["Write"], "allow_inverse": true}
+        ]"#).unwrap();
+
+        let count = apply_classifications(&store, &guardrails, &classifications, &dir).unwrap();
+        assert_eq!(count, 2, "both rules should be processed");
+
+        // First rule should be enriched_by "llm-partial" (bad values fuzzy matched)
+        let intent1 = store.get_rule_intent(1).unwrap().unwrap();
+        assert_eq!(intent1.enriched_by, "llm-partial");
+
+        // Second rule should be enriched_by "llm" (valid values)
+        let intent2 = store.get_rule_intent(2).unwrap().unwrap();
+        assert_eq!(intent2.enriched_by, "llm");
+        assert_eq!(intent2.action, Action::Create);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn dummy_guardrail() -> crate::store::Guardrail {
+        crate::store::Guardrail {
+            triple_id: 1,
+            subject: "General".to_string(),
+            predicate: "requires".to_string(),
+            object: "follow best practices".to_string(),
+            confidence: 0.9,
+            source_file: "test".to_string(),
+            file_path: "test".to_string(),
+        }
+    }
 }

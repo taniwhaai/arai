@@ -49,6 +49,9 @@ enum Commands {
         /// Enrich rule intent using Claude Code (shells out to `claude -p`)
         #[arg(long)]
         enrich_llm: bool,
+        /// Import enrichment from a JSON file (for manual correction or sharing)
+        #[arg(long, value_name = "FILE")]
+        enrich_file: Option<String>,
     },
     /// Manually add a guardrail rule
     Add {
@@ -80,7 +83,7 @@ fn main() {
                 cmd_guardrails(json)
             }
         }
-        Commands::Scan { code, enrich, enrich_llm } => cmd_scan(code, enrich, enrich_llm),
+        Commands::Scan { code, enrich, enrich_llm, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
     };
@@ -140,7 +143,7 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool) -> Result<(), String> {
+fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_file: Option<String>) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
@@ -176,8 +179,15 @@ fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool) -> Result<(), String>
     // LLM enrichment (explicit opt-in)
     if enrich_llm {
         println!("\n  Enriching rule intent via LLM...");
-        let enriched = enrich::enrich_via_llm(&db, cfg.llm_command.as_deref())?;
+        let enriched = enrich::enrich_via_llm(&db, cfg.llm_command.as_deref(), &cfg.arai_base_dir)?;
         println!("    \u{2713} {enriched} rules enriched by LLM");
+    }
+
+    // File-based enrichment import
+    if let Some(path) = enrich_file {
+        println!("\n  Importing enrichment from {path}...");
+        let enriched = enrich::enrich_from_file(&db, &path, &cfg.arai_base_dir)?;
+        println!("    \u{2713} {enriched} rules imported");
     }
 
     Ok(())
