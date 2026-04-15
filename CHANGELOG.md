@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8] - 2026-04-14
+
+### Miscellaneous
+
+- *(README)* Remove deprecated npm installation instructions
+
+
 ## [0.1.7] - 2026-04-14
 
 ### Added
