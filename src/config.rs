@@ -9,6 +9,9 @@ pub struct Config {
     pub extra_sources: Vec<String>,
     pub guardrails_mode: String,
     pub llm_command: Option<String>,
+    pub api_url: Option<String>,
+    pub api_key_env: Option<String>,
+    pub api_model: Option<String>,
 }
 
 impl Config {
@@ -21,6 +24,13 @@ impl Config {
             .unwrap_or_else(|_| home_dir.join(".arai"));
 
         let llm_command = std::env::var("ARAI_LLM_CMD").ok();
+        let api_url = std::env::var("ARAI_API_URL").ok();
+        let api_key_env = if std::env::var("ARAI_API_KEY").is_ok() {
+            Some("ARAI_API_KEY".to_string())
+        } else {
+            None
+        };
+        let api_model = std::env::var("ARAI_API_MODEL").ok();
 
         let mut cfg = Config {
             project_root,
@@ -29,6 +39,9 @@ impl Config {
             extra_sources: Vec::new(),
             guardrails_mode: "advise".to_string(),
             llm_command,
+            api_url,
+            api_key_env,
+            api_model,
         };
 
         // Load optional config file
@@ -62,6 +75,21 @@ impl Config {
                     // Config file is lower priority than env var
                     if self.llm_command.is_none() {
                         self.llm_command = Some(cmd.to_string());
+                    }
+                }
+                if let Some(url) = enrich.get("api_url").and_then(|v| v.as_str()) {
+                    if self.api_url.is_none() {
+                        self.api_url = Some(url.to_string());
+                    }
+                }
+                if let Some(key_env) = enrich.get("api_key_env").and_then(|v| v.as_str()) {
+                    if self.api_key_env.is_none() {
+                        self.api_key_env = Some(key_env.to_string());
+                    }
+                }
+                if let Some(model) = enrich.get("model").and_then(|v| v.as_str()) {
+                    if self.api_model.is_none() {
+                        self.api_model = Some(model.to_string());
                     }
                 }
             }
@@ -145,6 +173,9 @@ mod tests {
             extra_sources: Vec::new(),
             guardrails_mode: "advise".to_string(),
             llm_command: None,
+            api_url: None,
+            api_key_env: None,
+            api_model: None,
         };
         assert_eq!(cfg.claude_memory_slug(), "-usr-src-myproject");
     }
@@ -158,6 +189,9 @@ mod tests {
             extra_sources: Vec::new(),
             guardrails_mode: "advise".to_string(),
             llm_command: None,
+            api_url: None,
+            api_key_env: None,
+            api_model: None,
         };
         let db = cfg.db_path();
         let db_str = db.to_string_lossy();
