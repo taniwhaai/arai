@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.11] - 2026-04-16
+
+### Added
+
+- *(npm)* Add npm package with binary installer and setup script
+
+
 ## [0.1.10] - 2026-04-16
 
 ### Added
