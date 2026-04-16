@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] - 2026-04-16
+
+### Added
+
+- *(enrich)* Add API-based enrichment and support for OpenAI-compatible endpoints
+
+
 ## [0.1.9] - 2026-04-15
 
 ### Added
