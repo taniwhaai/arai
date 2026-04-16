@@ -5,6 +5,7 @@
 
 use crate::intent::{Action, RuleIntent};
 use crate::store::Store;
+use std::io::Read as _;
 use std::path::Path;
 #[cfg(feature = "enrich")]
 use std::path::PathBuf;
@@ -305,29 +306,9 @@ fn average_similarity(query: &[f32], candidates: &[Vec<f32>]) -> f32 {
 // Tier 3: LLM enrichment via `claude -p`
 // ---------------------------------------------------------------------------
 
-/// Enrich guardrails by shelling out to an LLM CLI.
-/// Uses the configured command (ARAI_LLM_CMD env var or config.toml).
-/// Falls back to `claude -p` if nothing configured.
-pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &Path) -> Result<usize, String> {
-    let cmd = llm_command
-        .map(String::from)
-        .or_else(detect_llm_command)
-        .ok_or(
-            "No LLM command configured. Set one of:\n\
-             \n  ARAI_LLM_CMD=\"claude -p\"                # Claude Code\
-             \n  ARAI_LLM_CMD=\"ollama run llama3\"         # Ollama\
-             \n  ARAI_LLM_CMD=\"llm -m gpt-4o\"             # Simon Willison's llm\
-             \n\nOr add to ~/.arai/config.toml:\n\
-             \n  [enrich]\
-             \n  llm_command = \"claude -p\""
-        )?;
-
-    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
-    if guardrails.is_empty() {
-        return Ok(0);
-    }
-
-    // Build the prompt with all rules
+/// Build the enrichment prompt for a set of guardrails.
+/// Shared by both LLM shell-out and API paths.
+fn build_enrichment_prompt(guardrails: &[crate::store::Guardrail]) -> String {
     let mut rules_text = String::new();
     for (i, g) in guardrails.iter().enumerate() {
         rules_text.push_str(&format!(
@@ -336,7 +317,7 @@ pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &
         ));
     }
 
-    let prompt = format!(
+    format!(
 r#"You are classifying guardrail rules for a CLI tool called Arai. For each rule, determine:
 
 1. **action**: What type of action does this rule govern?
@@ -367,21 +348,22 @@ Respond with ONLY a JSON array, no markdown, no explanation:
   {{"id": 1, "action": "create", "timing": "tool_call", "tools": ["Write"], "prerequisite": null, "allow_inverse": true}},
   ...
 ]"#
-    );
+    )
+}
 
-    println!("    Sending {} rules to LLM ({})...", guardrails.len(), cmd);
-
-    let output = run_llm_command(&cmd, &prompt)?;
-
-    let response = output;
-
-    // Extract JSON array from response
-    let json_str = match extract_json_array(&response) {
+/// Parse an LLM/API response string and apply classifications.
+/// Shared by LLM shell-out, API, and file import paths.
+fn parse_and_apply(
+    store: &Store,
+    guardrails: &[crate::store::Guardrail],
+    response: &str,
+    arai_base_dir: &Path,
+) -> Result<usize, String> {
+    let json_str = match extract_json_array(response) {
         Some(s) => s,
         None => {
-            // Save raw response for debugging
-            save_failed_response(arai_base_dir, &response);
-            let preview = if response.len() > 500 { &response[..500] } else { &response };
+            save_failed_response(arai_base_dir, response);
+            let preview = if response.len() > 500 { &response[..500] } else { response };
             return Err(format!(
                 "Could not parse LLM response as JSON array.\n\
                  Raw output (first 500 chars):\n{preview}\n\n\
@@ -394,7 +376,7 @@ Respond with ONLY a JSON array, no markdown, no explanation:
     let classifications: Vec<serde_json::Value> = match serde_json::from_str(&json_str) {
         Ok(c) => c,
         Err(e) => {
-            save_failed_response(arai_base_dir, &response);
+            save_failed_response(arai_base_dir, response);
             return Err(format!(
                 "Failed to parse JSON: {e}\n\
                  Full response saved to: {}/last-enrich-response.json",
@@ -403,7 +385,36 @@ Respond with ONLY a JSON array, no markdown, no explanation:
         }
     };
 
-    apply_classifications(store, &guardrails, &classifications, arai_base_dir)
+    apply_classifications(store, guardrails, &classifications, arai_base_dir)
+}
+
+/// Enrich guardrails by shelling out to an LLM CLI.
+/// Uses the configured command (ARAI_LLM_CMD env var or config.toml).
+/// Falls back to `claude -p` if nothing configured.
+pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &Path) -> Result<usize, String> {
+    let cmd = llm_command
+        .map(String::from)
+        .or_else(detect_llm_command)
+        .ok_or(
+            "No LLM command configured. Set one of:\n\
+             \n  ARAI_LLM_CMD=\"claude -p\"                # Claude Code\
+             \n  ARAI_LLM_CMD=\"ollama run llama3\"         # Ollama\
+             \n  ARAI_LLM_CMD=\"llm -m gpt-4o\"             # Simon Willison's llm\
+             \n\nOr add to ~/.arai/config.toml:\n\
+             \n  [enrich]\
+             \n  llm_command = \"claude -p\""
+        )?;
+
+    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    if guardrails.is_empty() {
+        return Ok(0);
+    }
+
+    let prompt = build_enrichment_prompt(&guardrails);
+    println!("    Sending {} rules to LLM ({})...", guardrails.len(), cmd);
+
+    let response = run_llm_command(&cmd, &prompt)?;
+    parse_and_apply(store, &guardrails, &response, arai_base_dir)
 }
 
 /// Save failed LLM response for debugging.
@@ -412,19 +423,188 @@ fn save_failed_response(arai_base_dir: &Path, response: &str) {
     std::fs::write(&path, response).ok();
 }
 
+// ---------------------------------------------------------------------------
+// Tier 3b: Direct API enrichment (OpenAI-compatible endpoints)
+// ---------------------------------------------------------------------------
+
+/// Resolved API configuration.
+#[derive(Debug)]
+struct ApiConfig {
+    url: String,
+    api_key: Option<String>,
+    model: String,
+}
+
+/// Enrich guardrails via direct HTTP API call to an OpenAI-compatible endpoint.
+pub fn enrich_via_api(
+    store: &Store,
+    api_url: Option<&str>,
+    api_key_env: Option<&str>,
+    api_model: Option<&str>,
+    arai_base_dir: &Path,
+) -> Result<usize, String> {
+    let config = resolve_api_config(api_url, api_key_env, api_model)?;
+
+    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    if guardrails.is_empty() {
+        return Ok(0);
+    }
+
+    let prompt = build_enrichment_prompt(&guardrails);
+    println!("    Sending {} rules to {} (model: {})...", guardrails.len(), config.url, config.model);
+
+    let response = call_chat_completions(&config, &prompt)?;
+    parse_and_apply(store, &guardrails, &response, arai_base_dir)
+}
+
+/// Resolve API configuration from env vars, config, and auto-detection.
+fn resolve_api_config(
+    api_url: Option<&str>,
+    api_key_env: Option<&str>,
+    api_model: Option<&str>,
+) -> Result<ApiConfig, String> {
+    // Resolve API key from the named env var
+    let api_key = api_key_env.and_then(|env_name| std::env::var(env_name).ok());
+
+    // 1. Explicit URL provided
+    if let Some(url) = api_url {
+        let model = api_model.unwrap_or("gpt-4o-mini").to_string();
+        return Ok(ApiConfig {
+            url: ensure_completions_path(url),
+            api_key,
+            model,
+        });
+    }
+
+    // 2. Auto-detect Ollama at localhost
+    if probe_ollama() {
+        return Ok(ApiConfig {
+            url: "http://localhost:11434/v1/chat/completions".to_string(),
+            api_key: None,
+            model: api_model.unwrap_or("llama3.1").to_string(),
+        });
+    }
+
+    // 3. API key set but no URL → default to OpenAI
+    if api_key.is_some() {
+        return Ok(ApiConfig {
+            url: "https://api.openai.com/v1/chat/completions".to_string(),
+            api_key,
+            model: api_model.unwrap_or("gpt-4o-mini").to_string(),
+        });
+    }
+
+    Err("No API endpoint configured. Set one of:\n\
+         \n  ARAI_API_KEY=sk-...                        # Uses OpenAI by default\
+         \n  ARAI_API_URL=http://localhost:11434/v1      # Ollama (no key needed)\
+         \n\nOr add to ~/.arai/config.toml:\n\
+         \n  [enrich]\
+         \n  api_url = \"https://api.openai.com/v1\"\
+         \n  api_key_env = \"OPENAI_API_KEY\"\
+         \n  model = \"gpt-4o-mini\"".to_string())
+}
+
+/// Ensure the URL ends with /chat/completions.
+fn ensure_completions_path(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/chat/completions")
+    } else {
+        format!("{trimmed}/v1/chat/completions")
+    }
+}
+
+/// Probe for a local Ollama instance at localhost:11434.
+fn probe_ollama() -> bool {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(1)))
+        .build()
+        .new_agent();
+    match agent.get("http://localhost:11434/").call() {
+        Ok(response) => {
+            let mut body = String::new();
+            response.into_body().as_reader().read_to_string(&mut body).ok();
+            body.contains("Ollama")
+        }
+        Err(_) => false,
+    }
+}
+
+/// Call an OpenAI-compatible chat completions endpoint.
+fn call_chat_completions(config: &ApiConfig, prompt: &str) -> Result<String, String> {
+    let body = serde_json::json!({
+        "model": config.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a classification engine. Respond only with valid JSON arrays."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.0
+    });
+
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
+        .new_agent();
+
+    let mut request = agent.post(&config.url)
+        .header("Content-Type", "application/json");
+
+    if let Some(ref key) = config.api_key {
+        request = request.header("Authorization", &format!("Bearer {key}"));
+    }
+
+    let response = request
+        .send_json(&body)
+        .map_err(|e| {
+            match &e {
+                ureq::Error::StatusCode(401) =>
+                    "Authentication failed. Check your ARAI_API_KEY.".to_string(),
+                ureq::Error::StatusCode(429) =>
+                    "Rate limited by API. Try again in a moment.".to_string(),
+                ureq::Error::StatusCode(404) =>
+                    format!("Endpoint not found: {}. Check your ARAI_API_URL.", config.url),
+                ureq::Error::StatusCode(code) =>
+                    format!("API returned HTTP {code}"),
+                _ => format!("API request failed: {e}"),
+            }
+        })?;
+
+    let mut response_str = String::new();
+    response.into_body().as_reader().read_to_string(&mut response_str)
+        .map_err(|e| format!("Failed to read API response: {e}"))?;
+
+    let response_body: serde_json::Value = serde_json::from_str(&response_str)
+        .map_err(|e| format!("Failed to parse API response as JSON: {e}"))?;
+
+    // Extract content from OpenAI chat completions response
+    response_body
+        .get("choices")
+        .and_then(|c: &serde_json::Value| c.get(0))
+        .and_then(|c: &serde_json::Value| c.get("message"))
+        .and_then(|m: &serde_json::Value| m.get("content"))
+        .and_then(|c: &serde_json::Value| c.as_str())
+        .map(String::from)
+        .ok_or_else(|| {
+            format!("Unexpected API response structure: {}",
+                serde_json::to_string_pretty(&response_body).unwrap_or_default())
+        })
+}
+
 /// Import enrichment from a JSON file (same format as LLM output).
 pub fn enrich_from_file(store: &Store, path: &str, arai_base_dir: &Path) -> Result<usize, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {path}: {e}"))?;
 
-    let json_str = extract_json_array(&content)
-        .ok_or_else(|| format!("Could not find JSON array in {path}"))?;
-
-    let classifications: Vec<serde_json::Value> = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse {path}: {e}"))?;
-
     let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
-    apply_classifications(store, &guardrails, &classifications, arai_base_dir)
+    parse_and_apply(store, &guardrails, &content, arai_base_dir)
 }
 
 /// Apply parsed classifications to guardrails with validation + fuzzy matching.
@@ -870,6 +1050,118 @@ mod tests {
         let intent2 = store.get_rule_intent(2).unwrap().unwrap();
         assert_eq!(intent2.enriched_by, "llm");
         assert_eq!(intent2.action, Action::Create);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- API support ---
+
+    #[test]
+    fn test_ensure_completions_path_full() {
+        assert_eq!(
+            ensure_completions_path("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_ensure_completions_path_v1() {
+        assert_eq!(
+            ensure_completions_path("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_ensure_completions_path_v1_trailing_slash() {
+        assert_eq!(
+            ensure_completions_path("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_ensure_completions_path_base_url() {
+        assert_eq!(
+            ensure_completions_path("http://localhost:11434"),
+            "http://localhost:11434/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_enrichment_prompt_format() {
+        let guardrails = vec![
+            crate::store::Guardrail {
+                triple_id: 1,
+                subject: "Git".to_string(),
+                predicate: "never".to_string(),
+                object: "force-push to main".to_string(),
+                confidence: 0.92,
+                source_file: "test".to_string(),
+                file_path: "test".to_string(),
+            },
+        ];
+        let prompt = build_enrichment_prompt(&guardrails);
+        assert!(prompt.contains("[id:1] Git never: force-push to main"));
+        assert!(prompt.contains("\"action\""));
+        assert!(prompt.contains("\"timing\""));
+        assert!(prompt.contains("JSON array"));
+    }
+
+    #[test]
+    fn test_resolve_api_config_explicit_url() {
+        let config = resolve_api_config(
+            Some("https://api.example.com/v1"),
+            None,
+            Some("test-model"),
+        ).unwrap();
+        assert_eq!(config.url, "https://api.example.com/v1/chat/completions");
+        assert_eq!(config.model, "test-model");
+        assert!(config.api_key.is_none());
+    }
+
+    #[test]
+    fn test_resolve_api_config_no_config() {
+        // No URL, no key, no Ollama → should error
+        let result = resolve_api_config(None, None, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No API endpoint configured"));
+    }
+
+    #[test]
+    fn test_parse_chat_response_extraction() {
+        // Simulate what parse_and_apply does with a mock OpenAI-style response
+        // (testing the shared pipeline, not the HTTP call)
+        use crate::store::Store;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR: AtomicU64 = AtomicU64::new(600);
+
+        let id = CTR.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_api_test_{}", id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let store = Store::open(&db_path).unwrap();
+
+        let triples = vec![crate::parser::Triple {
+            subject: "Docker".to_string(),
+            predicate: "requires".to_string(),
+            object: "use docker compose for local development".to_string(),
+            confidence: 0.92,
+            domain: "test".to_string(),
+            source_file: "test".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+        }];
+        store.upsert_file("test", "test", &triples, "test").unwrap();
+        let guardrails = store.load_guardrails().unwrap();
+
+        // Simulate API response content (the string that would be in choices[0].message.content)
+        let response = r#"[{"id": 1, "action": "execute", "timing": "tool_call", "tools": ["Bash"], "allow_inverse": false}]"#;
+        let count = parse_and_apply(&store, &guardrails, response, &dir).unwrap();
+        assert_eq!(count, 1);
+
+        let intent = store.get_rule_intent(1).unwrap().unwrap();
+        assert_eq!(intent.action, Action::Execute);
 
         std::fs::remove_dir_all(&dir).ok();
     }

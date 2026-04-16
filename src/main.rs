@@ -49,6 +49,9 @@ enum Commands {
         /// Enrich rule intent using Claude Code (shells out to `claude -p`)
         #[arg(long)]
         enrich_llm: bool,
+        /// Enrich rule intent via direct API call to an OpenAI-compatible endpoint
+        #[arg(long)]
+        enrich_api: bool,
         /// Import enrichment from a JSON file (for manual correction or sharing)
         #[arg(long, value_name = "FILE")]
         enrich_file: Option<String>,
@@ -83,7 +86,7 @@ fn main() {
                 cmd_guardrails(json)
             }
         }
-        Commands::Scan { code, enrich, enrich_llm, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_file),
+        Commands::Scan { code, enrich, enrich_llm, enrich_api, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
     };
@@ -143,7 +146,7 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_file: Option<String>) -> Result<(), String> {
+fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_api: bool, enrich_file: Option<String>) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
@@ -181,6 +184,19 @@ fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_file: Option<S
         println!("\n  Enriching rule intent via LLM...");
         let enriched = enrich::enrich_via_llm(&db, cfg.llm_command.as_deref(), &cfg.arai_base_dir)?;
         println!("    \u{2713} {enriched} rules enriched by LLM");
+    }
+
+    // API enrichment (direct HTTP call)
+    if enrich_api {
+        println!("\n  Enriching rule intent via API...");
+        let enriched = enrich::enrich_via_api(
+            &db,
+            cfg.api_url.as_deref(),
+            cfg.api_key_env.as_deref(),
+            cfg.api_model.as_deref(),
+            &cfg.arai_base_dir,
+        )?;
+        println!("    \u{2713} {enriched} rules enriched by API");
     }
 
     // File-based enrichment import
