@@ -1,0 +1,30 @@
+{
+  "name": "@taniwhaai/arai",
+  "version": "0.1.10",
+  "description": "AI coding rules that actually work. Enforce instruction files via hooks — CLAUDE.md, .cursorrules, copilot-instructions, and more.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taniwhaai/arai.git"
+  },
+  "homepage": "https://arai.taniwha.ai",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai",
+    "guardrails",
+    "cursor",
+    "copilot",
+    "windsurf"
+  ],
+  "bin": {
+    "arai": "bin/arai"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "install.js",
+    "bin/"
+  ]
+}

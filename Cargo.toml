@@ -2,10 +2,10 @@
 name = "arai"
 version = "0.1.10"
 edition = "2021"
-description = "CLAUDE.md that actually works. Enforce AI coding assistant instruction files via hooks."
+description = "AI coding rules that actually work. Enforce instruction files via hooks — CLAUDE.md, .cursorrules, copilot-instructions, and more."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/taniwhaai/arai"
-exclude = [".github/", "site/", "npm/", "install.sh", "cliff.toml", "release-plz.toml", "CLAUDE.md"]
+exclude = [".github/", "site/", "npm/", "install.sh", "cliff.toml", "release-plz.toml", "CLAUDE.md", "tasks/"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

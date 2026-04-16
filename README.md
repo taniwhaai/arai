@@ -68,18 +68,27 @@ Three tiers of rule understanding, each more accurate:
 ```bash
 arai scan                  # Tier 1: Built-in verb taxonomy (free, instant)
 arai scan --enrich         # Tier 2: Sentence transformer model (local, ~80MB download)
-arai scan --enrich-llm     # Tier 3: LLM classification (any provider)
+arai scan --enrich-llm     # Tier 3a: LLM classification via CLI
+arai scan --enrich-api     # Tier 3b: LLM classification via API (no CLI needed)
 ```
 
 Configure your LLM:
 ```bash
-# Via environment variable
+# Via CLI tool (shell-out)
 ARAI_LLM_CMD="claude -p" arai scan --enrich-llm
 ARAI_LLM_CMD="ollama run llama3" arai scan --enrich-llm
 
+# Via API (OpenAI-compatible endpoints)
+ARAI_API_KEY=sk-... arai scan --enrich-api                    # OpenAI (default)
+ARAI_API_URL=http://localhost:11434/v1 arai scan --enrich-api  # Ollama (auto-detected)
+ARAI_API_URL=https://api.groq.com/openai/v1 ARAI_API_KEY=gsk-... ARAI_API_MODEL=llama-3.3-70b-versatile arai scan --enrich-api
+
 # Or in ~/.arai/config.toml
 [enrich]
-llm_command = "llm -m gpt-4o-mini"
+llm_command = "llm -m gpt-4o-mini"       # for --enrich-llm
+api_url = "https://api.openai.com/v1"     # for --enrich-api
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o-mini"
 ```
 
 ## Commands
@@ -90,7 +99,8 @@ arai status                # Show what's being enforced
 arai guardrails            # List all active rules
 arai scan                  # Re-scan instruction files
 arai scan --code           # Also scan source code (tree-sitter AST)
-arai scan --enrich-llm     # Enhance rules via LLM
+arai scan --enrich-llm     # Enhance rules via LLM CLI
+arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 ```
@@ -103,6 +113,9 @@ curl -sSf https://arai.taniwha.ai/install | sh
 
 # Full binary (with local sentence transformer)
 ARAI_FULL=1 curl -sSf https://arai.taniwha.ai/install | sh
+
+# npm
+npm install -g @taniwhaai/arai
 
 # Cargo
 cargo install arai
