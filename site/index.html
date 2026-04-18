@@ -157,6 +157,27 @@
             font-size: 0.85rem; color: var(--primary);
         }
 
+        /* Family */
+        .family {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border);
+            background: var(--bg-light);
+        }
+        .family .container { max-width: 720px; }
+        .family h2 {
+            font-size: 1.5rem; font-weight: 700;
+            margin-bottom: 1.25rem;
+        }
+        .family p {
+            font-size: 0.95rem; color: var(--text-secondary);
+            line-height: 1.7;
+        }
+        .family .family-links {
+            margin-top: 1.25rem; font-size: 0.9rem;
+        }
+        .family a { color: var(--primary); text-decoration: none; font-weight: 500; }
+        .family a:hover { text-decoration: underline; }
+
         /* Footer */
         footer {
             background: var(--bg-light);
@@ -187,6 +208,8 @@
     <div class="container">
         <a class="logo" href="/">arai</a>
         <div class="links">
+            <a href="https://taniwha.ai">Taniwha</a>
+            <a href="https://taniwha.ai/kete">Kete</a>
             <a href="https://github.com/taniwhaai/arai">Docs</a>
             <a href="https://github.com/taniwhaai/arai/issues">Issues</a>
             <a class="gh-btn" href="https://github.com/taniwhaai/arai">GitHub</a>
@@ -268,6 +291,14 @@
                 <code>cd your-project && arai init</code>
             </div>
         </div>
+    </div>
+</section>
+
+<section class="family">
+    <div class="container">
+        <h2>Part of the Taniwha family</h2>
+        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. If you want semantic enrichment, impact analysis across callers and transitive dependents, or a hosted platform with team features, start with Kete. If you just want your instruction files enforced locally &mdash; no hosted service, no telemetry server &mdash; Arai is all you need.</p>
+        <p class="family-links"><a href="https://taniwha.ai">Taniwha.ai</a> &middot; <a href="https://taniwha.ai/kete">Kete</a> &middot; <a href="https://taniwha.ai/products">All products</a></p>
     </div>
 </section>
 
