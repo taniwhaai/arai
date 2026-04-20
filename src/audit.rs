@@ -15,6 +15,7 @@
 //!      `arai audit --tool=Bash` — filter.
 //!      `arai audit --json` — JSON stream.
 
+use crate::config::Config;
 use crate::store::Guardrail;
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
@@ -27,8 +28,7 @@ use std::path::{Path, PathBuf};
 /// is a short human-readable snippet of the tool input (truncated, no
 /// full secret leakage) — callers produce it.
 pub fn record_firing(
-    arai_base: &Path,
-    project_slug: &str,
+    cfg: &Config,
     event: &str,
     tool_name: &str,
     session_id: &str,
@@ -39,7 +39,7 @@ pub fn record_firing(
     if matched.is_empty() {
         return;
     }
-    let log_path = match audit_log_path(arai_base, project_slug) {
+    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
         Ok(p) => p,
         Err(_) => return,
     };
@@ -100,7 +100,7 @@ pub fn query(
         // Read lines into a buffer then reverse so newest-in-file comes first.
         let lines: Vec<String> = BufReader::new(file)
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(Result::ok)
             .collect();
         for line in lines.into_iter().rev() {
             if out.len() >= max_entries {

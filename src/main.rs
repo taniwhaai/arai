@@ -330,7 +330,7 @@ fn cmd_audit(
     }
 
     // Table view: one line per firing, rule names condensed.
-    println!("{:<20} {:<13} {:<8} {:<7} {}", "time", "event", "tool", "rules", "summary");
+    println!("{:<20} {:<13} {:<8} {:<7} summary", "time", "event", "tool", "rules");
     println!("{}", "─".repeat(80));
     for e in &entries {
         let ts = e.get("ts").and_then(|v| v.as_str()).unwrap_or("");

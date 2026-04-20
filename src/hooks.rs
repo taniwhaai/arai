@@ -155,8 +155,7 @@ pub fn handle_stdin() -> Result<(), String> {
         _ => event,
     };
     audit::record_firing(
-        &cfg.arai_base_dir,
-        &cfg.project_slug(),
+        &cfg,
         event,
         tool_name,
         session_id,
