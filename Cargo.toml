@@ -5,7 +5,7 @@ edition = "2021"
 description = "AI coding rules that actually work. Enforce instruction files via hooks — CLAUDE.md, .cursorrules, copilot-instructions, and more."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/taniwhaai/arai"
-exclude = [".github/", "site/", "npm/", "install.sh", "cliff.toml", "release-plz.toml", "CLAUDE.md", "tasks/"]
+exclude = [".github/", "site/", "npm/", "install.sh", "cliff.toml", "release-plz.toml", "CLAUDE.md", "tasks/", "scenarios/"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -97,6 +97,16 @@ enum Commands {
     /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
     /// so the agent can program its own deterministic guardrails.
     Mcp,
+    /// Parse an instruction file and show extracted rules with their
+    /// classified intent.  No DB writes — use this to iterate on CLAUDE.md
+    /// wording before committing.
+    Lint {
+        /// Path to a markdown instruction file
+        file: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Manage the list of URLs trusted for `arai:extends` directives.
     /// Without arguments, shows the current list.
     Trust {
@@ -116,6 +126,19 @@ enum Commands {
         /// Output as JSON instead of a pretty table
         #[arg(long)]
         json: bool,
+    },
+    /// Build a scenario file from recent audit-log entries.  Writes JSON
+    /// to stdout — redirect into a scenarios file and tune by hand.
+    Record {
+        /// Only record firings newer than this (e.g. "1h", "7d")
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter by tool name (Bash, Edit, Write, ...)
+        #[arg(long)]
+        tool: Option<String>,
+        /// Maximum audit entries to scan
+        #[arg(long, default_value = "200")]
+        limit: usize,
     },
     /// Aggregate summary of the local audit log — top rules, tools, days
     Stats {
@@ -150,8 +173,10 @@ fn main() {
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
         Commands::Audit { since, tool, event, limit, json } => cmd_audit(since, tool, event, limit, json),
         Commands::Mcp => mcp::run(),
+        Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
+        Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
         Commands::Stats { since, top, json } => cmd_stats(since, top, json),
     };
 
@@ -186,6 +211,39 @@ fn cmd_status() -> Result<(), String> {
         println!("  Code graph: {graph_tools} tools from {graph_files} files");
     } else {
         println!("  Code graph: not scanned (run `arai scan --code`)");
+    }
+
+    let issues = db.find_rule_issues().map_err(|e| e.to_string())?;
+    if !issues.duplicates.is_empty() || !issues.opposing.is_empty() {
+        println!();
+        if !issues.duplicates.is_empty() {
+            println!("  Duplicate rules ({}):", issues.duplicates.len());
+            for d in issues.duplicates.iter().take(10) {
+                println!(
+                    "    - {} {}: {}",
+                    d.subject, d.predicate, d.object,
+                );
+                for src in &d.sources {
+                    println!("        from {src}");
+                }
+            }
+            if issues.duplicates.len() > 10 {
+                println!("    … {} more", issues.duplicates.len() - 10);
+            }
+        }
+        if !issues.opposing.is_empty() {
+            println!("  Opposing predicates ({}):", issues.opposing.len());
+            for o in issues.opposing.iter().take(10) {
+                println!(
+                    "    - {} (predicates: {})",
+                    o.subject,
+                    o.predicates.join(", "),
+                );
+            }
+            if issues.opposing.len() > 10 {
+                println!("    … {} more", issues.opposing.len() - 10);
+            }
+        }
     }
     Ok(())
 }
@@ -380,6 +438,77 @@ fn cmd_audit(
         println!("{:<20} {:<13} {:<8} {:<7} {}", ts, ev, tool, rule_count, preview_short);
     }
     println!("\n  {} firing(s) shown.  Log at {}/audit/{}/", entries.len(), cfg.arai_base_dir.display(), cfg.project_slug());
+    Ok(())
+}
+
+fn cmd_record(
+    since: Option<String>,
+    tool: Option<String>,
+    limit: usize,
+) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let since_epoch = since.as_deref().map(parse_since).transpose()?;
+    scenarios::record(&cfg, since_epoch, tool, limit)
+}
+
+fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let triples = parser::extract_rules(&content, "lint", 0.90);
+
+    if json {
+        let out: Vec<serde_json::Value> = triples
+            .iter()
+            .map(|t| {
+                let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+                serde_json::json!({
+                    "subject": t.subject,
+                    "predicate": t.predicate,
+                    "object": t.object,
+                    "line_start": t.line_start,
+                    "line_end": t.line_end,
+                    "action": intent.action.as_str(),
+                    "timing": format!("{:?}", intent.timing),
+                    "tools": intent.tools,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+
+    if triples.is_empty() {
+        println!("No rules extracted from {path}.");
+        println!("  Try phrasing list items as imperatives: \"- Never force-push to main\"");
+        return Ok(());
+    }
+
+    println!("Lint: {path}");
+    println!("  {} rule(s) extracted\n", triples.len());
+    for t in &triples {
+        let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        let timing = format!("{:?}", intent.timing);
+        let line_info = t
+            .line_start
+            .map(|l| format!(" L{l}"))
+            .unwrap_or_default();
+        println!(
+            "  [{:<7}] {}{}\n    subject:   {}\n    predicate: {}\n    object:    {}\n    action:    {}  timing: {}  tools: {}\n",
+            intent.action.as_str(),
+            t.source_file,
+            line_info,
+            t.subject,
+            t.predicate,
+            t.object,
+            intent.action.as_str(),
+            timing,
+            if intent.tools.is_empty() {
+                "<any>".to_string()
+            } else {
+                intent.tools.join(", ")
+            },
+        );
+    }
     Ok(())
 }
 

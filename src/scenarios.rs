@@ -37,11 +37,13 @@
 //! All expectation fields are optional.  An empty `expect` block only
 //! verifies the hook parses and the match pipeline doesn't error.
 
+use crate::audit;
 use crate::config::Config;
 use crate::hooks;
 use crate::store::{Guardrail, Store};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::Path;
 
 #[derive(Debug, Deserialize)]
@@ -221,6 +223,132 @@ fn print_results(results: &[ScenarioResult]) {
     }
 }
 
+// ── Recording scenarios from the live audit log ───────────────────────────
+
+/// Build a minimal hook payload from an audit entry's preview.
+///
+/// The audit log stores a truncated `prompt_preview`, not the full tool
+/// input — we can only approximate.  For Bash we treat the preview as the
+/// command; for Edit/Write/MultiEdit we parse the `"<tool> <path>"` form
+/// back into `{file_path}`; for other tools we pass the preview through
+/// as a `"preview"` field so the scenario at least carries identifying
+/// text.  Scenarios produced this way are seeds — tune them by hand.
+fn reconstruct_tool_input(tool: &str, preview: &str) -> Value {
+    match tool {
+        "Bash" => json!({ "command": preview }),
+        "Edit" | "Write" | "MultiEdit" => {
+            let path = preview
+                .strip_prefix(&format!("{tool} "))
+                .unwrap_or(preview);
+            json!({ "file_path": path })
+        }
+        _ => json!({ "preview": preview }),
+    }
+}
+
+/// Build scenario fixtures from recent audit-log entries.
+///
+/// Deduplicates by (tool, prompt_preview) so many identical firings
+/// collapse to one fixture.  Each scenario's expectation is a best-guess:
+/// every subject that actually fired must appear in the match set, with
+/// `min_matches = 1`.
+pub fn record_from_audit(
+    cfg: &Config,
+    since_epoch_secs: Option<u64>,
+    tool_filter: Option<&str>,
+    limit: usize,
+) -> Result<Value, String> {
+    let entries = audit::query(
+        &cfg.arai_base_dir,
+        &cfg.project_slug(),
+        since_epoch_secs,
+        tool_filter,
+        None,
+        limit,
+    )?;
+
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut scenarios = Vec::new();
+
+    for entry in entries {
+        let tool = entry.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        let event = entry
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("PreToolUse");
+        let preview = entry
+            .get("prompt_preview")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if tool.is_empty() || preview.is_empty() {
+            continue;
+        }
+
+        let key = (tool.to_string(), preview.to_string());
+        if !seen.insert(key) {
+            continue;
+        }
+
+        let subjects: Vec<String> = entry
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .map(|rs| {
+                let mut out: Vec<String> = rs
+                    .iter()
+                    .filter_map(|r| r.get("subject").and_then(|v| v.as_str()).map(String::from))
+                    .collect();
+                out.sort();
+                out.dedup();
+                out
+            })
+            .unwrap_or_default();
+
+        let mut name = format!("{tool}: {preview}");
+        if name.len() > 80 {
+            name.truncate(79);
+            name.push('…');
+        }
+
+        let hook = json!({
+            "hook_event_name": event,
+            "tool_name": tool,
+            "tool_input": reconstruct_tool_input(tool, preview),
+        });
+
+        let expect = if subjects.is_empty() {
+            json!({ "max_matches": 0 })
+        } else {
+            json!({
+                "matches_subject": subjects,
+                "min_matches": 1,
+            })
+        };
+
+        scenarios.push(json!({
+            "name": name,
+            "hook": hook,
+            "expect": expect,
+        }));
+    }
+
+    Ok(json!({ "scenarios": scenarios }))
+}
+
+/// CLI entry point for `arai record`.
+pub fn record(
+    cfg: &Config,
+    since_epoch_secs: Option<u64>,
+    tool: Option<String>,
+    limit: usize,
+) -> Result<(), String> {
+    let out = record_from_audit(cfg, since_epoch_secs, tool.as_deref(), limit)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +475,30 @@ mod tests {
         assert_eq!(file.scenarios.len(), 1);
         assert_eq!(file.scenarios[0].name, "t1");
         assert_eq!(file.scenarios[0].expect.matches_subject, vec!["git"]);
+    }
+
+    #[test]
+    fn test_reconstruct_bash_tool_input() {
+        let input = reconstruct_tool_input("Bash", "git push --force origin main");
+        assert_eq!(input["command"], "git push --force origin main");
+    }
+
+    #[test]
+    fn test_reconstruct_edit_tool_input() {
+        let input = reconstruct_tool_input("Edit", "Edit /tmp/foo.rs");
+        assert_eq!(input["file_path"], "/tmp/foo.rs");
+    }
+
+    #[test]
+    fn test_reconstruct_write_tool_input() {
+        let input = reconstruct_tool_input("Write", "Write /tmp/bar.md");
+        assert_eq!(input["file_path"], "/tmp/bar.md");
+    }
+
+    #[test]
+    fn test_reconstruct_unknown_tool_passes_through_preview() {
+        let input = reconstruct_tool_input("CustomTool", "some opaque payload");
+        assert_eq!(input["preview"], "some opaque payload");
     }
 
     #[test]

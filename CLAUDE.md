@@ -18,7 +18,9 @@ cargo run -- add "Never X"     # Add a manual rule
 cargo run -- audit             # Tail the local firing log (today)
 cargo run -- audit --json      # JSONL stream
 cargo run -- stats             # Aggregate the audit log (top rules, tools, days)
-cargo run -- test scenarios.json  # Replay synthetic hook scenarios
+cargo run -- lint CLAUDE.md    # Parse a file and preview extracted rules, no DB writes
+cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scenario
+cargo run -- record --since=1h # Build scenarios from recent audit entries
 cargo run -- trust --add <url> # Approve a URL for arai:extends
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)
 echo '{"tool_name":"Bash","tool_input":{"command":"git push"}}' | cargo run -- guardrails --match-stdin

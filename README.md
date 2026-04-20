@@ -105,6 +105,8 @@ arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
 arai stats                 # Aggregate audit log — top rules, tools, days
 arai test scenarios.json   # Replay synthetic hook scenarios against rules
+arai record --since=1h     # Capture recent firings as a scenario skeleton
+arai lint CLAUDE.md        # Parse a file and preview extracted rules
 arai trust                 # Manage URLs trusted for shared-policy extends
 arai mcp                   # Run the MCP server (stdio) for agent-authored guards
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
@@ -137,6 +139,23 @@ Useful for answering:
 - *"Did the guardrail fire before that regrettable git push?"* —
   grep by session id.
 
+## Status — health check your rule set
+
+`arai status` shows how many rules are loaded, where they came from,
+and when they were last scanned. As of v0.2.2 it also surfaces two
+common rule-set health issues:
+
+- **Duplicate rules** — the same (subject, predicate, object) ingested
+  from more than one source file. Usually safe to consolidate into
+  one source to reduce drift.
+- **Opposing predicates** — the same subject carries both a
+  prohibitive predicate (`never`, `must_not`, `avoid`) and a required
+  predicate (`always`, `must`, `requires`, `ensure`). Not always a
+  real conflict (the objects may differ), but worth a human look.
+
+These are advisory only — the hook path ignores them. Fix them at the
+source.
+
 ## Stats — aggregate the audit log
 
 `arai stats` rolls up the same JSONL `arai audit` tails and answers
@@ -153,11 +172,36 @@ Output includes: total firings, most-fired rules, tools attracting the
 most guardrails, day-by-day activity. Nothing leaves the machine —
 stats are a local view over your own audit log.
 
+## Lint — preview what a file produces
+
+`arai lint <file>` parses an instruction file and prints every rule it
+would extract along with the intent classification, without touching
+the DB. Use it to iterate on CLAUDE.md wording and see the effect
+before you commit.
+
+```bash
+arai lint CLAUDE.md
+arai lint memory/feedback_testing.md --json   # machine-readable
+```
+
+Output for each rule: subject / predicate / object, the classified
+action (Create / Modify / Execute / General), the hook timing it routes
+to (ToolCall / Stop / Start / Principle), and which tools the rule
+applies to.
+
 ## Test — regression harness for rules
 
 `arai test` replays synthetic hook payloads through the *same*
 `match_hook` pipeline the live hook handler uses, so rule changes get
 caught before they affect a real session.
+
+The canonical [alembic example](scenarios/alembic-migration.json) is
+checked in — run it after `arai init` on any repo with an alembic rule
+in CLAUDE.md:
+
+```bash
+arai test scenarios/alembic-migration.json
+```
 
 Scenario files are JSON:
 
@@ -189,6 +233,27 @@ arai test scenarios/guards.json --json   # structured pass/fail for CI
 Exit code is non-zero when any scenario fails. Matches are checked by
 subject substring because full SPO triples tend to drift across
 re-ingest.
+
+## Record — seed scenarios from real firings
+
+`arai record` turns entries in the audit log into scenario skeletons
+so you don't hand-write regression tests. Flow: run Claude Code, hit a
+rule firing you want pinned, `arai record --since=1h > tests.json`,
+tune the expectations, check in.
+
+```bash
+arai record --since=1h              # last hour
+arai record --since=7d --tool=Bash  # only Bash firings from the last week
+arai record --limit=50              # cap audit entries scanned
+```
+
+Deduplicates by (tool, prompt) so repeated identical firings collapse
+to one scenario. Each scenario's `expect` seeds `matches_subject` with
+whatever actually fired and `min_matches: 1` — tune from there.
+
+Runtime-capturing *new rules* (as opposed to testing existing ones) is
+a different loop: that goes through the MCP `arai_add_guard` tool,
+documented below.
 
 ## Shared policies — `arai:extends`
 

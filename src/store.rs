@@ -360,6 +360,77 @@ impl Store {
         }
     }
 
+    /// Find pairs of rules that potentially conflict or duplicate.
+    ///
+    /// - **Duplicate**: the same (subject, predicate, object) appears in
+    ///   two or more source files.  These are usually safe to consolidate
+    ///   into one source to reduce CLAUDE.md drift.
+    /// - **Opposing**: the same subject carries both a prohibitive
+    ///   predicate (`never`, `must_not`, `avoid`) and a required predicate
+    ///   (`always`, `must`, `requires`, `ensure`).  Not necessarily a real
+    ///   conflict — the objects may be different — but worth a human look.
+    pub fn find_rule_issues(&self) -> rusqlite::Result<RuleIssues> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.s, t.p, t.o, f.path FROM triples t \
+             JOIN files f ON f.id = t.file_id \
+             ORDER BY t.s, t.p, t.o",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+
+        let mut by_spo: std::collections::BTreeMap<(String, String, String), Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut by_subject: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            std::collections::BTreeMap::new();
+
+        for row in rows {
+            let (s, p, o, src) = row?;
+            by_spo
+                .entry((s.clone(), p.clone(), o.clone()))
+                .or_default()
+                .push(src);
+            by_subject.entry(s).or_default().push((p, o));
+        }
+
+        let mut duplicates = Vec::new();
+        for ((s, p, o), sources) in by_spo {
+            let unique: std::collections::BTreeSet<_> = sources.iter().cloned().collect();
+            if unique.len() >= 2 {
+                let mut list: Vec<String> = unique.into_iter().collect();
+                list.sort();
+                duplicates.push(DuplicateRule {
+                    subject: s,
+                    predicate: p,
+                    object: o,
+                    sources: list,
+                });
+            }
+        }
+
+        let mut opposing = Vec::new();
+        for (subject, entries) in by_subject {
+            let has_prohibitive = entries.iter().any(|(p, _)| is_prohibitive(p));
+            let has_required = entries.iter().any(|(p, _)| is_required(p));
+            if has_prohibitive && has_required {
+                let mut preds: Vec<String> = entries.iter().map(|(p, _)| p.clone()).collect();
+                preds.sort();
+                preds.dedup();
+                opposing.push(OpposingRules {
+                    subject,
+                    predicates: preds,
+                });
+            }
+        }
+
+        Ok(RuleIssues { duplicates, opposing })
+    }
+
     /// Classify all existing guardrails using the taxonomy.
     pub fn classify_all_guardrails(&self) -> rusqlite::Result<usize> {
         let guardrails = self.load_guardrails()?;
@@ -371,6 +442,41 @@ impl Store {
         }
         Ok(count)
     }
+}
+
+/// Summary of rule-set health issues surfaced by [`Store::find_rule_issues`].
+#[derive(Debug, Default, serde::Serialize)]
+pub struct RuleIssues {
+    pub duplicates: Vec<DuplicateRule>,
+    pub opposing: Vec<OpposingRules>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct DuplicateRule {
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub sources: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct OpposingRules {
+    pub subject: String,
+    pub predicates: Vec<String>,
+}
+
+fn is_prohibitive(p: &str) -> bool {
+    matches!(
+        p,
+        "never" | "must_not" | "avoid" | "do_not" | "dont" | "forbid"
+    )
+}
+
+fn is_required(p: &str) -> bool {
+    matches!(
+        p,
+        "always" | "must" | "requires" | "ensure" | "prefer" | "should"
+    )
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -434,6 +540,105 @@ mod tests {
         // Upsert again with same content — should skip
         let changed = store.upsert_file("CLAUDE.md", "- Never force-push to main", &triples, "claude_md_project").unwrap();
         assert!(!changed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_find_rule_issues_detects_duplicates() {
+        let (store, dir) = temp_db();
+
+        let t = Triple {
+            subject: "git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+        };
+        store.upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project").unwrap();
+        store.upsert_file(
+            "global.md",
+            "- a",
+            &[Triple { source_file: "global.md".to_string(), ..t.clone() }],
+            "claude_md_global",
+        ).unwrap();
+
+        let issues = store.find_rule_issues().unwrap();
+        assert_eq!(issues.duplicates.len(), 1);
+        assert_eq!(issues.duplicates[0].subject, "git");
+        assert_eq!(issues.duplicates[0].sources.len(), 2);
+        assert!(issues.opposing.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_find_rule_issues_detects_opposing() {
+        let (store, dir) = temp_db();
+
+        let never = Triple {
+            subject: "alembic".to_string(),
+            predicate: "never".to_string(),
+            object: "hand-write migrations".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+        };
+        let always = Triple {
+            subject: "alembic".to_string(),
+            predicate: "always".to_string(),
+            object: "hand-write migrations".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(2),
+            line_end: Some(2),
+        };
+        store.upsert_file("CLAUDE.md", "- a\n- b", &[never, always], "claude_md_project").unwrap();
+
+        let issues = store.find_rule_issues().unwrap();
+        assert_eq!(issues.opposing.len(), 1);
+        assert_eq!(issues.opposing[0].subject, "alembic");
+        assert!(issues.opposing[0].predicates.contains(&"never".to_string()));
+        assert!(issues.opposing[0].predicates.contains(&"always".to_string()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_find_rule_issues_clean_set_is_empty() {
+        let (store, dir) = temp_db();
+
+        let t1 = Triple {
+            subject: "git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+        };
+        let t2 = Triple {
+            subject: "alembic".to_string(),
+            predicate: "never".to_string(),
+            object: "hand-write".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(2),
+            line_end: Some(2),
+        };
+        store.upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project").unwrap();
+
+        let issues = store.find_rule_issues().unwrap();
+        assert!(issues.duplicates.is_empty());
+        assert!(issues.opposing.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }

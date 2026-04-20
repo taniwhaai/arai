@@ -1,0 +1,45 @@
+{
+  "_comment": "Canonical example: the README's alembic rule. Run with `arai test scenarios/alembic-migration.json`. Requires a CLAUDE.md rule along the lines of `- Never hand-write alembic migration files — use alembic revision --autogenerate instead`, ingested via `arai init`.",
+  "scenarios": [
+    {
+      "name": "Write to migrations/versions triggers the alembic guardrail",
+      "hook": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Write",
+        "tool_input": {
+          "file_path": "migrations/versions/001_add_users.py"
+        }
+      },
+      "expect": {
+        "matches_subject": ["alembic"],
+        "min_matches": 1
+      }
+    },
+    {
+      "name": "Bash `alembic upgrade` does not trigger the hand-write rule",
+      "hook": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "alembic upgrade head"
+        }
+      },
+      "expect": {
+        "does_not_match_subject": ["hand-write"]
+      }
+    },
+    {
+      "name": "Read of an existing migration file is silent (tool is in the skip list)",
+      "hook": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Read",
+        "tool_input": {
+          "file_path": "migrations/versions/001_add_users.py"
+        }
+      },
+      "expect": {
+        "max_matches": 0
+      }
+    }
+  ]
+}
