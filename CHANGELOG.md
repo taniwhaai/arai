@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-04-20
+
+### Added
+
+- *(audit)* Local JSONL log of rule firings + `arai audit` CLI
+- *(mcp)* Stdio MCP server exposing `arai_add_guard` + `arai_list_guards`
+
+### Documentation
+
+- Cover `arai audit` + `arai mcp` in README, CLAUDE.md, and site
+
+### Fixed
+
+- *(audit)* Promote `era` to i64 in civil_to_epoch
+
+### Testing
+
+- *(audit)* Fix bad expected value in test_epoch_roundtrip
+
+### Style
+
+- Silence clippy lints on new audit + CLI code
+
+
 ## [0.1.11] - 2026-04-16
 
 ### Added
