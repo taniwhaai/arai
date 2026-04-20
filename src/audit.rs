@@ -230,10 +230,13 @@ mod tests {
 
     #[test]
     fn test_epoch_roundtrip() {
-        // 2026-04-19T17:30:00Z = 1776013800
-        let ts = format_epoch_utc(1_776_013_800);
-        assert_eq!(ts, "2026-04-19T17:30:00Z");
-        assert_eq!(parse_rfc3339_to_epoch(&ts), Some(1_776_013_800));
+        // Round-trip a handful of fixed epochs through format + parse.
+        for epoch in [0u64, 946_684_800, 1_577_836_800, 1_776_013_800, 2_524_608_000] {
+            let ts = format_epoch_utc(epoch);
+            assert_eq!(parse_rfc3339_to_epoch(&ts), Some(epoch), "roundtrip failed for {ts}");
+        }
+        // And a known reference — 2000-01-01 00:00:00 UTC is 946684800.
+        assert_eq!(format_epoch_utc(946_684_800), "2000-01-01T00:00:00Z");
     }
 
     #[test]
