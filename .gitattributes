@@ -1,0 +1,11 @@
+# Normalize line endings on checkin; check out LF on all platforms.
+# Prevents Windows workspaces from silently rewriting tracked files to CRLF.
+* text=auto eol=lf
+
+# Explicit binary types (no normalization)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.onnx binary
