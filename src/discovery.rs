@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::extends;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -30,14 +31,16 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
     ];
 
     for (path, source_type, confidence) in project_files {
-        if let Some(file) = try_read_file(&path, source_type, confidence) {
+        if let Some(mut file) = try_read_file(&path, source_type, confidence) {
+            file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
             files.push(file);
         }
     }
 
     // Global Claude.md
     let global_claude = cfg.home_dir.join(".claude").join("CLAUDE.md");
-    if let Some(file) = try_read_file(&global_claude, "claude_md_global", 0.88) {
+    if let Some(mut file) = try_read_file(&global_claude, "claude_md_global", 0.88) {
+        file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
         files.push(file);
     }
 

@@ -3,13 +3,16 @@ mod code_scanner;
 mod config;
 mod discovery;
 mod enrich;
+mod extends;
 mod guardrails;
 mod hooks;
 mod init;
 mod intent;
 mod mcp;
 mod parser;
+mod scenarios;
 mod session;
+mod stats;
 mod store;
 mod telemetry;
 mod upgrade;
@@ -94,6 +97,38 @@ enum Commands {
     /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
     /// so the agent can program its own deterministic guardrails.
     Mcp,
+    /// Manage the list of URLs trusted for `arai:extends` directives.
+    /// Without arguments, shows the current list.
+    Trust {
+        /// Add this URL to the trust list
+        #[arg(long, value_name = "URL")]
+        add: Option<String>,
+        /// Remove this URL from the trust list
+        #[arg(long, value_name = "URL")]
+        remove: Option<String>,
+    },
+    /// Replay synthetic hook scenarios against the current rule set to
+    /// catch regressions in rule behaviour.  Scenarios are JSON describing
+    /// a tool call + expected matches.
+    Test {
+        /// Path to a JSON scenario file
+        file: String,
+        /// Output as JSON instead of a pretty table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Aggregate summary of the local audit log — top rules, tools, days
+    Stats {
+        /// Only count firings newer than this (e.g. "7d", "24h", "30m")
+        #[arg(long)]
+        since: Option<String>,
+        /// Show top N entries per section
+        #[arg(long, default_value = "10")]
+        top: usize,
+        /// Output as JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -115,6 +150,9 @@ fn main() {
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
         Commands::Audit { since, tool, event, limit, json } => cmd_audit(since, tool, event, limit, json),
         Commands::Mcp => mcp::run(),
+        Commands::Trust { add, remove } => cmd_trust(add, remove),
+        Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
+        Commands::Stats { since, top, json } => cmd_stats(since, top, json),
     };
 
     if let Err(e) = result {
@@ -343,6 +381,53 @@ fn cmd_audit(
     }
     println!("\n  {} firing(s) shown.  Log at {}/audit/{}/", entries.len(), cfg.arai_base_dir.display(), cfg.project_slug());
     Ok(())
+}
+
+fn cmd_trust(add: Option<String>, remove: Option<String>) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    match (add, remove) {
+        (Some(url), None) => {
+            let added = extends::trust_add(&url, &cfg.arai_base_dir)?;
+            if added {
+                println!("  Trusted: {url}");
+            } else {
+                println!("  Already trusted: {url}");
+            }
+        }
+        (None, Some(url)) => {
+            let removed = extends::trust_remove(&url, &cfg.arai_base_dir)?;
+            if removed {
+                println!("  Untrusted: {url}");
+            } else {
+                println!("  Not in trust list: {url}");
+            }
+        }
+        (Some(_), Some(_)) => {
+            return Err("Pass --add or --remove, not both".to_string());
+        }
+        (None, None) => {
+            let urls = extends::trust_list(&cfg.arai_base_dir);
+            if urls.is_empty() {
+                println!("No trusted URLs.  Add one with `arai trust --add https://...`");
+            } else {
+                println!("Trusted URLs ({}):", urls.len());
+                for u in urls {
+                    println!("  - {u}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_stats(
+    since: Option<String>,
+    top: usize,
+    json: bool,
+) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let since_epoch = since.as_deref().map(parse_since).transpose()?;
+    stats::run(&cfg, since_epoch, top, json)
 }
 
 /// Parse a duration like "7d", "24h", "30m", "3600s" into an epoch-seconds
