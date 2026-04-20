@@ -1,4 +1,4 @@
-use crate::{config, guardrails, session, store};
+use crate::{audit, config, guardrails, session, store};
 use serde_json::Value;
 use std::io::Read;
 
@@ -146,6 +146,25 @@ pub fn handle_stdin() -> Result<(), String> {
         return Ok(());
     }
 
+    // Local audit log — separate from anonymous telemetry.  Records every
+    // firing the user can inspect via `arai audit`.  No network egress.
+    let prompt_preview = summarize_tool_input(tool_name, &tool_input);
+    let decision = match event {
+        "PreToolUse" => "inject",   // current enforcement is context injection
+        "PostToolUse" => "review",
+        _ => event,
+    };
+    audit::record_firing(
+        &cfg.arai_base_dir,
+        &cfg.project_slug(),
+        event,
+        tool_name,
+        session_id,
+        &prompt_preview,
+        &matched,
+        decision,
+    );
+
     let context = guardrails::format_context(&matched);
 
     let response = match event {
@@ -170,4 +189,32 @@ pub fn handle_stdin() -> Result<(), String> {
 
     println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
     Ok(())
+}
+
+/// Produce a short human-readable preview of tool input for the audit log.
+/// Prefers the most-informative field per tool; truncates + strips newlines.
+fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
+    let raw = match tool_name {
+        "Bash" => input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "Edit" | "Write" | "MultiEdit" => {
+            let path = input
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            format!("{tool_name} {path}")
+        }
+        _ => input.to_string(),
+    };
+    let oneline = raw.replace(['\n', '\r'], " ");
+    let trimmed = oneline.trim();
+    if trimmed.chars().count() <= 200 {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(200).collect();
+        format!("{head}…")
+    }
 }

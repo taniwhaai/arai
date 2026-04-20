@@ -96,13 +96,11 @@ impl Config {
         }
     }
 
-    /// DB path: ~/.arai/projects/<dirname>-<8char-sha256>/arai.db
-    pub fn db_path(&self) -> PathBuf {
-        let canonical = self
-            .project_root
-            .to_string_lossy()
-            .to_string();
-
+    /// Stable per-project slug: `<dirname>-<8char-sha256>`.  Used as the
+    /// subdirectory name under `{arai_base}/projects/` and
+    /// `{arai_base}/audit/`.
+    pub fn project_slug(&self) -> String {
+        let canonical = self.project_root.to_string_lossy().to_string();
         let dir_name = self
             .project_root
             .file_name()
@@ -114,8 +112,15 @@ impl Config {
         let hash = hasher.finalize();
         let short_hash = hex_encode(&hash[..4]);
 
-        let slug = format!("{dir_name}-{short_hash}");
-        self.arai_base_dir.join("projects").join(slug).join("arai.db")
+        format!("{dir_name}-{short_hash}")
+    }
+
+    /// DB path: ~/.arai/projects/<dirname>-<8char-sha256>/arai.db
+    pub fn db_path(&self) -> PathBuf {
+        self.arai_base_dir
+            .join("projects")
+            .join(self.project_slug())
+            .join("arai.db")
     }
 
     /// Claude Code memory slug: /home/matt/r/arai → -home-matt-r-arai

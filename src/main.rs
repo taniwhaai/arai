@@ -1,3 +1,4 @@
+mod audit;
 mod code_scanner;
 mod config;
 mod discovery;
@@ -6,6 +7,7 @@ mod guardrails;
 mod hooks;
 mod init;
 mod intent;
+mod mcp;
 mod parser;
 mod session;
 mod store;
@@ -70,6 +72,28 @@ enum Commands {
         #[arg(long)]
         lean: bool,
     },
+    /// Show the local audit log of rule firings (no network egress)
+    Audit {
+        /// Only show firings newer than this (e.g. "7d", "24h", "30m")
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter by tool name (Bash, Edit, Write, ...)
+        #[arg(long)]
+        tool: Option<String>,
+        /// Filter by hook event (PreToolUse, PostToolUse, UserPromptSubmit)
+        #[arg(long)]
+        event: Option<String>,
+        /// Maximum entries to return
+        #[arg(long, default_value = "50")]
+        limit: usize,
+        /// Output as JSON (one entry per line)
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the Ārai MCP server on stdio (for integration into Claude Code or
+    /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
+    /// so the agent can program its own deterministic guardrails.
+    Mcp,
 }
 
 fn main() {
@@ -89,6 +113,8 @@ fn main() {
         Commands::Scan { code, enrich, enrich_llm, enrich_api, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
+        Commands::Audit { since, tool, event, limit, json } => cmd_audit(since, tool, event, limit, json),
+        Commands::Mcp => mcp::run(),
     };
 
     if let Err(e) = result {
@@ -267,4 +293,80 @@ fn chrono_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", now.as_secs())
+}
+
+fn cmd_audit(
+    since: Option<String>,
+    tool: Option<String>,
+    event: Option<String>,
+    limit: usize,
+    json: bool,
+) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let since_epoch = since.as_deref().map(parse_since).transpose()?;
+    let entries = audit::query(
+        &cfg.arai_base_dir,
+        &cfg.project_slug(),
+        since_epoch,
+        tool.as_deref(),
+        event.as_deref(),
+        limit,
+    )?;
+
+    if entries.is_empty() {
+        if json {
+            // Still valid — just an empty stream.
+            return Ok(());
+        }
+        println!("No audit entries.  Rules haven't fired yet, or filters excluded everything.");
+        return Ok(());
+    }
+
+    if json {
+        for e in &entries {
+            println!("{}", serde_json::to_string(e).map_err(|e| e.to_string())?);
+        }
+        return Ok(());
+    }
+
+    // Table view: one line per firing, rule names condensed.
+    println!("{:<20} {:<13} {:<8} {:<7} {}", "time", "event", "tool", "rules", "summary");
+    println!("{}", "─".repeat(80));
+    for e in &entries {
+        let ts = e.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+        let ev = e.get("event").and_then(|v| v.as_str()).unwrap_or("");
+        let tool = e.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        let rule_count = e.get("rules").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+        let preview = e.get("prompt_preview").and_then(|v| v.as_str()).unwrap_or("");
+        let preview_short: String = preview.chars().take(50).collect();
+        println!("{:<20} {:<13} {:<8} {:<7} {}", ts, ev, tool, rule_count, preview_short);
+    }
+    println!("\n  {} firing(s) shown.  Log at {}/audit/{}/", entries.len(), cfg.arai_base_dir.display(), cfg.project_slug());
+    Ok(())
+}
+
+/// Parse a duration like "7d", "24h", "30m", "3600s" into an epoch-seconds
+/// cutoff (now - duration).  Plain digits are treated as seconds.
+fn parse_since(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("--since cannot be empty".to_string());
+    }
+    let (num_part, unit_secs): (&str, u64) = match s.chars().last().unwrap() {
+        'd' => (&s[..s.len() - 1], 86_400),
+        'h' => (&s[..s.len() - 1], 3_600),
+        'm' => (&s[..s.len() - 1], 60),
+        's' => (&s[..s.len() - 1], 1),
+        c if c.is_ascii_digit() => (s, 1),
+        other => return Err(format!("--since: unknown unit '{other}' (use d/h/m/s)")),
+    };
+    let n: u64 = num_part
+        .parse()
+        .map_err(|_| format!("--since: invalid number '{num_part}'"))?;
+    let delta = n.checked_mul(unit_secs).ok_or("--since: overflow")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Ok(now.saturating_sub(delta))
 }
