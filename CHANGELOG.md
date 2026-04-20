@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-04-20
+
+### Added
+
+- Add stats, test harness, and shared-policy extends
+
+### Documentation
+
+- Cover stats, test, trust, and extends in README/CLAUDE/site
+
+
 ## [0.2.0] - 2026-04-20
 
 ### Added
