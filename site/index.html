@@ -156,6 +156,19 @@
         .method code {
             font-size: 0.85rem; color: var(--primary);
         }
+        .then-line {
+            max-width: 700px; margin: 1.25rem auto 0;
+            padding: 0.75rem 1.25rem; border-radius: 8px;
+            background: var(--text); color: #E5E7EB;
+            display: flex; align-items: center; gap: 0.75rem;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;
+        }
+        .then-line .then-label {
+            color: var(--primary-light);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.75rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
 
         /* Family */
         .family {
@@ -291,13 +304,21 @@
                 <code>curl -sSf https://arai.taniwha.ai/install | sh</code>
             </div>
             <div class="method">
+                <div class="label">npm</div>
+                <code>npm install -g @taniwhaai/arai</code>
+            </div>
+            <div class="method">
                 <div class="label">Cargo</div>
                 <code>cargo install arai</code>
             </div>
             <div class="method">
-                <div class="label">Then</div>
-                <code>cd your-project && arai init</code>
+                <div class="label">Homebrew</div>
+                <code>brew install taniwhaai/tap/arai</code>
             </div>
+        </div>
+        <div class="then-line">
+            <span class="then-label">Then</span>
+            <code>cd your-project &amp;&amp; arai init</code>
         </div>
     </div>
 </section>
