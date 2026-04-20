@@ -103,6 +103,9 @@ arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
+arai stats                 # Aggregate audit log — top rules, tools, days
+arai test scenarios.json   # Replay synthetic hook scenarios against rules
+arai trust                 # Manage URLs trusted for shared-policy extends
 arai mcp                   # Run the MCP server (stdio) for agent-authored guards
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 ```
@@ -133,6 +136,89 @@ Useful for answering:
   prune rules that never trigger.
 - *"Did the guardrail fire before that regrettable git push?"* —
   grep by session id.
+
+## Stats — aggregate the audit log
+
+`arai stats` rolls up the same JSONL `arai audit` tails and answers
+the questions every maintainer asks after a few weeks of use:
+
+```bash
+arai stats                # Top rules, tools, days since the log began
+arai stats --since=30d    # Window to the last month
+arai stats --top=5        # Show only top 5 per section
+arai stats --json         # Machine-readable for dashboards
+```
+
+Output includes: total firings, most-fired rules, tools attracting the
+most guardrails, day-by-day activity. Nothing leaves the machine —
+stats are a local view over your own audit log.
+
+## Test — regression harness for rules
+
+`arai test` replays synthetic hook payloads through the *same*
+`match_hook` pipeline the live hook handler uses, so rule changes get
+caught before they affect a real session.
+
+Scenario files are JSON:
+
+```json
+{
+  "scenarios": [
+    {
+      "name": "force-push triggers the git guardrail",
+      "hook": {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "git push --force origin master" }
+      },
+      "expect": {
+        "matches_subject": ["git"],
+        "does_not_match_subject": ["alembic"],
+        "min_matches": 1
+      }
+    }
+  ]
+}
+```
+
+```bash
+arai test scenarios/guards.json
+arai test scenarios/guards.json --json   # structured pass/fail for CI
+```
+
+Exit code is non-zero when any scenario fails. Matches are checked by
+subject substring because full SPO triples tend to drift across
+re-ingest.
+
+## Shared policies — `arai:extends`
+
+Instruction files can inherit rules from a trusted upstream URL. This
+is the "org-wide CLAUDE.md" pattern without a policy service — just
+another markdown file hosted wherever you like.
+
+Declare the upstream in your CLAUDE.md:
+
+```markdown
+<!-- arai:extends https://example.com/standards/rust-backend.md -->
+
+# My project rules
+- Never publish artifacts before tag push
+```
+
+Then trust the URL:
+
+```bash
+arai trust --add https://example.com/standards/rust-backend.md
+arai trust                  # List trusted URLs
+arai trust --remove <url>   # Revoke
+```
+
+Ārai never fetches a URL that isn't explicitly trusted. HTTPS only,
+512 KB size cap, 24-hour cache with stale-while-error fallback, and
+extends are not recursive — the fetched file can't pull in further
+URLs. On `arai init`, trusted upstream content is inlined ahead of the
+local rules before the parser runs, so the rest of the pipeline sees
+one merged file.
 
 ## MCP: agent-authored guardrails
 

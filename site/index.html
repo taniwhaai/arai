@@ -276,6 +276,18 @@
                 <p>Every firing is appended to a local JSONL you can query. See which rules fire, on which tools, for which prompts. Nothing leaves your machine.</p>
             </div>
             <div class="feature">
+                <h3>Aggregate stats</h3>
+                <p><code>arai stats</code> rolls up the audit log into top rules, tools, and days &mdash; so you can see which guardrails are load-bearing and which never fire.</p>
+            </div>
+            <div class="feature">
+                <h3>Rule regression tests</h3>
+                <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
+            </div>
+            <div class="feature">
+                <h3>Shared policies</h3>
+                <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally. No policy service &mdash; just a markdown file upstream.</p>
+            </div>
+            <div class="feature">
                 <h3>Agent-authored guards</h3>
                 <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call.</p>
             </div>

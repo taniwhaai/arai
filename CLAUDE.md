@@ -17,6 +17,9 @@ cargo run -- scan --enrich-llm # Enrich rules via LLM
 cargo run -- add "Never X"     # Add a manual rule
 cargo run -- audit             # Tail the local firing log (today)
 cargo run -- audit --json      # JSONL stream
+cargo run -- stats             # Aggregate the audit log (top rules, tools, days)
+cargo run -- test scenarios.json  # Replay synthetic hook scenarios
+cargo run -- trust --add <url> # Approve a URL for arai:extends
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)
 echo '{"tool_name":"Bash","tool_input":{"command":"git push"}}' | cargo run -- guardrails --match-stdin
 ```
@@ -38,10 +41,21 @@ src/
 ├── code_scanner.rs       # tree-sitter AST parsing — import extraction for 7 languages
 ├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)
 ├── audit.rs              # Local JSONL firing log — append on hook match, query via `arai audit`
+├── stats.rs              # Aggregate views over the audit log — `arai stats`
+├── scenarios.rs          # Scenario replay harness — `arai test <file>`
+├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
 ├── mcp.rs                # Stdio MCP server — arai_add_guard + arai_list_guards for agent-authored rules
 ├── telemetry.rs          # Anonymous usage analytics (opt-out, no project context)
 └── upgrade.rs            # Self-upgrade between lean/full binaries
 ```
+
+## Extending the match pipeline
+
+`hooks::match_hook(hook, cfg, db)` is the single pure entry point used
+by both the live stdio handler and the `arai test` scenario runner.
+Any change to rule-matching logic goes there so the two paths stay
+identical.  Side effects (audit write, telemetry, session write) live
+only on the `handle_stdin` path.
 
 ## Two layers of observability
 
