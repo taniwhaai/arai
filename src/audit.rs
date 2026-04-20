@@ -210,14 +210,14 @@ fn parse_rfc3339_to_epoch(ts: &str) -> Option<u64> {
 }
 
 fn civil_to_epoch(y: i32, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
-    let yy = if m <= 2 { y - 1 } else { y };
-    let era = if yy >= 0 { yy } else { yy - 399 } / 400;
-    let yoe = (yy - era * 400) as i64;
-    let mp = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
-    let doy = (153 * mp + 2) / 5 + (d as i64 - 1);
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days_since_epoch = era * 146_097 + doe - 719_468;
-    let secs = days_since_epoch * 86_400
+    let yy: i64 = if m <= 2 { (y - 1) as i64 } else { y as i64 };
+    let era: i64 = if yy >= 0 { yy } else { yy - 399 } / 400;
+    let yoe: i64 = yy - era * 400;
+    let mp: i64 = if m > 2 { m as i64 - 3 } else { m as i64 + 9 };
+    let doy: i64 = (153 * mp + 2) / 5 + (d as i64 - 1);
+    let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days_since_epoch: i64 = era * 146_097 + doe - 719_468;
+    let secs: i64 = days_since_epoch * 86_400
         + (h as i64) * 3600
         + (mi as i64) * 60
         + (s as i64);
