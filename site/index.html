@@ -259,6 +259,14 @@
                 <p>"Never push without tests" silences after cargo test runs. Arai remembers what happened this session.</p>
             </div>
             <div class="feature">
+                <h3>Audit log</h3>
+                <p>Every firing is appended to a local JSONL you can query. See which rules fire, on which tools, for which prompts. Nothing leaves your machine.</p>
+            </div>
+            <div class="feature">
+                <h3>Agent-authored guards</h3>
+                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call.</p>
+            </div>
+            <div class="feature">
                 <h3>Zero noise</h3>
                 <p>Only fires domain-specific rules. Principles already in CLAUDE.md stay silent.</p>
             </div>

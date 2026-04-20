@@ -102,7 +102,65 @@ arai scan --code           # Also scan source code (tree-sitter AST)
 arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually
+arai audit                 # Inspect the local log of rule firings
+arai mcp                   # Run the MCP server (stdio) for agent-authored guards
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
+```
+
+## Audit log
+
+Every time a rule fires, Arai appends one line to a local JSONL log at
+`~/.arai/audit/<project-slug>/<YYYYMMDD>.jsonl`. The log captures the
+hook event, the tool that was called, a truncated prompt preview, and
+every rule that matched (with source file and confidence).
+
+Nothing leaves your machine — this is separate from the anonymous
+usage telemetry below.
+
+```bash
+arai audit                    # Today's firings, table view
+arai audit --since=7d         # Last week
+arai audit --tool=Bash        # Only Bash tool calls
+arai audit --event=PreToolUse # Only pre-tool-use firings
+arai audit --json             # JSONL stream (pipe-friendly)
+```
+
+Useful for answering:
+
+- *"Why did Claude suddenly change approach halfway through?"* —
+  look up the firing, see which rule matched.
+- *"Which rules are actually load-bearing?"* — sort firings by rule,
+  prune rules that never trigger.
+- *"Did the guardrail fire before that regrettable git push?"* —
+  grep by session id.
+
+## MCP: agent-authored guardrails
+
+`arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
+server on stdio. Two tools, exposed to any MCP-capable agent:
+
+| Tool | What it does |
+|------|--------------|
+| `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. Takes effect on the next PreToolUse hook — same enforcement path as rules in your CLAUDE.md. |
+| `arai_list_guards(pattern?)` | List active guardrails, optionally substring-filtered, so the agent can check what constraints are live before acting. |
+
+This closes a gap instruction files don't cover: when an agent
+discovers a rule mid-session (*"from now on, never write to /etc"*,
+*"always run the full test suite before pushing"*), it now has
+somewhere to register it for deterministic enforcement rather than
+hoping context retention holds.
+
+Register it with Claude Code by adding to your MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "arai": {
+      "command": "arai",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 ## Installation
