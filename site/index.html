@@ -284,6 +284,14 @@
                 <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
             </div>
             <div class="feature">
+                <h3>Capture to replay</h3>
+                <p><code>arai record</code> turns real firings from the audit log into scenario fixtures. You don&rsquo;t hand-write regression tests &mdash; you capture the ones that matter and pin them.</p>
+            </div>
+            <div class="feature">
+                <h3>Preview before commit</h3>
+                <p><code>arai lint CLAUDE.md</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
+            </div>
+            <div class="feature">
                 <h3>Shared policies</h3>
                 <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally. No policy service &mdash; just a markdown file upstream.</p>
             </div>
