@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-04-20
+
+### Added
+
+- Arai lint, arai record, rule-health check in arai status, alembic example
+
+### Miscellaneous
+
+- Add .gitattributes to enforce LF line endings
+
+
 ## [0.2.1] - 2026-04-20
 
 ### Added
