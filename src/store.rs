@@ -44,7 +44,9 @@ impl Store {
                 confidence REAL DEFAULT 0.7,
                 line_start INTEGER,
                 line_end INTEGER,
-                source_file TEXT
+                source_file TEXT,
+                layer INTEGER,
+                expires_at TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_triples_file ON triples(file_id);
@@ -89,12 +91,36 @@ impl Store {
                 tools TEXT NOT NULL DEFAULT '*',
                 allow_inverse INTEGER DEFAULT 0,
                 enriched_by TEXT DEFAULT 'taxonomy',
-                enriched_at TEXT
+                enriched_at TEXT,
+                severity TEXT NOT NULL DEFAULT 'warn'
             );
 
             PRAGMA foreign_keys = ON;
             ",
-        )
+        )?;
+
+        // Migration: add severity column to older rule_intent tables.  Safe to
+        // call on every open — the ALTER is a no-op once the column exists.
+        let _ = self.conn.execute(
+            "ALTER TABLE rule_intent ADD COLUMN severity TEXT NOT NULL DEFAULT 'warn'",
+            [],
+        );
+
+        // Migration: add layer column to older triples tables so derivation
+        // trace surfaces even on upgraded stores (NULL for pre-trace rows).
+        let _ = self.conn.execute(
+            "ALTER TABLE triples ADD COLUMN layer INTEGER",
+            [],
+        );
+
+        // Migration: add expires_at for rule self-pruning.  ISO date strings;
+        // NULL for rules without an annotation.
+        let _ = self.conn.execute(
+            "ALTER TABLE triples ADD COLUMN expires_at TEXT",
+            [],
+        );
+
+        Ok(())
     }
 
     /// Upsert a file and its triples. Skips if checksum unchanged.
@@ -143,8 +169,8 @@ impl Store {
         // Insert new triples
         for triple in triples {
             tx.execute(
-                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file, layer, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     file_id,
                     triple.subject,
@@ -155,6 +181,8 @@ impl Store {
                     triple.line_start,
                     triple.line_end,
                     path,
+                    triple.layer.map(|l| l as i64),
+                    triple.expires_at,
                 ],
             )?;
         }
@@ -163,13 +191,16 @@ impl Store {
         Ok(true)
     }
 
-    /// Load all actionable guardrails, ordered by confidence.
+    /// Load all actionable guardrails, ordered by confidence.  Rules with an
+    /// `expires_at` date in the past are filtered out — they self-prune
+    /// without any manual cleanup.
     pub fn load_guardrails(&self) -> rusqlite::Result<Vec<Guardrail>> {
         let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path
+            "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at
              FROM triples t
              JOIN files f ON t.file_id = f.id
              WHERE t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')
+               AND (t.expires_at IS NULL OR t.expires_at >= date('now'))
              ORDER BY t.confidence DESC",
         )?;
 
@@ -183,6 +214,9 @@ impl Store {
                     confidence: row.get(4)?,
                     source_file: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
                     file_path: row.get(6)?,
+                    layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
+                    line_start: row.get::<_, Option<i64>>(8)?,
+                    expires_at: row.get::<_, Option<String>>(9)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -314,10 +348,10 @@ impl Store {
     ) -> rusqlite::Result<()> {
         let tools_json = serde_json::to_string(&intent.tools).unwrap_or_else(|_| "[\"*\"]".to_string());
         self.conn.execute(
-            "INSERT INTO rule_intent (triple_id, action, timing, tools, allow_inverse, enriched_by, enriched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+            "INSERT INTO rule_intent (triple_id, action, timing, tools, allow_inverse, enriched_by, enriched_at, severity)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7)
              ON CONFLICT(triple_id) DO UPDATE SET
-                action = ?2, timing = ?3, tools = ?4, allow_inverse = ?5, enriched_by = ?6, enriched_at = datetime('now')",
+                action = ?2, timing = ?3, tools = ?4, allow_inverse = ?5, enriched_by = ?6, enriched_at = datetime('now'), severity = ?7",
             params![
                 triple_id,
                 intent.action.as_str(),
@@ -325,6 +359,7 @@ impl Store {
                 tools_json,
                 intent.allow_inverse as i32,
                 intent.enriched_by,
+                intent.severity.as_str(),
             ],
         )?;
         Ok(())
@@ -333,7 +368,7 @@ impl Store {
     /// Get the intent for a specific triple.
     pub fn get_rule_intent(&self, triple_id: i64) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
         match self.conn.query_row(
-            "SELECT action, timing, tools, allow_inverse, enriched_by FROM rule_intent WHERE triple_id = ?1",
+            "SELECT action, timing, tools, allow_inverse, enriched_by, severity FROM rule_intent WHERE triple_id = ?1",
             params![triple_id],
             |row| {
                 let action_str: String = row.get(0)?;
@@ -341,6 +376,7 @@ impl Store {
                 let tools_json: String = row.get(2)?;
                 let allow_inverse: i32 = row.get(3)?;
                 let enriched_by: String = row.get(4)?;
+                let severity_str: String = row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "warn".to_string());
 
                 let tools: Vec<String> = serde_json::from_str(&tools_json)
                     .unwrap_or_else(|_| vec!["*".to_string()]);
@@ -351,6 +387,7 @@ impl Store {
                     tools,
                     allow_inverse: allow_inverse != 0,
                     enriched_by,
+                    severity: crate::intent::Severity::from_str(&severity_str),
                 })
             },
         ) {
@@ -488,6 +525,22 @@ pub struct Guardrail {
     pub confidence: f64,
     pub source_file: String,
     pub file_path: String,
+    /// Parser layer (1..=6) that produced this rule.  Preserved through the
+    /// store so `arai audit` / `arai why` can trace a firing back to the
+    /// exact regex family that extracted the rule.  `None` for rules
+    /// ingested before the layer column existed, or rules added manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<u8>,
+    /// Line number in the source file where the rule was extracted.  Surfaced
+    /// alongside the layer so the audit trace reads like "CLAUDE.md:42
+    /// (layer-1 imperative)".  `None` for manually-added rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<i64>,
+    /// Optional ISO date (`YYYY-MM-DD`) after which this rule is filtered
+    /// out of `load_guardrails`.  Extracted at parse time from a trailing
+    /// `(expires ...)` annotation; always `None` for rules without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
 }
 
 fn compute_checksum(content: &str) -> String {
@@ -527,6 +580,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(1),
             line_end: Some(1),
+            layer: None,
+            expires_at: None,
         }];
 
         let changed = store.upsert_file("CLAUDE.md", "- Never force-push to main", &triples, "claude_md_project").unwrap();
@@ -557,6 +612,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(1),
             line_end: Some(1),
+            layer: None,
+            expires_at: None,
         };
         store.upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project").unwrap();
         store.upsert_file(
@@ -588,6 +645,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(1),
             line_end: Some(1),
+            layer: None,
+            expires_at: None,
         };
         let always = Triple {
             subject: "alembic".to_string(),
@@ -598,6 +657,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(2),
             line_end: Some(2),
+            layer: None,
+            expires_at: None,
         };
         store.upsert_file("CLAUDE.md", "- a\n- b", &[never, always], "claude_md_project").unwrap();
 
@@ -623,6 +684,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(1),
             line_end: Some(1),
+            layer: None,
+            expires_at: None,
         };
         let t2 = Triple {
             subject: "alembic".to_string(),
@@ -633,6 +696,8 @@ mod tests {
             source_file: "CLAUDE.md".to_string(),
             line_start: Some(2),
             line_end: Some(2),
+            layer: None,
+            expires_at: None,
         };
         store.upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project").unwrap();
 
@@ -650,6 +715,43 @@ mod tests {
         assert_eq!(store.get_meta("last_scan").unwrap(), None);
         store.set_meta("last_scan", "12345").unwrap();
         assert_eq!(store.get_meta("last_scan").unwrap(), Some("12345".to_string()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_expired_rules_are_filtered_on_load() {
+        let (store, dir) = temp_db();
+        let alive = Triple {
+            subject: "git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: Some("2099-01-01".to_string()), // far future
+        };
+        let dead = Triple {
+            subject: "legacy".to_string(),
+            predicate: "never".to_string(),
+            object: "touch the old api".to_string(),
+            confidence: 0.92,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(2),
+            line_end: Some(2),
+            layer: Some(1),
+            expires_at: Some("2000-01-01".to_string()), // long past
+        };
+        store.upsert_file("CLAUDE.md", "x", &[alive, dead], "claude_md_project").unwrap();
+
+        let rails = store.load_guardrails().unwrap();
+        let subjects: Vec<_> = rails.iter().map(|g| g.subject.clone()).collect();
+        assert!(subjects.iter().any(|s| s == "git"), "unexpired rule should load");
+        assert!(!subjects.iter().any(|s| s == "legacy"), "expired rule should NOT load");
 
         std::fs::remove_dir_all(&dir).ok();
     }

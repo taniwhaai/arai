@@ -16,17 +16,39 @@
 //!      `arai audit --json` — JSON stream.
 
 use crate::config::Config;
-use crate::store::Guardrail;
+use crate::intent::Severity;
+use crate::store::{Guardrail, Store};
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+
+/// Map a numeric parser layer (1..=6) to a human-readable label.  Kept here
+/// rather than in `parser.rs` because it's presentation, not parsing, and the
+/// rustc 1.95 dead-code pass chokes on a similar function living in the
+/// parser module.
+pub fn layer_label(layer: u8) -> &'static str {
+    match layer {
+        1 => "layer-1 start-of-sentence imperative",
+        2 => "layer-2 passive forbidden/required",
+        3 => "layer-3 colon-separated label",
+        4 => "layer-4 mid-sentence imperative",
+        5 => "layer-5 use-X two-signal gate",
+        6 => "layer-6 verb-start catch-all",
+        _ => "unknown",
+    }
+}
 
 /// Record a hook firing to today's audit log.  Best-effort — silent on failure.
 ///
 /// `matched` carries `(Guardrail, match_percentage)` pairs.  `prompt_preview`
 /// is a short human-readable snippet of the tool input (truncated, no
 /// full secret leakage) — callers produce it.
+/// Record a firing, looking up per-rule severity from the store when
+/// available.  Falls back to predicate-derived severity otherwise.  `db` may
+/// be `None` for callers that don't hold an open connection (offline tools,
+/// tests) — the log entry is still written, just without enriched severity.
+#[allow(clippy::too_many_arguments)]
 pub fn record_firing(
     cfg: &Config,
     event: &str,
@@ -35,6 +57,7 @@ pub fn record_firing(
     prompt_preview: &str,
     matched: &[(Guardrail, u8)],
     decision: &str,
+    db: Option<&Store>,
 ) {
     if matched.is_empty() {
         return;
@@ -51,15 +74,33 @@ pub fn record_firing(
         "session": session_id,
         "prompt_preview": truncate(prompt_preview, 200),
         "decision": decision,
-        "rules": matched.iter().map(|(g, pct)| json!({
-            "triple_id": g.triple_id,
-            "subject": g.subject,
-            "predicate": g.predicate,
-            "object": g.object,
-            "source": g.file_path,
-            "confidence": g.confidence,
-            "match_pct": pct,
-        })).collect::<Vec<_>>(),
+        "rules": matched.iter().map(|(g, pct)| {
+            let severity = match db.and_then(|d| d.get_rule_intent(g.triple_id).ok().flatten()) {
+                Some(intent) => intent.severity,
+                None => Severity::from_predicate(&g.predicate),
+            };
+            let mut entry = json!({
+                "triple_id": g.triple_id,
+                "subject": g.subject,
+                "predicate": g.predicate,
+                "object": g.object,
+                "source": g.file_path,
+                "confidence": g.confidence,
+                "match_pct": pct,
+                "severity": severity.as_str(),
+            });
+            // Derivation trace: parser layer + label + line, so reviewers can see
+            // "fired from CLAUDE.md:42 (layer-1 imperative)" without opening
+            // the parser source.
+            if let Some(layer) = g.layer {
+                entry["layer"] = json!(layer);
+                entry["layer_label"] = json!(layer_label(layer));
+            }
+            if let Some(line) = g.line_start {
+                entry["line"] = json!(line);
+            }
+            entry
+        }).collect::<Vec<_>>(),
     });
 
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
@@ -138,6 +179,29 @@ fn audit_log_path(arai_base: &Path, project_slug: &str) -> Result<PathBuf, Strin
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir audit: {e}"))?;
     let fname = format!("{}.jsonl", today_yyyymmdd());
     Ok(dir.join(fname))
+}
+
+/// Append a non-firing event (Compliance, Diff-check, ad-hoc trace) to the
+/// project's daily audit log.  Used by `compliance.rs` so all observability
+/// lives in one place — `arai audit --event=Compliance` Just Works.
+///
+/// Best-effort: silently no-ops on IO failure so a borked log file never
+/// blocks a hook response.
+pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str, payload: Value) {
+    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let entry = json!({
+        "ts": now_rfc3339(),
+        "event": event,
+        "tool": tool_name,
+        "session": session_id,
+        "payload": payload,
+    });
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(f, "{}", entry);
+    }
 }
 
 fn truncate(s: &str, n: usize) -> String {

@@ -1,5 +1,6 @@
 mod audit;
 mod code_scanner;
+mod compliance;
 mod config;
 mod discovery;
 mod enrich;
@@ -83,9 +84,13 @@ enum Commands {
         /// Filter by tool name (Bash, Edit, Write, ...)
         #[arg(long)]
         tool: Option<String>,
-        /// Filter by hook event (PreToolUse, PostToolUse, UserPromptSubmit)
+        /// Filter by hook event (PreToolUse, PostToolUse, UserPromptSubmit, Compliance)
         #[arg(long)]
         event: Option<String>,
+        /// Filter Compliance entries by outcome (obeyed, ignored, unclear).
+        /// Implies `--event=Compliance` unless one is set explicitly.
+        #[arg(long)]
+        outcome: Option<String>,
         /// Maximum entries to return
         #[arg(long, default_value = "50")]
         limit: usize,
@@ -152,6 +157,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Explain which guardrails would fire on a hypothetical tool call —
+    /// useful for debugging "why did this rule fire?" without running the
+    /// hook live.  Pass either a Bash command or `--tool Edit <path>`.
+    ///
+    /// Examples:
+    ///   arai why 'git push --force origin main'
+    ///   arai why --tool Write /src/migrations/001_init.py
+    Why {
+        /// Bash command or tool input (depending on --tool).  Treated as a
+        /// Bash command unless --tool is set.
+        input: Vec<String>,
+        /// Tool name to simulate (Bash, Edit, Write, Read, ...).  Defaults to Bash.
+        #[arg(long, default_value = "Bash")]
+        tool: String,
+        /// Hook event to simulate (PreToolUse or PostToolUse)
+        #[arg(long, default_value = "PreToolUse")]
+        event: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -171,13 +197,14 @@ fn main() {
         Commands::Scan { code, enrich, enrich_llm, enrich_api, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
-        Commands::Audit { since, tool, event, limit, json } => cmd_audit(since, tool, event, limit, json),
+        Commands::Audit { since, tool, event, outcome, limit, json } => cmd_audit(since, tool, event, outcome, limit, json),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
         Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
         Commands::Stats { since, top, json } => cmd_stats(since, top, json),
+        Commands::Why { input, tool, event, json } => cmd_why(input, tool, event, json),
     };
 
     if let Err(e) = result {
@@ -395,19 +422,50 @@ fn cmd_audit(
     since: Option<String>,
     tool: Option<String>,
     event: Option<String>,
+    outcome: Option<String>,
     limit: usize,
     json: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
+
+    // `--outcome` is a shortcut that implies `--event=Compliance` unless the
+    // caller already scoped to a specific event (some future event type may
+    // also carry outcomes).
+    let effective_event: Option<String> = match (event.as_deref(), outcome.as_deref()) {
+        (Some(e), _) => Some(e.to_string()),
+        (None, Some(_)) => Some("Compliance".to_string()),
+        (None, None) => None,
+    };
+
     let entries = audit::query(
         &cfg.arai_base_dir,
         &cfg.project_slug(),
         since_epoch,
         tool.as_deref(),
-        event.as_deref(),
-        limit,
+        effective_event.as_deref(),
+        // Over-fetch so the outcome filter has enough material before
+        // truncating to the requested limit.
+        if outcome.is_some() { limit.saturating_mul(4) } else { limit },
     )?;
+
+    // Apply outcome filter in-process: an entry passes if any item in
+    // `payload.rules[]` has `outcome == <filter>`.
+    let entries: Vec<serde_json::Value> = if let Some(target) = outcome.as_deref() {
+        entries
+            .into_iter()
+            .filter(|e| {
+                e.get("payload")
+                    .and_then(|p| p.get("rules"))
+                    .and_then(|r| r.as_array())
+                    .map(|rs| rs.iter().any(|r| r.get("outcome").and_then(|o| o.as_str()) == Some(target)))
+                    .unwrap_or(false)
+            })
+            .take(limit)
+            .collect()
+    } else {
+        entries
+    };
 
     if entries.is_empty() {
         if json {
@@ -557,6 +615,126 @@ fn cmd_stats(
     let cfg = config::Config::load()?;
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
     stats::run(&cfg, since_epoch, top, json)
+}
+
+/// Explain which guardrails would fire on a hypothetical tool call — same
+/// matching pipeline the live hook uses, but read-only and no audit write.
+fn cmd_why(
+    input: Vec<String>,
+    tool: String,
+    event: String,
+    json: bool,
+) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let db_path = cfg.db_path();
+    if !db_path.exists() {
+        return Err(
+            "No guardrail database found.  Run `arai init` first.".to_string(),
+        );
+    }
+    let db = store::Store::open(&db_path)?;
+
+    // Build a hook payload mirroring what Claude Code sends.
+    let joined = input.join(" ");
+    let tool_input = match tool.as_str() {
+        "Bash" => serde_json::json!({ "command": joined }),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
+            serde_json::json!({ "file_path": joined })
+        }
+        _ => serde_json::json!({ "preview": joined }),
+    };
+    let hook = serde_json::json!({
+        "hook_event_name": event,
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "session_id": "",
+    });
+
+    let result = hooks::match_hook(&hook, &cfg, &db)?;
+
+    if json {
+        let entries: Vec<serde_json::Value> = result
+            .matched
+            .iter()
+            .map(|(g, pct)| {
+                let intent = db.get_rule_intent(g.triple_id).ok().flatten();
+                let severity = intent
+                    .as_ref()
+                    .map(|i| i.severity.as_str().to_string())
+                    .unwrap_or_else(|| intent::Severity::from_predicate(&g.predicate).as_str().to_string());
+                serde_json::json!({
+                    "triple_id": g.triple_id,
+                    "subject": g.subject,
+                    "predicate": g.predicate,
+                    "object": g.object,
+                    "source": g.file_path,
+                    "line": g.line_start,
+                    "layer": g.layer,
+                    "layer_label": g.layer.map(audit::layer_label),
+                    "match_pct": pct,
+                    "severity": severity,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "tool": result.tool_name,
+            "event": result.event,
+            "terms": result.terms,
+            "matched": entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+
+    println!("  tool:   {}", result.tool_name);
+    println!("  event:  {}", result.event);
+    println!("  terms:  {}", result.terms.join(", "));
+    if result.skipped {
+        println!("  status: skipped (tool is on the bypass list)");
+        return Ok(());
+    }
+    if result.matched.is_empty() {
+        println!("  matched: 0 rules");
+        return Ok(());
+    }
+    println!("  matched: {} rule(s)", result.matched.len());
+    println!();
+    for (g, pct) in &result.matched {
+        let intent = db.get_rule_intent(g.triple_id).ok().flatten();
+        let severity = intent
+            .as_ref()
+            .map(|i| i.severity.as_str())
+            .unwrap_or_else(|| {
+                // Fallback string lifetime: compute once before the match.
+                match intent::Severity::from_predicate(&g.predicate) {
+                    intent::Severity::Block => "block",
+                    intent::Severity::Warn => "warn",
+                    intent::Severity::Inform => "inform",
+                }
+            });
+        let src = if g.file_path.is_empty() {
+            &g.source_file
+        } else {
+            &g.file_path
+        };
+        let line_suffix = g
+            .line_start
+            .map(|l| format!(":{l}"))
+            .unwrap_or_default();
+        let layer_suffix = g
+            .layer
+            .map(|l| format!("  [{}]", audit::layer_label(l)))
+            .unwrap_or_default();
+        println!(
+            "  • [{sev:6}] {subj} {pred}: {obj}  ({pct}% match){layer_suffix}",
+            sev = severity,
+            subj = g.subject,
+            pred = g.predicate,
+            obj = g.object,
+        );
+        println!("       from {src}{line_suffix}");
+    }
+    Ok(())
 }
 
 /// Parse a duration like "7d", "24h", "30m", "3600s" into an epoch-seconds

@@ -363,6 +363,9 @@ mod tests {
                 confidence: 0.9,
                 source_file: "test".to_string(),
                 file_path: "test.md".to_string(),
+                layer: None,
+                line_start: None,
+                expires_at: None,
             },
             100,
         )

@@ -140,6 +140,7 @@ pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, S
                 tools,
                 allow_inverse,
                 enriched_by: "model".to_string(),
+                severity: crate::intent::Severity::from_predicate(&g.predicate),
             };
 
             store.upsert_rule_intent(g.triple_id, &intent)
@@ -680,6 +681,7 @@ fn apply_classifications(
             tools,
             allow_inverse,
             enriched_by: if is_partial { "llm-partial".to_string() } else { "llm".to_string() },
+            severity: crate::intent::Severity::from_predicate(&g.predicate),
         };
 
         store.upsert_rule_intent(id, &intent).map_err(|e| e.to_string())?;
@@ -862,6 +864,9 @@ mod tests {
             confidence: 0.92,
             source_file: "test".to_string(),
             file_path: "test".to_string(),
+            layer: None,
+            line_start: None,
+            expires_at: None,
         };
         let action = fuzzy_match_action("forbid", &g);
         // "forbid" is about predicate, not action — should fall back to taxonomy
@@ -1017,6 +1022,8 @@ mod tests {
                 source_file: "test".to_string(),
                 line_start: Some(1),
                 line_end: Some(1),
+                layer: None,
+                expires_at: None,
             },
             crate::parser::Triple {
                 subject: "Alembic".to_string(),
@@ -1027,6 +1034,8 @@ mod tests {
                 source_file: "test".to_string(),
                 line_start: Some(2),
                 line_end: Some(2),
+                layer: None,
+                expires_at: None,
             },
         ];
 
@@ -1099,6 +1108,9 @@ mod tests {
                 confidence: 0.92,
                 source_file: "test".to_string(),
                 file_path: "test".to_string(),
+                layer: None,
+                line_start: None,
+                expires_at: None,
             },
         ];
         let prompt = build_enrichment_prompt(&guardrails);
@@ -1151,6 +1163,8 @@ mod tests {
             source_file: "test".to_string(),
             line_start: Some(1),
             line_end: Some(1),
+            layer: None,
+            expires_at: None,
         }];
         store.upsert_file("test", "test", &triples, "test").unwrap();
         let guardrails = store.load_guardrails().unwrap();
@@ -1175,6 +1189,9 @@ mod tests {
             confidence: 0.9,
             source_file: "test".to_string(),
             file_path: "test".to_string(),
+            layer: None,
+            line_start: None,
+            expires_at: None,
         }
     }
 }

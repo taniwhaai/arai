@@ -1,8 +1,53 @@
 use crate::config::Config;
+use crate::intent::Severity;
 use crate::store::{Guardrail, Store};
-use crate::{audit, config, guardrails, session, store};
+use crate::{audit, compliance, config, guardrails, session, store};
 use serde_json::Value;
 use std::io::Read;
+
+/// Environment variable that, when set to `off` or `0`, forces Arai into
+/// advise-only mode — even `Block`-severity rules fall back to
+/// `permissionDecision: "allow"` with the rule attached as context.  Useful
+/// when rolling Arai out incrementally: ingest rules, measure compliance for
+/// a week, then flip deny mode on once you trust the rule set.
+const DENY_MODE_ENV: &str = "ARAI_DENY_MODE";
+
+fn deny_mode_enabled() -> bool {
+    match std::env::var(DENY_MODE_ENV) {
+        Ok(v) => {
+            let v = v.to_lowercase();
+            v != "off" && v != "0" && v != "false" && v != "no"
+        }
+        Err(_) => true,
+    }
+}
+
+/// Highest severity among the matched rules, if any.  Used to pick between
+/// advise (`allow`) and deny (`deny`) on PreToolUse.
+fn highest_severity(matched: &[(Guardrail, u8)], db: &Store) -> Severity {
+    let mut highest = Severity::Inform;
+    for (g, _) in matched {
+        if let Ok(Some(intent)) = db.get_rule_intent(g.triple_id) {
+            if intent.severity == Severity::Block {
+                return Severity::Block;
+            }
+            if intent.severity == Severity::Warn && highest == Severity::Inform {
+                highest = Severity::Warn;
+            }
+        } else {
+            // No classified intent — fall back to predicate-derived severity so
+            // pre-migration stores still block on obvious `never` rules.
+            let sev = Severity::from_predicate(&g.predicate);
+            if sev == Severity::Block {
+                return Severity::Block;
+            }
+            if sev == Severity::Warn && highest == Severity::Inform {
+                highest = Severity::Warn;
+            }
+        }
+    }
+    highest
+}
 
 /// Result of matching a hook payload against the current guardrail set.
 /// Pure — no audit write, no telemetry, no stdout.
@@ -178,6 +223,13 @@ pub fn handle_stdin() -> Result<(), String> {
             terms.sort();
             terms.dedup();
             session::record_tool_call(&cfg.arai_base_dir, session_id, tool_name, &terms);
+
+            // Compliance tracking: correlate this PostToolUse against any
+            // recent PreToolUse firings in the same session and emit one
+            // Compliance audit entry per rule.  Done here (not in match_hook)
+            // because scenario replays should not pollute the audit log.
+            let preview = summarize_tool_input(tool_name, &tool_input);
+            compliance::record_post_compliance(&cfg, session_id, tool_name, &terms, &preview);
         }
     }
 
@@ -227,16 +279,24 @@ pub fn handle_stdin() -> Result<(), String> {
         crate::telemetry::track_rule_fired(&cfg.arai_base_dir, &g.subject, &g.predicate, &result.tool_name, &result.event, *pct);
     }
 
+    // Decide whether to deny before writing the audit line so the audit log
+    // reflects the actual outcome the hook emitted.
+    let top_severity = highest_severity(&result.matched, &db);
+    let is_pretooluse = result.event == "PreToolUse";
+    let deny_enabled = deny_mode_enabled();
+    let blocking = is_pretooluse && top_severity == Severity::Block && deny_enabled;
+
     // Local audit log — records every firing for `arai audit` / `arai stats`
     let tool_input = hook
         .get("tool_input")
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
     let prompt_preview = summarize_tool_input(&result.tool_name, &tool_input);
-    let decision = match result.event.as_str() {
-        "PreToolUse" => "inject",
-        "PostToolUse" => "review",
-        other => other,
+    let decision = match (result.event.as_str(), blocking) {
+        ("PreToolUse", true) => "deny",
+        ("PreToolUse", false) => "inject",
+        ("PostToolUse", _) => "review",
+        (other, _) => other,
     };
     audit::record_firing(
         &cfg,
@@ -246,11 +306,23 @@ pub fn handle_stdin() -> Result<(), String> {
         &prompt_preview,
         &result.matched,
         decision,
+        Some(&db),
     );
 
     let context = guardrails::format_context(&result.matched);
-    let response = match result.event.as_str() {
-        "PostToolUse" => serde_json::json!({
+    let response = match (result.event.as_str(), blocking) {
+        ("PreToolUse", true) => {
+            let reason = deny_reason(&result.matched, &db);
+            serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                    "additionalContext": context,
+                }
+            })
+        }
+        ("PostToolUse", _) => serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
                 "additionalContext": format!("[Post-action review] {context}")
@@ -267,6 +339,32 @@ pub fn handle_stdin() -> Result<(), String> {
 
     println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
     Ok(())
+}
+
+/// Build a short deny reason Claude Code surfaces to the user.  Prefers the
+/// first `Block`-severity rule (or predicate-derived fallback) and quotes its
+/// source so the decision is auditable at a glance.
+fn deny_reason(matched: &[(Guardrail, u8)], db: &Store) -> String {
+    for (g, _) in matched {
+        let sev = db
+            .get_rule_intent(g.triple_id)
+            .ok()
+            .flatten()
+            .map(|i| i.severity)
+            .unwrap_or_else(|| Severity::from_predicate(&g.predicate));
+        if sev == Severity::Block {
+            let src = if g.file_path.is_empty() { &*g.source_file } else { &*g.file_path };
+            return format!(
+                "Arai: \"{subj} {pred} {obj}\" [from {src}]",
+                subj = g.subject,
+                pred = g.predicate,
+                obj = g.object,
+            );
+        }
+    }
+    // Shouldn't reach here if highest_severity returned Block, but guard for
+    // robustness.
+    "Arai: blocking rule matched".to_string()
 }
 
 /// Produce a short human-readable preview of tool input for the audit log.
@@ -294,5 +392,138 @@ fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
     } else {
         let head: String = trimmed.chars().take(200).collect();
         format!("{head}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intent::RuleIntent;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db() -> (Store, PathBuf) {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_hooks_test_{}_{}", std::process::id(), id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let store = Store::open(&db_path).unwrap();
+        (store, dir)
+    }
+
+    fn mk_guardrail(id: i64, subject: &str, predicate: &str, object: &str) -> Guardrail {
+        Guardrail {
+            triple_id: id,
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            confidence: 0.9,
+            source_file: "CLAUDE.md".to_string(),
+            file_path: "CLAUDE.md".to_string(),
+            layer: Some(1),
+            line_start: Some(42),
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn test_deny_mode_env_toggle() {
+        // Default on (env unset) — guard value may leak from the running test
+        // harness, so assert the positive and negative values explicitly.
+        for (val, expected) in [
+            ("on", true),
+            ("", true),
+            ("off", false),
+            ("0", false),
+            ("false", false),
+            ("no", false),
+            ("yes", true),
+        ] {
+            std::env::set_var(DENY_MODE_ENV, val);
+            assert_eq!(
+                deny_mode_enabled(),
+                expected,
+                "ARAI_DENY_MODE={val:?} expected {expected}"
+            );
+        }
+        std::env::remove_var(DENY_MODE_ENV);
+        assert!(deny_mode_enabled(), "unset ARAI_DENY_MODE should enable deny mode");
+    }
+
+    #[test]
+    fn test_highest_severity_picks_block() {
+        let (store, dir) = temp_db();
+        let matched = vec![
+            (mk_guardrail(1, "alembic", "prefers", "autogenerate"), 90u8),
+            (mk_guardrail(2, "git", "never", "force-push to main"), 100u8),
+            (mk_guardrail(3, "cargo", "always", "test before commit"), 80u8),
+        ];
+        // No rule_intent rows → falls back to predicate-derived severity.
+        assert_eq!(highest_severity(&matched, &store), Severity::Block);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_highest_severity_respects_store_override() {
+        let (store, dir) = temp_db();
+        // Seed a rule via the public API, then override its intent with Inform
+        // severity even though the predicate ("never") would normally derive Block.
+        let triple = crate::parser::Triple {
+            subject: "noisy".to_string(),
+            predicate: "never".to_string(),
+            object: "something minor".to_string(),
+            confidence: 0.9,
+            domain: "test".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
+        let guardrails = store.load_guardrails().unwrap();
+        let tid = guardrails[0].triple_id;
+
+        let intent = RuleIntent {
+            action: crate::intent::Action::General,
+            timing: crate::intent::Timing::ToolCall,
+            tools: vec!["*".to_string()],
+            allow_inverse: false,
+            enriched_by: "manual".to_string(),
+            severity: Severity::Inform,
+        };
+        store.upsert_rule_intent(tid, &intent).unwrap();
+
+        let matched = vec![(mk_guardrail(tid, "noisy", "never", "something minor"), 100u8)];
+        // Store override demotes the Block to Inform.
+        assert_eq!(highest_severity(&matched, &store), Severity::Inform);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_deny_reason_mentions_source_and_rule() {
+        let (store, dir) = temp_db();
+        let matched = vec![(mk_guardrail(1, "git", "never", "force-push to main"), 100u8)];
+        let reason = deny_reason(&matched, &store);
+        assert!(reason.contains("never"), "reason should quote the predicate: {reason:?}");
+        assert!(reason.contains("force-push"), "reason should quote the object: {reason:?}");
+        assert!(reason.contains("CLAUDE.md"), "reason should cite source: {reason:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_deny_reason_skips_non_blocking() {
+        let (store, dir) = temp_db();
+        let matched = vec![
+            (mk_guardrail(1, "cargo", "prefers", "small commits"), 70u8),
+            (mk_guardrail(2, "git", "never", "force-push to main"), 100u8),
+        ];
+        let reason = deny_reason(&matched, &store);
+        // Should pick the `never` rule, not the `prefers` rule.
+        assert!(reason.contains("force-push"), "picked wrong rule: {reason:?}");
+        assert!(!reason.contains("small commits"), "non-block rule leaked: {reason:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

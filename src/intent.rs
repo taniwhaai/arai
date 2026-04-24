@@ -8,6 +8,63 @@ pub struct RuleIntent {
     pub tools: Vec<String>,
     pub allow_inverse: bool,
     pub enriched_by: String,
+    /// How strictly the rule should be enforced at hook time.  Derived from
+    /// the predicate unless explicitly overridden.  Defaults to `Warn` so a
+    /// rule set from an older Arai install keeps today's advise-only behaviour
+    /// until it's re-ingested.
+    #[serde(default = "default_severity")]
+    pub severity: Severity,
+}
+
+fn default_severity() -> Severity {
+    Severity::Warn
+}
+
+/// How strictly a rule is enforced when it matches a tool call.
+///
+/// - `Block`  — PreToolUse emits `permissionDecision: "deny"` and Claude Code
+///   must refuse the call.  Derived from prohibitive predicates
+///   (`never`, `forbids`, `must_not`).
+/// - `Warn`   — existing behaviour: `permissionDecision: "allow"` with the
+///   rule attached as `additionalContext`.  Derived from affirmative
+///   predicates (`always`, `requires`, `enforces`).
+/// - `Inform` — soft nudge; rule still surfaces in audit + context but is
+///   de-emphasised.  Derived from `prefers` / `learned_from`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Block,
+    Warn,
+    Inform,
+}
+
+impl Severity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Severity::Block => "block",
+            Severity::Warn => "warn",
+            Severity::Inform => "inform",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "block" => Severity::Block,
+            "inform" => Severity::Inform,
+            _ => Severity::Warn,
+        }
+    }
+
+    /// Infer severity from a rule's predicate.  Prohibitions block, affirmations warn,
+    /// soft preferences inform.  Unknown predicates fall back to `Warn`.
+    pub fn from_predicate(predicate: &str) -> Self {
+        match predicate {
+            "never" | "forbids" | "must_not" => Severity::Block,
+            "always" | "requires" | "enforces" => Severity::Warn,
+            "prefers" | "learned_from" => Severity::Inform,
+            _ => Severity::Warn,
+        }
+    }
 }
 
 /// When a rule should fire in the workflow lifecycle.
@@ -399,6 +456,7 @@ pub fn classify_rule_with_subject(predicate: &str, object: &str, subject: Option
         tools,
         allow_inverse,
         enriched_by: "taxonomy".to_string(),
+        severity: Severity::from_predicate(predicate),
     }
 }
 
@@ -588,5 +646,41 @@ mod tests {
         assert!(tool_matches_intent(&general_intent, "Write"));
         assert!(tool_matches_intent(&general_intent, "Bash"));
         assert!(tool_matches_intent(&general_intent, "Edit"));
+    }
+
+    #[test]
+    fn test_severity_from_predicate() {
+        assert_eq!(Severity::from_predicate("never"), Severity::Block);
+        assert_eq!(Severity::from_predicate("forbids"), Severity::Block);
+        assert_eq!(Severity::from_predicate("must_not"), Severity::Block);
+        assert_eq!(Severity::from_predicate("always"), Severity::Warn);
+        assert_eq!(Severity::from_predicate("requires"), Severity::Warn);
+        assert_eq!(Severity::from_predicate("enforces"), Severity::Warn);
+        assert_eq!(Severity::from_predicate("prefers"), Severity::Inform);
+        assert_eq!(Severity::from_predicate("learned_from"), Severity::Inform);
+        // Unknown predicates fall back to Warn — conservative default.
+        assert_eq!(Severity::from_predicate("weird"), Severity::Warn);
+    }
+
+    #[test]
+    fn test_severity_attached_to_intent() {
+        let never = classify_rule("never", "hand-write migrations");
+        assert_eq!(never.severity, Severity::Block);
+
+        let always = classify_rule("always", "run tests before merging");
+        assert_eq!(always.severity, Severity::Warn);
+
+        let prefers = classify_rule("prefers", "smaller diffs");
+        assert_eq!(prefers.severity, Severity::Inform);
+    }
+
+    #[test]
+    fn test_severity_roundtrip_string() {
+        for sev in [Severity::Block, Severity::Warn, Severity::Inform] {
+            assert_eq!(Severity::from_str(sev.as_str()), sev);
+        }
+        // Unknown severities fall back to Warn so rule sets stay advise-only
+        // until re-classified.
+        assert_eq!(Severity::from_str("bogus"), Severity::Warn);
     }
 }

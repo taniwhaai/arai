@@ -348,12 +348,48 @@ pub fn format_context(matched: &[(Guardrail, u8)]) -> String {
     lines.push("Arai guardrails:".to_string());
     let limit = matched.len().min(MAX_RULES_PER_HOOK);
     for (g, pct) in &matched[..limit] {
-        lines.push(format!("- {} {}: {} ({}% match)", g.subject, g.predicate, g.object, pct));
+        let trace = format_trace(g);
+        lines.push(format!(
+            "- {} {}: {} ({}% match){}",
+            g.subject, g.predicate, g.object, pct, trace
+        ));
     }
     if matched.len() > MAX_RULES_PER_HOOK {
         lines.push(format!("  ({} more suppressed)", matched.len() - MAX_RULES_PER_HOOK));
     }
     lines.join("\n")
+}
+
+/// Short "source:line layer-N" suffix appended to each rule line.  Empty when
+/// neither field is populated (e.g. manually-added rules before the trace
+/// existed).  Kept compact so the hook additionalContext stays readable.
+fn format_trace(g: &Guardrail) -> String {
+    let src = if !g.file_path.is_empty() {
+        g.file_path.as_str()
+    } else if !g.source_file.is_empty() {
+        g.source_file.as_str()
+    } else {
+        ""
+    };
+    let mut bits = String::new();
+    if !src.is_empty() {
+        bits.push_str(src);
+        if let Some(line) = g.line_start {
+            bits.push(':');
+            bits.push_str(&line.to_string());
+        }
+    }
+    if let Some(layer) = g.layer {
+        if !bits.is_empty() {
+            bits.push(' ');
+        }
+        bits.push_str(&format!("layer-{layer}"));
+    }
+    if bits.is_empty() {
+        String::new()
+    } else {
+        format!(" [{bits}]")
+    }
 }
 
 /// Simple shell tokenizer — splits on whitespace, respects quotes.
@@ -473,6 +509,8 @@ mod tests {
                 source_file: "CLAUDE.md".to_string(),
                 line_start: Some(1),
                 line_end: Some(1),
+                layer: None,
+                expires_at: None,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -483,6 +521,8 @@ mod tests {
                 source_file: "CLAUDE.md".to_string(),
                 line_start: Some(2),
                 line_end: Some(2),
+                layer: None,
+                expires_at: None,
             },
         ];
 
@@ -625,6 +665,8 @@ mod tests {
                 source_file: "test".to_string(),
                 line_start: Some(1),
                 line_end: Some(1),
+                layer: None,
+                expires_at: None,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -635,6 +677,8 @@ mod tests {
                 source_file: "test".to_string(),
                 line_start: Some(2),
                 line_end: Some(2),
+                layer: None,
+                expires_at: None,
             },
         ];
 

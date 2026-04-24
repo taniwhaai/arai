@@ -16,6 +16,18 @@ pub struct Triple {
     pub line_start: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_end: Option<i64>,
+    /// Which of the six `match_imperative` layers fired.  Lets `arai audit` /
+    /// `arai why` surface "fired from CLAUDE.md:42 (layer-1 imperative)" so a
+    /// user can trace *why* a rule exists without spelunking the parser.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub layer: Option<u8>,
+    /// Optional expiry date (ISO `YYYY-MM-DD`).  Extracted from a trailing
+    /// `(expires YYYY-MM-DD)` or `(until YYYY-MM-DD)` annotation in the rule
+    /// text.  Expired rules are filtered out by `load_guardrails`, so a
+    /// rule written "never skip tests (expires 2026-06-01)" self-prunes
+    /// after that date without any manual cleanup.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub expires_at: Option<String>,
 }
 
 /// Known tool names for subject extraction, "use X" two-signal gate, and content sniffing.
@@ -38,21 +50,44 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
     let mut triples = Vec::new();
 
     for item in items {
-        if let Some(triple) = match_imperative(&item.text, &item.section_context) {
+        if let Some((subject, predicate, object, layer)) =
+            match_imperative(&item.text, &item.section_context)
+        {
+            let (object, expires_at) = extract_expiry(&object);
             triples.push(Triple {
-                subject: triple.0,
-                predicate: triple.1,
-                object: triple.2,
+                subject,
+                predicate,
+                object,
                 confidence: base_confidence,
                 domain: format!("memory.{source_type}"),
                 source_file: String::new(), // filled by caller
                 line_start: Some(item.line_start as i64),
                 line_end: Some(item.line_end as i64),
+                layer: Some(layer),
+                expires_at,
             });
         }
     }
 
     triples
+}
+
+/// Strip a trailing `(expires YYYY-MM-DD)` or `(until YYYY-MM-DD)` annotation
+/// from the rule object and return the cleaned object plus the parsed date.
+/// Accepts case-insensitive `expires` / `expire` / `until`.  If nothing is
+/// found, the object is returned unchanged with `None`.
+pub fn extract_expiry(object: &str) -> (String, Option<String>) {
+    let re = match Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$") {
+        Ok(r) => r,
+        Err(_) => return (object.to_string(), None),
+    };
+    if let Some(caps) = re.captures(object) {
+        let date = caps.get(1).map(|m| m.as_str().to_string());
+        let cleaned = re.replace(object, "").trim().to_string();
+        (cleaned, date)
+    } else {
+        (object.to_string(), None)
+    }
 }
 
 #[derive(Debug)]
@@ -207,8 +242,10 @@ fn strip_markdown(text: &str) -> String {
 }
 
 /// Match a list item against imperative patterns.
-/// Returns (subject, predicate, object) or None.
-fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(String, String, String)> {
+/// Returns (subject, predicate, object, layer) or None.  `layer` is the 1-based
+/// index of the pattern family that fired, surfaced in the audit log + hook
+/// output so a reviewer can trace the derivation without reading this file.
+fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(String, String, String, u8)> {
     // Skip items that look like pure code references
     if is_code_reference(text) {
         return None;
@@ -241,7 +278,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
                 let subject = extract_subject(&lower, section_context);
-                return Some((subject, predicate.to_string(), clean_object(&object)));
+                return Some((subject, predicate.to_string(), clean_object(&object), 1));
             }
         }
     }
@@ -259,7 +296,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
                 let subject = extract_subject(&lower, section_context);
-                return Some((subject, predicate.to_string(), clean_object(&object)));
+                return Some((subject, predicate.to_string(), clean_object(&object), 2));
             }
         }
     }
@@ -292,7 +329,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
                 } else {
                     extract_subject(&after_lower, section_context)
                 };
-                return Some((subject, "requires".to_string(), clean_object(after_colon)));
+                return Some((subject, "requires".to_string(), clean_object(after_colon), 3));
             }
         }
     }
@@ -314,7 +351,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
                 let subject = extract_subject(&lower, section_context);
-                return Some((subject, predicate.to_string(), clean_object(&object)));
+                return Some((subject, predicate.to_string(), clean_object(&object), 4));
             }
         }
     }
@@ -328,7 +365,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
 
         if has_known_tool || has_co_imperative {
             let subject = extract_subject(&lower, section_context);
-            return Some((subject, "requires".to_string(), clean_object(object)));
+            return Some((subject, "requires".to_string(), clean_object(object), 5));
         }
     }
 
@@ -346,7 +383,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     let first_word = lower.split_whitespace().next().unwrap_or("");
     if verb_starts.contains(&first_word) {
         let subject = extract_subject(&lower, section_context);
-        return Some((subject, "requires".to_string(), clean_object(&cleaned)));
+        return Some((subject, "requires".to_string(), clean_object(&cleaned), 6));
     }
 
     None
@@ -474,6 +511,62 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].predicate, "never");
         assert!(rules[0].object.contains("hand-write migration files"));
+    }
+
+    #[test]
+    fn test_layer_is_tagged() {
+        // "Never X" → layer 1 (start-of-sentence imperative)
+        let rules = extract_rules("- Never hand-write migration files", "test", 0.9);
+        assert_eq!(rules[0].layer, Some(1));
+
+        // "X is forbidden" → layer 2 (passive)
+        let rules = extract_rules("- Force-push to main is forbidden", "test", 0.9);
+        assert_eq!(rules[0].layer, Some(2));
+
+        // "Label: imperative" → layer 3 (colon-separated)
+        let rules = extract_rules("- Simplicity First: Make every change minimal", "test", 0.9);
+        assert_eq!(rules[0].layer, Some(3));
+    }
+
+    #[test]
+    fn test_expiry_is_extracted_and_stripped() {
+        let rules = extract_rules(
+            "- Never skip tests (expires 2026-12-31)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].expires_at.as_deref(), Some("2026-12-31"));
+        // Object should no longer contain the annotation.
+        assert!(!rules[0].object.contains("expires"), "object still carries annotation: {}", rules[0].object);
+        assert!(rules[0].object.contains("skip tests"), "object missing rule body: {}", rules[0].object);
+    }
+
+    #[test]
+    fn test_expiry_variants() {
+        // "until" variant
+        let rules = extract_rules(
+            "- Always use autogenerate (until 2027-01-15)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules[0].expires_at.as_deref(), Some("2027-01-15"));
+
+        // "expire" (no s) also accepted
+        let rules = extract_rules(
+            "- Avoid direct sql writes (expire 2026-06-01)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules[0].expires_at.as_deref(), Some("2026-06-01"));
+
+        // No annotation → None
+        let rules = extract_rules(
+            "- Never force-push to main",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules[0].expires_at, None);
     }
 
     #[test]
