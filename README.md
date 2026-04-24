@@ -17,19 +17,22 @@ That's it. Arai discovers your instruction files, extracts the rules, classifies
 
 ## What It Does
 
-When Claude Code is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters.
+When Claude Code is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
 
 ```
 You: "Create a new database migration"
 
   PreToolUse: Write migrations/versions/001_add_users.py
-  → Arai guardrails:
-    - Alembic never: hand-write migration files
+  → Arai: deny
+    reason: "Alembic never: hand-write migration files"
+            [from CLAUDE.md:12, layer-1 imperative]
 
 Claude: "I should use alembic revision --autogenerate instead..."
 ```
 
 Rules only fire when relevant. No noise on `ls`. No repeating principles already in CLAUDE.md.
+
+Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
 
 ## How It Works
 
@@ -97,12 +100,14 @@ model = "gpt-4o-mini"
 arai init                  # Discover, extract, classify, scan, set up hooks
 arai status                # Show what's being enforced
 arai guardrails            # List all active rules
+arai why "git push --force" # Explain which rules would fire (dry-run, no audit write)
 arai scan                  # Re-scan instruction files
 arai scan --code           # Also scan source code (tree-sitter AST)
 arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
+arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai stats                 # Aggregate audit log — top rules, tools, days
 arai test scenarios.json   # Replay synthetic hook scenarios against rules
 arai record --since=1h     # Capture recent firings as a scenario skeleton
@@ -112,12 +117,97 @@ arai mcp                   # Run the MCP server (stdio) for agent-authored guard
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 ```
 
+## Deny mode — actually block bad actions
+
+Starting in v0.3.0, Arai no longer just *advises*: rules derived from
+prohibitive predicates (`never`, `forbids`, `must_not`) emit
+`permissionDecision: "deny"` so Claude Code refuses the tool call. Advisory
+rules (`always`, `requires`, `prefers`) keep the previous behaviour.
+
+Severity is inferred from the predicate at extract time:
+
+| Predicate | Severity | Hook behaviour |
+|-----------|----------|----------------|
+| `never`, `forbids`, `must_not` | `block`  | `permissionDecision: "deny"` + reason |
+| `always`, `requires`, `enforces` | `warn` | `permissionDecision: "allow"` + context |
+| `prefers`, `learned_from` | `inform` | `permissionDecision: "allow"` + context |
+
+Rolling Arai out incrementally? Flip deny mode off at the env level:
+
+```bash
+ARAI_DENY_MODE=off   # advisory-only — rules still fire in additionalContext
+```
+
+Useful pattern: ship Arai in advise mode for a week, watch `arai audit
+--outcome=ignored`, tune the rules the model keeps flouting, then enable
+deny mode when the rule set is trustworthy.
+
+## Compliance tracking
+
+After every PostToolUse, Arai correlates the call against recent
+PreToolUse firings in the same session and emits a `Compliance` event to
+the audit log per rule:
+
+- **obeyed** — forbidden phrase absent from the executed command (for
+  prohibitive rules), or the required evidence present (for affirmative
+  rules).
+- **ignored** — forbidden phrase still in the executed command.
+  The model ran the thing anyway (either deny was off or Claude Code
+  chose to proceed).
+- **unclear** — not enough signal to decide (short object text, or
+  affirmative rule without evidence in this call).
+
+```bash
+arai audit --event=Compliance     # all verdicts
+arai audit --outcome=ignored      # shortcut for the painful ones
+arai audit --outcome=obeyed       # show the rules doing their job
+```
+
+This closes the feedback loop the audit log was missing: not just *which*
+rules fired, but *which ones the model actually honoured*.
+
+## arai why — explain before you commit
+
+`arai why <action>` replays a hypothetical tool call through the live
+matching pipeline and prints the rules that would fire, with severity,
+derivation (source + line + parser layer), and match percentage. No audit
+write; read-only against the rule set.
+
+```bash
+arai why "git push --force origin main"
+arai why --tool Write /src/migrations/001_init.py
+arai why --tool Bash --event PostToolUse "rm -rf /data"
+arai why "git push --force" --json   # machine-readable
+```
+
+Use it to: debug "why did that rule fire?", preview new rules before
+committing them, or include the output in a PR description when you
+change a CLAUDE.md.
+
+## Rule expiry — self-pruning rules
+
+Annotate rules with `(expires YYYY-MM-DD)` or `(until YYYY-MM-DD)` at the
+end of the line. The annotation is stripped from the rule body at parse
+time and stored separately; `load_guardrails` filters out expired rows so
+the rule stops firing on its own, without you having to remember to
+clean it up.
+
+```markdown
+- Never touch the old auth module (expires 2026-09-01)
+- Always rebase against release-1.8 until 2026-12-31
+- Prefer the new payment SDK over the legacy one (until 2027-06-30)
+```
+
+Perfect for `learned_from` incidents that have a shelf life, migration
+windows, and "temporarily forbid X until we finish the refactor" rules.
+
 ## Audit log
 
 Every time a rule fires, Arai appends one line to a local JSONL log at
 `~/.arai/audit/<project-slug>/<YYYYMMDD>.jsonl`. The log captures the
-hook event, the tool that was called, a truncated prompt preview, and
-every rule that matched (with source file and confidence).
+hook event, the tool that was called, a truncated prompt preview, the
+decision (`inject`, `deny`, `review`), and every rule that matched —
+with source file, line number, parser layer, severity, and confidence.
 
 Nothing leaves your machine — this is separate from the anonymous
 usage telemetry below.
@@ -127,6 +217,8 @@ arai audit                    # Today's firings, table view
 arai audit --since=7d         # Last week
 arai audit --tool=Bash        # Only Bash tool calls
 arai audit --event=PreToolUse # Only pre-tool-use firings
+arai audit --event=Compliance # Compliance verdicts (Pre/Post correlation)
+arai audit --outcome=ignored  # Shortcut: Compliance events marked ignored
 arai audit --json             # JSONL stream (pipe-friendly)
 ```
 

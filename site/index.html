@@ -236,8 +236,8 @@
 
 <section class="hero">
     <div class="container">
-        <h1><span>CLAUDE.md</span> that actually works.</h1>
-        <p>Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.</p>
+        <h1><span>CLAUDE.md</span> that actually blocks.</h1>
+        <p>Enforce AI coding assistant instruction files via hooks. Rules marked <code>never</code> deny the tool call. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -248,12 +248,13 @@
 
 <section class="example">
     <div class="container">
-        <h2>Rules fire when they matter</h2>
+        <h2>Rules fire when they matter &mdash; and actually block</h2>
         <div class="example-block">
             <span class="dim">You: "Create a new database migration"</span><br><br>
             <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
-            <span class="warm">&rarr; Arai guardrails:</span><br>
-            <span class="warm">&nbsp;&nbsp;- Alembic never: hand-write migration files</span><br><br>
+            <span class="warm">&rarr; Arai: <strong>deny</strong></span><br>
+            <span class="warm">&nbsp;&nbsp;reason: "Alembic never: hand-write migration files"</span><br>
+            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from CLAUDE.md:12, layer-1 imperative]</span><br><br>
             <span class="dim">Claude: "I should use alembic revision --autogenerate instead..."</span>
         </div>
     </div>
@@ -274,6 +275,26 @@
             <div class="feature">
                 <h3>Session tracking</h3>
                 <p>"Never push without tests" silences after cargo test runs. Arai remembers what happened this session.</p>
+            </div>
+            <div class="feature">
+                <h3>Block, don&rsquo;t just advise</h3>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code>. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>.</p>
+            </div>
+            <div class="feature">
+                <h3>Compliance tracking</h3>
+                <p>Every PostToolUse is correlated against its PreToolUse firings. Each rule gets an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict. <code>arai audit --outcome=ignored</code> tells you which rules the model keeps flouting.</p>
+            </div>
+            <div class="feature">
+                <h3>Derivation trace</h3>
+                <p>Every firing carries source file, line, and parser layer. Hook output shows <code>[CLAUDE.md:42 layer-1]</code> — no more guessing why a rule fired.</p>
+            </div>
+            <div class="feature">
+                <h3>Explain before you commit</h3>
+                <p><code>arai why "git push --force"</code> replays a hypothetical tool call through the live match pipeline. Read-only. Ship new rules with confidence.</p>
+            </div>
+            <div class="feature">
+                <h3>Self-pruning rules</h3>
+                <p>Annotate a rule with <code>(expires 2026-12-31)</code> or <code>(until 2027-06-30)</code>. Arai filters it out after the date automatically &mdash; perfect for incident-driven rules that have a shelf life.</p>
             </div>
             <div class="feature">
                 <h3>Audit log</h3>

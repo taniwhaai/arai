@@ -12,11 +12,14 @@ cargo install --path . --features enrich  # Install with ONNX enrichment
 cargo run -- init              # Test init flow
 cargo run -- guardrails        # List guardrails
 cargo run -- status            # Show enforcement status
+cargo run -- why "git push --force origin main"  # Explain matches (dry-run)
 cargo run -- scan --code       # Re-scan with AST code graph
 cargo run -- scan --enrich-llm # Enrich rules via LLM
 cargo run -- add "Never X"     # Add a manual rule
 cargo run -- audit             # Tail the local firing log (today)
 cargo run -- audit --json      # JSONL stream
+cargo run -- audit --event=Compliance   # Compliance verdicts (Pre/Post correlation)
+cargo run -- audit --outcome=ignored    # Rules the model ran despite a Pre-firing
 cargo run -- stats             # Aggregate the audit log (top rules, tools, days)
 cargo run -- lint CLAUDE.md    # Parse a file and preview extracted rules, no DB writes
 cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scenario
@@ -24,25 +27,27 @@ cargo run -- record --since=1h # Build scenarios from recent audit entries
 cargo run -- trust --add <url> # Approve a URL for arai:extends
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)
 echo '{"tool_name":"Bash","tool_input":{"command":"git push"}}' | cargo run -- guardrails --match-stdin
+ARAI_DENY_MODE=off cargo run -- guardrails --match-stdin  # Advise-only (no deny)
 ```
 
 ## Architecture
 
 ```
 src/
-├── main.rs               # CLI entry (clap) — init, status, guardrails, scan, add, audit, mcp, upgrade
+├── main.rs               # CLI entry (clap) — init, status, guardrails, scan, add, audit, mcp, upgrade, why
 ├── config.rs             # Config, project paths + slug, env vars, LLM command
 ├── discovery.rs          # Instruction file discovery (CLAUDE.md, .cursorrules, etc.)
-├── parser.rs             # Rule extraction from markdown (6 layers of pattern matching)
-├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent)
-├── guardrails.rs         # Term extraction, subject matching, tool scope filtering
-├── hooks.rs              # Hook protocol — PreToolUse, PostToolUse, UserPromptSubmit; writes audit log
+├── parser.rs             # Rule extraction from markdown (6 layers of pattern matching); tracks layer + expiry
+├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent); expired-rule filter
+├── guardrails.rs         # Term extraction, subject matching, tool scope filtering; format_trace
+├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit; severity → deny/allow
 ├── init.rs               # `arai init` flow — discover → extract → classify → scan → hook inject
-├── intent.rs             # Intent classification — action (create/modify/execute), timing, tool scope
+├── intent.rs             # Intent classification — action, timing, tool scope, severity
 ├── session.rs            # Session state — prerequisite tracking across tool calls
 ├── code_scanner.rs       # tree-sitter AST parsing — import extraction for 7 languages
 ├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)
-├── audit.rs              # Local JSONL firing log — append on hook match, query via `arai audit`
+├── audit.rs              # Local JSONL firing log — record_firing, record_event, layer_label
+├── compliance.rs         # Pre/Post correlation — Obeyed/Ignored/Unclear verdicts per rule
 ├── stats.rs              # Aggregate views over the audit log — `arai stats`
 ├── scenarios.rs          # Scenario replay harness — `arai test <file>`
 ├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
@@ -80,5 +85,38 @@ leaves the machine.
 - **Session-aware** — tracks prerequisites (e.g., "cargo test" before "git push")
 - **Three enrichment tiers** — taxonomy (free) → ONNX model (local) → LLM (any provider)
 - **Timing-aware** — rules route to the right hook event (PreToolUse vs UserPromptSubmit)
+- **Severity-aware** — prohibitive predicates block, affirmative predicates warn, prefers informs
 - **<5ms no-match hook** — fast exit when no guardrails apply
 - **Single binary** — no runtime dependencies for users
+
+## v0.3 additions at a glance
+
+- **Severity + deny mode** (`intent::Severity`).  `never` / `forbids` /
+  `must_not` → `Block` → `permissionDecision: "deny"` on PreToolUse.
+  `ARAI_DENY_MODE=off` forces advise-only for incremental rollout.
+- **Rule derivation trace** (`parser::Triple::layer`,
+  `Guardrail::layer`, `Guardrail::line_start`, `audit::layer_label`).
+  Every firing records which of the six `match_imperative` layers
+  produced the rule, plus the source line — exposed via
+  `additionalContext`, the audit JSON, and `arai why`.
+- **Compliance tracking** (`compliance.rs`).  On PostToolUse, correlate
+  against recent PreToolUse firings and emit a `Compliance` audit event
+  with an `Obeyed | Ignored | Unclear` verdict per rule.  CLI filter:
+  `arai audit --outcome=ignored`.
+- **Rule expiry** (`parser::Triple::expires_at`,
+  `parser::extract_expiry`).  Trailing `(expires YYYY-MM-DD)` or
+  `(until YYYY-MM-DD)` annotation parses into a date; SQL filter drops
+  expired rules on load.
+- **`arai why`** (in `main.rs`).  Read-only dry-run through the live
+  `match_hook` pipeline.  Shows matched rules, severity, layer, source,
+  line, and match-percentage.
+
+## rustc 1.95 caveat
+
+The dead-code liveness pass in rustc 1.95 ICEs on certain `pub fn`
+shapes declared inside `parser.rs` (specifically a `match`-returning-
+`&'static str` with escaped quote strings).  If you add a new helper in
+`parser.rs` and `cargo check` panics with
+`#0 [check_mod_deathness] checking deathness of variables in module 'parser'`,
+move the helper to `audit.rs` or another module.  `audit::layer_label`
+was moved for this reason.
