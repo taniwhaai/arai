@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-04-24
+
+### Added
+
+- Deny mode, compliance tracking, derivation trace, rule expiry, arai why
+
+### Documentation
+
+- Describe v0.3 features across README, CLAUDE.md, and site
+
+
 ## [0.2.2] - 2026-04-20
 
 ### Added
