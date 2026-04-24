@@ -119,7 +119,7 @@ arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 
 ## Deny mode — actually block bad actions
 
-Starting in v0.3.0, Arai no longer just *advises*: rules derived from
+Starting in v0.2.3, Arai no longer just *advises*: rules derived from
 prohibitive predicates (`never`, `forbids`, `must_not`) emit
 `permissionDecision: "deny"` so Claude Code refuses the tool call. Advisory
 rules (`always`, `requires`, `prefers`) keep the previous behaviour.

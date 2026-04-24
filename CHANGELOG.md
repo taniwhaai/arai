@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
-- Describe v0.3 features across README, CLAUDE.md, and site
+- Describe v0.2.3 features (deny mode, compliance, derivation trace) across README, CLAUDE.md, and site
 
 
 ## [0.2.2] - 2026-04-20

@@ -89,7 +89,7 @@ leaves the machine.
 - **<5ms no-match hook** — fast exit when no guardrails apply
 - **Single binary** — no runtime dependencies for users
 
-## v0.3 additions at a glance
+## v0.2.3 additions at a glance
 
 - **Severity + deny mode** (`intent::Severity`).  `never` / `forbids` /
   `must_not` → `Block` → `permissionDecision: "deny"` on PreToolUse.
