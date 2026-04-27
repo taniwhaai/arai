@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-04-27
+
+### Added
+
+- Per-rule compliance, severity override, recent_decisions, audit --rule, diff ([#35](https://github.com/taniwhaai/arai/pull/35))
+
+
 ### Added
 
 - *(stats)* Per-rule compliance roll-up — `fires / obeyed / ignored /
