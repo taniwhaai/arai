@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-04-26
+
+### Documentation
+
+- Align v0.3 references with actual v0.2.3 release
+
+
 ## [0.2.3] - 2026-04-24
 
 ### Added
