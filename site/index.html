@@ -281,8 +281,12 @@
                 <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code>. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>.</p>
             </div>
             <div class="feature">
+                <h3>Per-rule rollout</h3>
+                <p><code>arai severity alembic block</code> pins one rule to deny while the rest of the set stays in advise. Survives <code>arai scan</code>. Ship the set in advise mode, watch which rules earn the trust, then flip them one at a time.</p>
+            </div>
+            <div class="feature">
                 <h3>Compliance tracking</h3>
-                <p>Every PostToolUse is correlated against its PreToolUse firings. Each rule gets an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict. <code>arai audit --outcome=ignored</code> tells you which rules the model keeps flouting.</p>
+                <p>Every PostToolUse is correlated against its PreToolUse firings. Each rule gets an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict. <code>arai audit --outcome=ignored</code> tells you which rules the model keeps flouting; filter to a specific rule with <code>--rule</code>.</p>
             </div>
             <div class="feature">
                 <h3>Derivation trace</h3>
@@ -301,8 +305,8 @@
                 <p>Every firing is appended to a local JSONL you can query. See which rules fire, on which tools, for which prompts. Nothing leaves your machine.</p>
             </div>
             <div class="feature">
-                <h3>Aggregate stats</h3>
-                <p><code>arai stats</code> rolls up the audit log into top rules, tools, and days &mdash; so you can see which guardrails are load-bearing and which never fire.</p>
+                <h3>Per-rule compliance ratios</h3>
+                <p><code>arai stats</code> rolls up the audit log into <em>fires / obeyed / ignored / ratio</em> per rule. Now you can answer "is this rule actually working?" &mdash; not "is it firing?" The &#x26A0; flag highlights low-ratio rules with enough volume to mean it.</p>
             </div>
             <div class="feature">
                 <h3>Rule regression tests</h3>
@@ -317,12 +321,16 @@
                 <p><code>arai lint CLAUDE.md</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
             </div>
             <div class="feature">
+                <h3>Diff before save</h3>
+                <p><code>arai diff CLAUDE.md</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
+            </div>
+            <div class="feature">
                 <h3>Shared policies</h3>
                 <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally. No policy service &mdash; just a markdown file upstream.</p>
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call. <code>arai_recent_decisions</code> lets the agent self-check what it was just denied for &mdash; no more looping on the same refused action.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
