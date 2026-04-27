@@ -92,7 +92,8 @@ impl Store {
                 allow_inverse INTEGER DEFAULT 0,
                 enriched_by TEXT DEFAULT 'taxonomy',
                 enriched_at TEXT,
-                severity TEXT NOT NULL DEFAULT 'warn'
+                severity TEXT NOT NULL DEFAULT 'warn',
+                severity_override TEXT
             );
 
             PRAGMA foreign_keys = ON;
@@ -103,6 +104,14 @@ impl Store {
         // call on every open — the ALTER is a no-op once the column exists.
         let _ = self.conn.execute(
             "ALTER TABLE rule_intent ADD COLUMN severity TEXT NOT NULL DEFAULT 'warn'",
+            [],
+        );
+
+        // Migration: per-rule severity override.  Survives `arai scan` re-
+        // classification (which would otherwise stomp the predicate-derived
+        // severity back).  NULL means "use the classified severity".
+        let _ = self.conn.execute(
+            "ALTER TABLE rule_intent ADD COLUMN severity_override TEXT",
             [],
         );
 
@@ -366,9 +375,13 @@ impl Store {
     }
 
     /// Get the intent for a specific triple.
+    ///
+    /// If a `severity_override` row is present, it takes precedence over the
+    /// classified severity — that's the surface `arai severity` writes to so
+    /// re-running `arai scan` doesn't stomp a manual rollout decision.
     pub fn get_rule_intent(&self, triple_id: i64) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
         match self.conn.query_row(
-            "SELECT action, timing, tools, allow_inverse, enriched_by, severity FROM rule_intent WHERE triple_id = ?1",
+            "SELECT action, timing, tools, allow_inverse, enriched_by, severity, severity_override FROM rule_intent WHERE triple_id = ?1",
             params![triple_id],
             |row| {
                 let action_str: String = row.get(0)?;
@@ -377,9 +390,15 @@ impl Store {
                 let allow_inverse: i32 = row.get(3)?;
                 let enriched_by: String = row.get(4)?;
                 let severity_str: String = row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "warn".to_string());
+                let severity_override: Option<String> = row.get(6)?;
 
                 let tools: Vec<String> = serde_json::from_str(&tools_json)
                     .unwrap_or_else(|_| vec!["*".to_string()]);
+
+                let effective = severity_override
+                    .as_deref()
+                    .map(crate::intent::Severity::from_str)
+                    .unwrap_or_else(|| crate::intent::Severity::from_str(&severity_str));
 
                 Ok(crate::intent::RuleIntent {
                     action: crate::intent::Action::from_str(&action_str),
@@ -387,7 +406,7 @@ impl Store {
                     tools,
                     allow_inverse: allow_inverse != 0,
                     enriched_by,
-                    severity: crate::intent::Severity::from_str(&severity_str),
+                    severity: effective,
                 })
             },
         ) {
@@ -395,6 +414,179 @@ impl Store {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Pin a rule's severity, surviving re-classification by `arai scan`.
+    /// Matches against the rule's subject or object via case-insensitive
+    /// substring; returns the rules that were updated (subject/predicate/
+    /// object/old/new) so the caller can echo the change.
+    ///
+    /// Empty pattern matches every active guardrail — the CLI surface should
+    /// reject empty input rather than rely on this; we don't here so unit
+    /// tests can simulate "set everything" without scaffolding.
+    pub fn set_severity_override(
+        &self,
+        pattern: &str,
+        severity: crate::intent::Severity,
+    ) -> rusqlite::Result<Vec<SeverityChange>> {
+        let needle = pattern.to_lowercase();
+        let guardrails = self.load_guardrails()?;
+        let mut changed = Vec::new();
+        for g in guardrails {
+            let matches = needle.is_empty()
+                || g.subject.to_lowercase().contains(&needle)
+                || g.object.to_lowercase().contains(&needle);
+            if !matches {
+                continue;
+            }
+
+            // Read current effective severity so the caller can show the
+            // delta in a single round-trip.
+            let prev = self
+                .get_rule_intent(g.triple_id)?
+                .map(|i| i.severity)
+                .unwrap_or_else(|| crate::intent::Severity::from_predicate(&g.predicate));
+
+            // Ensure a row exists in rule_intent before setting the override —
+            // a brand-new store may not have been classified yet.
+            self.conn.execute(
+                "INSERT OR IGNORE INTO rule_intent (triple_id, severity_override) VALUES (?1, ?2)",
+                params![g.triple_id, severity.as_str()],
+            )?;
+            self.conn.execute(
+                "UPDATE rule_intent SET severity_override = ?2 WHERE triple_id = ?1",
+                params![g.triple_id, severity.as_str()],
+            )?;
+
+            changed.push(SeverityChange {
+                triple_id: g.triple_id,
+                subject: g.subject,
+                predicate: g.predicate,
+                object: g.object,
+                source: g.file_path,
+                from: prev,
+                to: severity,
+            });
+        }
+        Ok(changed)
+    }
+
+    /// Drop a severity override; the rule reverts to its predicate-derived
+    /// classification.  Returns the rules whose override was cleared.
+    pub fn clear_severity_override(&self, pattern: &str) -> rusqlite::Result<Vec<SeverityChange>> {
+        let needle = pattern.to_lowercase();
+        let guardrails = self.load_guardrails()?;
+        let mut cleared = Vec::new();
+        for g in guardrails {
+            let matches = needle.is_empty()
+                || g.subject.to_lowercase().contains(&needle)
+                || g.object.to_lowercase().contains(&needle);
+            if !matches {
+                continue;
+            }
+
+            // Only clear rows that actually have an override — otherwise we
+            // misreport "cleared 50 rules" when nothing was pinned.
+            let had: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT severity_override FROM rule_intent WHERE triple_id = ?1",
+                    params![g.triple_id],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            if had.is_none() {
+                continue;
+            }
+
+            self.conn.execute(
+                "UPDATE rule_intent SET severity_override = NULL WHERE triple_id = ?1",
+                params![g.triple_id],
+            )?;
+
+            let from = had
+                .as_deref()
+                .map(crate::intent::Severity::from_str)
+                .unwrap_or_else(|| crate::intent::Severity::from_predicate(&g.predicate));
+            let to = crate::intent::Severity::from_predicate(&g.predicate);
+            cleared.push(SeverityChange {
+                triple_id: g.triple_id,
+                subject: g.subject,
+                predicate: g.predicate,
+                object: g.object,
+                source: g.file_path,
+                from,
+                to,
+            });
+        }
+        Ok(cleared)
+    }
+
+    /// List every active rule that carries a severity override.
+    pub fn list_severity_overrides(&self) -> rusqlite::Result<Vec<SeverityChange>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.s, t.p, t.o, f.path, ri.severity_override
+             FROM triples t
+             JOIN files f ON t.file_id = f.id
+             JOIN rule_intent ri ON ri.triple_id = t.id
+             WHERE ri.severity_override IS NOT NULL
+               AND t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')
+               AND (t.expires_at IS NULL OR t.expires_at >= date('now'))
+             ORDER BY t.s, t.p, t.o",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let triple_id: i64 = row.get(0)?;
+            let subject: String = row.get(1)?;
+            let predicate: String = row.get(2)?;
+            let object: String = row.get(3)?;
+            let source: String = row.get(4)?;
+            let override_str: String = row.get(5)?;
+            let from = crate::intent::Severity::from_predicate(&predicate);
+            let to = crate::intent::Severity::from_str(&override_str);
+            Ok(SeverityChange {
+                triple_id,
+                subject,
+                predicate,
+                object,
+                source,
+                from,
+                to,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Fetch the live SPO triples for a single source file path.  Used by
+    /// `arai diff` to compare what's currently in the store against what the
+    /// candidate file would extract — no `JOIN files` because we already know
+    /// the path the caller passed in.
+    pub fn rules_for_file(&self, file_path: &str) -> rusqlite::Result<Vec<Guardrail>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at
+             FROM triples t
+             JOIN files f ON t.file_id = f.id
+             WHERE f.path = ?1
+               AND t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')
+             ORDER BY t.line_start, t.s, t.p, t.o",
+        )?;
+        let guardrails = stmt
+            .query_map(params![file_path], |row| {
+                Ok(Guardrail {
+                    triple_id: row.get(0)?,
+                    subject: row.get(1)?,
+                    predicate: row.get(2)?,
+                    object: row.get(3)?,
+                    confidence: row.get(4)?,
+                    source_file: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    file_path: row.get(6)?,
+                    layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
+                    line_start: row.get::<_, Option<i64>>(8)?,
+                    expires_at: row.get::<_, Option<String>>(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(guardrails)
     }
 
     /// Find pairs of rules that potentially conflict or duplicate.
@@ -500,6 +692,20 @@ pub struct DuplicateRule {
 pub struct OpposingRules {
     pub subject: String,
     pub predicates: Vec<String>,
+}
+
+/// One row in the output of `set_severity_override` / `list_severity_overrides`.
+/// Captures both the previous and new severity so the CLI can render a
+/// diff line per rule without a second query.
+#[derive(Debug, serde::Serialize)]
+pub struct SeverityChange {
+    pub triple_id: i64,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub source: String,
+    pub from: crate::intent::Severity,
+    pub to: crate::intent::Severity,
 }
 
 fn is_prohibitive(p: &str) -> bool {
@@ -715,6 +921,142 @@ mod tests {
         assert_eq!(store.get_meta("last_scan").unwrap(), None);
         store.set_meta("last_scan", "12345").unwrap();
         assert_eq!(store.get_meta("last_scan").unwrap(), Some("12345".to_string()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_severity_override_round_trip() {
+        let (store, dir) = temp_db();
+        let t = Triple {
+            subject: "alembic".to_string(),
+            predicate: "prefers".to_string(),
+            object: "autogenerate".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store.upsert_file("CLAUDE.md", "x", &[t], "claude_md_project").unwrap();
+        store.classify_all_guardrails().unwrap();
+
+        // Predicate-derived: prefers → Inform.
+        let g = &store.load_guardrails().unwrap()[0];
+        assert_eq!(
+            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            crate::intent::Severity::Inform
+        );
+
+        // Pin to Block.
+        let changed = store
+            .set_severity_override("alembic", crate::intent::Severity::Block)
+            .unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].from, crate::intent::Severity::Inform);
+        assert_eq!(changed[0].to, crate::intent::Severity::Block);
+        assert_eq!(
+            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            crate::intent::Severity::Block,
+            "override should win over classified severity"
+        );
+
+        // Re-classify: must NOT stomp the override.
+        store.classify_all_guardrails().unwrap();
+        assert_eq!(
+            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            crate::intent::Severity::Block,
+            "classify_all_guardrails should preserve manual overrides"
+        );
+
+        // List shows the pinned rule.
+        let listed = store.list_severity_overrides().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].subject, "alembic");
+        assert_eq!(listed[0].to, crate::intent::Severity::Block);
+
+        // Clear it: severity reverts to predicate-derived.
+        let cleared = store.clear_severity_override("alembic").unwrap();
+        assert_eq!(cleared.len(), 1);
+        assert!(store.list_severity_overrides().unwrap().is_empty());
+        assert_eq!(
+            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            crate::intent::Severity::Inform,
+            "after clear, severity should fall back to classification"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_severity_override_pattern_match_is_substring() {
+        let (store, dir) = temp_db();
+        let mk = |s: &str, line: i64| Triple {
+            subject: s.to_string(),
+            predicate: "never".to_string(),
+            object: format!("{s}-action"),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(line),
+            line_end: Some(line),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store
+            .upsert_file("CLAUDE.md", "x", &[mk("alembic", 1), mk("git", 2), mk("cargo", 3)], "claude_md_project")
+            .unwrap();
+        store.classify_all_guardrails().unwrap();
+
+        // Pattern matches by case-insensitive substring on subject OR object.
+        let changed = store
+            .set_severity_override("ALEM", crate::intent::Severity::Inform)
+            .unwrap();
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].subject, "alembic");
+
+        // Clear with a no-match pattern is a no-op (doesn't reset other rules).
+        let cleared = store.clear_severity_override("nope").unwrap();
+        assert!(cleared.is_empty());
+        assert_eq!(store.list_severity_overrides().unwrap().len(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_rules_for_file_returns_only_that_file() {
+        let (store, dir) = temp_db();
+        let mk_in = |path_prefix: &str, line: i64| Triple {
+            subject: format!("{path_prefix}-rule"),
+            predicate: "never".to_string(),
+            object: "do bad".to_string(),
+            confidence: 0.9,
+            domain: "general".to_string(),
+            source_file: path_prefix.to_string(),
+            line_start: Some(line),
+            line_end: Some(line),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store
+            .upsert_file("CLAUDE.md", "a", &[mk_in("CLAUDE.md", 1)], "claude_md_project")
+            .unwrap();
+        store
+            .upsert_file("memory/feedback.md", "b", &[mk_in("memory/feedback.md", 1)], "memory")
+            .unwrap();
+
+        let claude_rules = store.rules_for_file("CLAUDE.md").unwrap();
+        assert_eq!(claude_rules.len(), 1);
+        assert_eq!(claude_rules[0].subject, "CLAUDE.md-rule");
+
+        let memory_rules = store.rules_for_file("memory/feedback.md").unwrap();
+        assert_eq!(memory_rules.len(), 1);
+        assert_eq!(memory_rules[0].subject, "memory/feedback.md-rule");
+
+        let nothing = store.rules_for_file("nonexistent.md").unwrap();
+        assert!(nothing.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }

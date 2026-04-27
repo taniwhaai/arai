@@ -20,7 +20,13 @@ cargo run -- audit             # Tail the local firing log (today)
 cargo run -- audit --json      # JSONL stream
 cargo run -- audit --event=Compliance   # Compliance verdicts (Pre/Post correlation)
 cargo run -- audit --outcome=ignored    # Rules the model ran despite a Pre-firing
-cargo run -- stats             # Aggregate the audit log (top rules, tools, days)
+cargo run -- audit --rule alembic       # Filter audit by rule subject/predicate/object
+cargo run -- stats             # Aggregate the audit log (top rules, tools, days, compliance)
+cargo run -- stats --by-rule   # Just the per-rule compliance ratios
+cargo run -- severity          # List active severity overrides
+cargo run -- severity alembic block      # Pin a rule's severity for incremental rollout
+cargo run -- severity --reset alembic    # Drop the override, fall back to classification
+cargo run -- diff CLAUDE.md    # Preview rule-set delta vs. live store, no writes
 cargo run -- lint CLAUDE.md    # Parse a file and preview extracted rules, no DB writes
 cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scenario
 cargo run -- record --since=1h # Build scenarios from recent audit entries
@@ -48,7 +54,7 @@ src/
 ├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)
 ├── audit.rs              # Local JSONL firing log — record_firing, record_event, layer_label
 ├── compliance.rs         # Pre/Post correlation — Obeyed/Ignored/Unclear verdicts per rule
-├── stats.rs              # Aggregate views over the audit log — `arai stats`
+├── stats.rs              # Aggregate views — `arai stats`, per-rule compliance roll-up
 ├── scenarios.rs          # Scenario replay harness — `arai test <file>`
 ├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
 ├── mcp.rs                # Stdio MCP server — arai_add_guard + arai_list_guards for agent-authored rules
@@ -88,6 +94,30 @@ leaves the machine.
 - **Severity-aware** — prohibitive predicates block, affirmative predicates warn, prefers informs
 - **<5ms no-match hook** — fast exit when no guardrails apply
 - **Single binary** — no runtime dependencies for users
+
+## v0.2.4 additions at a glance
+
+- **Per-rule compliance roll-up** in `arai stats` — joins Pre firings
+  and Compliance verdicts via `triple_id` to produce
+  `fires/obeyed/ignored/unclear/ratio` per rule. `--by-rule` shows
+  only that section. The maintainer's "is this rule actually
+  working?" question, answered from data Arai already collects.
+- **Per-rule severity override** (`arai severity`).  Stored in a new
+  `rule_intent.severity_override` column that `classify_all_guardrails`
+  doesn't touch on re-scan, so manual rollout decisions survive.
+  `get_rule_intent` returns the override when set; falls back to the
+  classified severity otherwise.
+- **`arai_recent_decisions` MCP tool**.  Mirror of the maintainer-
+  side audit feed, exposed to the agent so it can self-check after a
+  deny without parsing the on-screen reason or re-trying the same
+  thing twice.  Strips `Compliance` events (verdicts, not decisions).
+- **`arai audit --rule <pattern>`** filter.  Substring match against
+  rule subject/predicate/object across both top-level firings and
+  Compliance `payload.rules[]`.  Pairs with `--outcome=ignored`.
+- **`arai diff <file>`**.  Preview rule-set delta against the live
+  store before saving an instruction-file edit; emits added /
+  removed / moved (line number changed for an unchanged SPO).
+  Pre-commit-hook fodder via `--json`.
 
 ## v0.2.3 additions at a glance
 

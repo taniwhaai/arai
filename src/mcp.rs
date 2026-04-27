@@ -15,7 +15,7 @@
 //! the agent adds a guard via MCP, Ārai stores it through the same
 //! pipeline as `arai add`, and the next PreToolUse hook sees it.
 
-use crate::{config, enrich, parser, store, telemetry};
+use crate::{audit, config, enrich, parser, store, telemetry};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -133,6 +133,42 @@ fn handle_tools_list() -> Value {
                         }
                     }
                 }
+            },
+            {
+                "name": "arai_recent_decisions",
+                "description":
+                    "Look up the most recent guardrail decisions Ārai has emitted in this \
+                     session (or any session if `session_id` is omitted).  Use this when \
+                     you've just been denied or warned and want to check whether you've \
+                     hit the same rule before — closes the feedback loop so you don't \
+                     repeat a refused action.  Returns each firing's tool, decision \
+                     (deny/inject/review), the matched rule(s), and the source file the \
+                     rule came from.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description":
+                                "Optional Claude Code session id.  When set, only decisions \
+                                 from that session are returned.  Match the value Claude Code \
+                                 passes in hook payloads."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description":
+                                "Maximum decisions to return (default 10, max 50).",
+                            "minimum": 1,
+                            "maximum": 50
+                        },
+                        "since": {
+                            "type": "string",
+                            "description":
+                                "Optional time window like '1h', '24h', '7d'.  Defaults to \
+                                 the last 24 hours so stale entries don't crowd out today's."
+                        }
+                    }
+                }
             }
         ]
     })
@@ -148,6 +184,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, String> {
     match name {
         "arai_add_guard" => tool_add_guard(&args),
         "arai_list_guards" => tool_list_guards(&args),
+        "arai_recent_decisions" => tool_recent_decisions(&args),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -258,6 +295,150 @@ fn tool_list_guards(args: &Value) -> Result<Value, String> {
     Ok(content_text(&text))
 }
 
+/// Look up recent hook decisions from the audit log so the calling agent can
+/// see what Arai has just denied / injected / reviewed.  Pure read — no
+/// audit write, no telemetry.
+fn tool_recent_decisions(args: &Value) -> Result<Value, String> {
+    let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.clamp(1, 50) as usize)
+        .unwrap_or(10);
+    let since = args.get("since").and_then(|v| v.as_str()).unwrap_or("24h");
+    let since_epoch = parse_since_window(since)?;
+
+    let cfg = config::Config::load()?;
+    // Over-fetch when filtering by session so the per-session window has
+    // material — same trick `cmd_audit` uses for outcome/rule filters.
+    let raw_limit = if session_id.is_empty() {
+        limit
+    } else {
+        limit.saturating_mul(8)
+    };
+    let entries = audit::query(
+        &cfg.arai_base_dir,
+        &cfg.project_slug(),
+        Some(since_epoch),
+        None,
+        None,
+        raw_limit,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Skip Compliance events — they're verdicts, not decisions, and the
+    // model doesn't need to self-check against them via this surface.
+    let filtered: Vec<&Value> = entries
+        .iter()
+        .filter(|e| {
+            let ev = e.get("event").and_then(|v| v.as_str()).unwrap_or("");
+            if ev == "Compliance" {
+                return false;
+            }
+            if !session_id.is_empty() {
+                e.get("session").and_then(|v| v.as_str()) == Some(session_id)
+            } else {
+                true
+            }
+        })
+        .take(limit)
+        .collect();
+
+    if filtered.is_empty() {
+        let scope = if session_id.is_empty() {
+            "any session".to_string()
+        } else {
+            format!("session {session_id}")
+        };
+        return Ok(content_text(&format!(
+            "No Ārai decisions in the last {since} for {scope}."
+        )));
+    }
+
+    let mut lines = Vec::new();
+    for entry in &filtered {
+        let ts = entry.get("ts").and_then(|v| v.as_str()).unwrap_or("?");
+        let event = entry.get("event").and_then(|v| v.as_str()).unwrap_or("?");
+        let tool = entry.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+        let decision = entry.get("decision").and_then(|v| v.as_str()).unwrap_or("?");
+        let preview = entry
+            .get("prompt_preview")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let rules: Vec<String> = entry
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|r| {
+                        format!(
+                            "{} {}: {}",
+                            r.get("subject").and_then(|v| v.as_str()).unwrap_or(""),
+                            r.get("predicate").and_then(|v| v.as_str()).unwrap_or(""),
+                            r.get("object").and_then(|v| v.as_str()).unwrap_or(""),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let rules_part = if rules.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", rules.join("; "))
+        };
+        let preview_part = if preview.is_empty() {
+            String::new()
+        } else {
+            // Trim long previews so the MCP response stays compact.
+            let short: String = preview.chars().take(80).collect();
+            format!(" — {short}")
+        };
+        lines.push(format!(
+            "{ts}  {event:<13} {tool:<6} {decision:<6}{rules_part}{preview_part}"
+        ));
+    }
+
+    let scope = if session_id.is_empty() {
+        format!("last {since}, all sessions")
+    } else {
+        format!("last {since}, session {session_id}")
+    };
+    let text = format!(
+        "{} recent decision(s) ({scope}):\n{}",
+        filtered.len(),
+        lines.join("\n"),
+    );
+    Ok(content_text(&text))
+}
+
+/// Tiny duration parser shared with `tool_recent_decisions`.  We don't pull
+/// `parse_since` from `main.rs` because that function lives outside the
+/// library surface; duplicating ~10 lines is cheaper than restructuring
+/// the binary just to share it.
+fn parse_since_window(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("`since` cannot be empty".to_string());
+    }
+    let (num_part, unit_secs): (&str, u64) = match s.chars().last().unwrap() {
+        'd' => (&s[..s.len() - 1], 86_400),
+        'h' => (&s[..s.len() - 1], 3_600),
+        'm' => (&s[..s.len() - 1], 60),
+        's' => (&s[..s.len() - 1], 1),
+        c if c.is_ascii_digit() => (s, 1),
+        other => return Err(format!("`since`: unknown unit '{other}' (use d/h/m/s)")),
+    };
+    let n: u64 = num_part
+        .parse()
+        .map_err(|_| format!("`since`: invalid number '{num_part}'"))?;
+    let delta = n.checked_mul(unit_secs).ok_or("`since`: overflow")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Ok(now.saturating_sub(delta))
+}
+
 fn content_text(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }] })
 }
@@ -288,13 +469,24 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_two_entries() {
+    fn tools_list_has_three_entries() {
         let v = handle_tools_list();
         let tools = v["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"arai_add_guard"));
         assert!(names.contains(&"arai_list_guards"));
+        assert!(names.contains(&"arai_recent_decisions"));
+    }
+
+    #[test]
+    fn parse_since_window_basics() {
+        assert!(parse_since_window("1h").is_ok());
+        assert!(parse_since_window("7d").is_ok());
+        assert!(parse_since_window("60").is_ok()); // bare digits = seconds
+        assert!(parse_since_window("").is_err());
+        assert!(parse_since_window("xyz").is_err());
+        assert!(parse_since_window("3y").is_err()); // unknown unit
     }
 
     #[test]

@@ -91,6 +91,11 @@ enum Commands {
         /// Implies `--event=Compliance` unless one is set explicitly.
         #[arg(long)]
         outcome: Option<String>,
+        /// Filter by rule subject/predicate/object (case-insensitive substring).
+        /// Matches against any rule attached to the firing — handy for
+        /// answering "every time the alembic rule fired this week".
+        #[arg(long)]
+        rule: Option<String>,
         /// Maximum entries to return
         #[arg(long, default_value = "50")]
         limit: usize,
@@ -145,7 +150,9 @@ enum Commands {
         #[arg(long, default_value = "200")]
         limit: usize,
     },
-    /// Aggregate summary of the local audit log — top rules, tools, days
+    /// Aggregate summary of the local audit log — top rules, tools, days,
+    /// plus per-rule compliance ratios when PostToolUse correlation has
+    /// produced verdicts.
     Stats {
         /// Only count firings newer than this (e.g. "7d", "24h", "30m")
         #[arg(long)]
@@ -153,7 +160,57 @@ enum Commands {
         /// Show top N entries per section
         #[arg(long, default_value = "10")]
         top: usize,
+        /// Show only the per-rule compliance section (rules + their
+        /// obeyed/ignored ratios).  Useful when you only care about
+        /// "is the model honouring my rules?"
+        #[arg(long)]
+        by_rule: bool,
         /// Output as JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Pin a rule's severity so re-running `arai scan` won't reset it to the
+    /// predicate-derived classification.  Use for incremental rollout — flip
+    /// individual rules into deny mode while the rest of the set stays in
+    /// advise mode.  No arguments → list current overrides.
+    ///
+    /// Examples:
+    ///   arai severity                                # list overrides
+    ///   arai severity alembic block                  # pin every rule whose
+    ///                                                # subject/object contains
+    ///                                                # "alembic" to block
+    ///   arai severity --reset alembic                # back to classified
+    Severity {
+        /// Case-insensitive substring against subject/object.  Required when
+        /// setting a severity; with `--reset` it picks which overrides to drop.
+        pattern: Option<String>,
+        /// New severity for matching rules: `block`, `warn`, or `inform`.
+        /// Required unless `--reset` is set.
+        level: Option<String>,
+        /// Drop the override for matching rules; severity reverts to the
+        /// predicate-derived classification.
+        #[arg(long)]
+        reset: bool,
+        /// Output as JSON (machine-readable list of changes)
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview what changes a candidate edit to an instruction file would
+    /// make to the live rule set — added, removed, severity changes — before
+    /// you save and run `arai scan`.  Read-only against the store; pairs
+    /// with `arai lint` (which previews the file in isolation) and `arai why`
+    /// (which previews single-action firings).
+    ///
+    /// Examples:
+    ///   arai diff CLAUDE.md
+    ///   arai diff memory/feedback_testing.md --json   # for pre-commit hooks
+    Diff {
+        /// Path to the candidate instruction file.  The file must already be
+        /// known to Arai (i.e. picked up by a previous `arai scan` or `arai
+        /// init`); otherwise every rule in it would diff as "added", which
+        /// `arai lint` covers more cleanly.
+        file: String,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -197,13 +254,15 @@ fn main() {
         Commands::Scan { code, enrich, enrich_llm, enrich_api, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
-        Commands::Audit { since, tool, event, outcome, limit, json } => cmd_audit(since, tool, event, outcome, limit, json),
+        Commands::Audit { since, tool, event, outcome, rule, limit, json } => cmd_audit(since, tool, event, outcome, rule, limit, json),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
         Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
-        Commands::Stats { since, top, json } => cmd_stats(since, top, json),
+        Commands::Stats { since, top, by_rule, json } => cmd_stats(since, top, by_rule, json),
+        Commands::Severity { pattern, level, reset, json } => cmd_severity(pattern, level, reset, json),
+        Commands::Diff { file, json } => cmd_diff(&file, json),
         Commands::Why { input, tool, event, json } => cmd_why(input, tool, event, json),
     };
 
@@ -423,6 +482,7 @@ fn cmd_audit(
     tool: Option<String>,
     event: Option<String>,
     outcome: Option<String>,
+    rule: Option<String>,
     limit: usize,
     json: bool,
 ) -> Result<(), String> {
@@ -438,15 +498,16 @@ fn cmd_audit(
         (None, None) => None,
     };
 
+    // Over-fetch when post-filters are in play so we don't truncate before
+    // the substring match has had a chance to match.
+    let needs_post_filter = outcome.is_some() || rule.is_some();
     let entries = audit::query(
         &cfg.arai_base_dir,
         &cfg.project_slug(),
         since_epoch,
         tool.as_deref(),
         effective_event.as_deref(),
-        // Over-fetch so the outcome filter has enough material before
-        // truncating to the requested limit.
-        if outcome.is_some() { limit.saturating_mul(4) } else { limit },
+        if needs_post_filter { limit.saturating_mul(4) } else { limit },
     )?;
 
     // Apply outcome filter in-process: an entry passes if any item in
@@ -461,11 +522,26 @@ fn cmd_audit(
                     .map(|rs| rs.iter().any(|r| r.get("outcome").and_then(|o| o.as_str()) == Some(target)))
                     .unwrap_or(false)
             })
-            .take(limit)
             .collect()
     } else {
         entries
     };
+
+    // Apply rule-pattern filter: an entry passes if any rule attached to it
+    // (top-level `rules[]` for firings, or `payload.rules[]` for Compliance)
+    // matches the pattern as a case-insensitive substring of subject /
+    // predicate / object.
+    let entries: Vec<serde_json::Value> = if let Some(pat) = rule.as_deref() {
+        let needle = pat.to_lowercase();
+        entries
+            .into_iter()
+            .filter(|e| entry_rules(e).any(|r| rule_matches_pattern(r, &needle)))
+            .collect()
+    } else {
+        entries
+    };
+
+    let entries: Vec<serde_json::Value> = entries.into_iter().take(limit).collect();
 
     if entries.is_empty() {
         if json {
@@ -610,12 +686,309 @@ fn cmd_trust(add: Option<String>, remove: Option<String>) -> Result<(), String> 
 fn cmd_stats(
     since: Option<String>,
     top: usize,
+    by_rule: bool,
     json: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
-    stats::run(&cfg, since_epoch, top, json)
+    stats::run(&cfg, since_epoch, top, by_rule, json)
 }
+
+/// Return an iterator over every rule object attached to an audit entry,
+/// regardless of whether it lives at the top level (Pre/PostToolUse firings)
+/// or inside `payload.rules[]` (Compliance events).
+fn entry_rules(entry: &serde_json::Value) -> Box<dyn Iterator<Item = &serde_json::Value> + '_> {
+    let direct = entry.get("rules").and_then(|v| v.as_array());
+    let payload = entry
+        .get("payload")
+        .and_then(|p| p.get("rules"))
+        .and_then(|v| v.as_array());
+    match (direct, payload) {
+        (Some(d), Some(p)) => Box::new(d.iter().chain(p.iter())),
+        (Some(d), None) => Box::new(d.iter()),
+        (None, Some(p)) => Box::new(p.iter()),
+        (None, None) => Box::new(std::iter::empty()),
+    }
+}
+
+/// Test a rule object (subject/predicate/object — any may be absent) against
+/// a lowercase substring needle.
+fn rule_matches_pattern(rule: &serde_json::Value, needle: &str) -> bool {
+    let pick = |k: &str| {
+        rule.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase()
+    };
+    pick("subject").contains(needle)
+        || pick("predicate").contains(needle)
+        || pick("object").contains(needle)
+}
+
+/// `arai severity` — list overrides, pin a severity, or reset.
+fn cmd_severity(
+    pattern: Option<String>,
+    level: Option<String>,
+    reset: bool,
+    json: bool,
+) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let db_path = cfg.db_path();
+    if !db_path.exists() {
+        return Err("No guardrail database found.  Run `arai init` first.".to_string());
+    }
+    let db = store::Store::open(&db_path)?;
+
+    // No args → list current overrides.
+    if pattern.is_none() && level.is_none() && !reset {
+        let overrides = db.list_severity_overrides().map_err(|e| e.to_string())?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&overrides).map_err(|e| e.to_string())?);
+            return Ok(());
+        }
+        if overrides.is_empty() {
+            println!("No severity overrides.  All rules use predicate-derived severity.");
+            println!("  Pin one with `arai severity <pattern> block|warn|inform`.");
+            return Ok(());
+        }
+        println!("Active severity overrides ({}):", overrides.len());
+        for c in &overrides {
+            println!(
+                "  [{:>6} \u{2192} {:<6}] {} {}: {}",
+                c.from.as_str(),
+                c.to.as_str(),
+                c.subject,
+                c.predicate,
+                c.object,
+            );
+            println!("    from {}", c.source);
+        }
+        return Ok(());
+    }
+
+    let pattern = pattern.ok_or_else(|| {
+        "missing pattern.  Usage: `arai severity <pattern> block|warn|inform` or `arai severity --reset <pattern>`".to_string()
+    })?;
+    if pattern.trim().is_empty() {
+        return Err("pattern is empty (would match every rule)".to_string());
+    }
+
+    if reset {
+        let cleared = db.clear_severity_override(&pattern).map_err(|e| e.to_string())?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?);
+            return Ok(());
+        }
+        if cleared.is_empty() {
+            println!("No overrides matched `{pattern}` — nothing to clear.");
+            return Ok(());
+        }
+        println!("Cleared {} override(s):", cleared.len());
+        for c in &cleared {
+            println!(
+                "  [{:>6} \u{2192} {:<6}] {} {}: {}",
+                c.from.as_str(),
+                c.to.as_str(),
+                c.subject,
+                c.predicate,
+                c.object,
+            );
+        }
+        return Ok(());
+    }
+
+    let level = level.ok_or_else(|| {
+        "missing severity.  Pass `block`, `warn`, or `inform` (or use `--reset` to drop the override)".to_string()
+    })?;
+    let severity = match level.to_lowercase().as_str() {
+        "block" => intent::Severity::Block,
+        "warn" => intent::Severity::Warn,
+        "inform" => intent::Severity::Inform,
+        other => return Err(format!("invalid severity `{other}` (expected block/warn/inform)")),
+    };
+
+    let changed = db
+        .set_severity_override(&pattern, severity)
+        .map_err(|e| e.to_string())?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&changed).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+    if changed.is_empty() {
+        println!("No rules matched `{pattern}`.  Run `arai guardrails` to see active rules.");
+        return Ok(());
+    }
+    println!("Pinned severity \u{2192} {} on {} rule(s):", severity.as_str(), changed.len());
+    for c in &changed {
+        println!(
+            "  [{:>6} \u{2192} {:<6}] {} {}: {}",
+            c.from.as_str(),
+            c.to.as_str(),
+            c.subject,
+            c.predicate,
+            c.object,
+        );
+        println!("    from {}", c.source);
+    }
+    Ok(())
+}
+
+/// `arai diff <file>` — preview rule-set delta between the candidate file
+/// content and the rules currently in the store for that source path.
+fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let db_path = cfg.db_path();
+    if !db_path.exists() {
+        return Err("No guardrail database found.  Run `arai init` first.".to_string());
+    }
+    let db = store::Store::open(&db_path)?;
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+
+    // Extract from the candidate content.  Use the same "lint" source-type
+    // tag the lint command does so domain bookkeeping stays consistent.
+    let candidate = parser::extract_rules(&content, "lint", 0.90);
+
+    // Look up live rules for this exact source path.  If the file has never
+    // been scanned before, every rule looks "added", which `arai lint` is
+    // already the right tool for — surface that to the user explicitly.
+    let live = db.rules_for_file(path).map_err(|e| e.to_string())?;
+    let cold_file = live.is_empty() && !candidate.is_empty();
+    if cold_file && !json {
+        println!("Diff: {path}");
+        println!("  (this file has not been scanned yet — every rule reads as added)");
+        println!("  Run `arai scan` after saving, or use `arai lint {path}` for a preview.");
+        println!();
+    }
+
+    // Key by (subject, predicate, object) — the natural identity for a rule
+    // independent of which line it lives on.
+    use std::collections::BTreeMap;
+    let key = |s: &str, p: &str, o: &str| (s.to_lowercase(), p.to_lowercase(), o.to_lowercase());
+
+    let mut live_map: BTreeMap<(String, String, String), &store::Guardrail> = BTreeMap::new();
+    for g in &live {
+        live_map.insert(key(&g.subject, &g.predicate, &g.object), g);
+    }
+    let mut cand_map: BTreeMap<(String, String, String), &parser::Triple> = BTreeMap::new();
+    for t in &candidate {
+        cand_map.insert(key(&t.subject, &t.predicate, &t.object), t);
+    }
+
+    let mut added: Vec<&parser::Triple> = Vec::new();
+    let mut removed: Vec<&store::Guardrail> = Vec::new();
+    let mut moved: Vec<(&store::Guardrail, &parser::Triple)> = Vec::new(); // same SPO, line moved
+
+    for (k, t) in &cand_map {
+        match live_map.get(k) {
+            Some(g) => {
+                let live_line = g.line_start;
+                let cand_line = t.line_start;
+                if live_line != cand_line {
+                    moved.push((g, t));
+                }
+            }
+            None => added.push(t),
+        }
+    }
+    for (k, g) in &live_map {
+        if !cand_map.contains_key(k) {
+            removed.push(g);
+        }
+    }
+
+    if json {
+        let added_json: Vec<serde_json::Value> = added
+            .iter()
+            .map(|t| serde_json::json!({
+                "subject": t.subject,
+                "predicate": t.predicate,
+                "object": t.object,
+                "line": t.line_start,
+                "layer": t.layer,
+            }))
+            .collect();
+        let removed_json: Vec<serde_json::Value> = removed
+            .iter()
+            .map(|g| serde_json::json!({
+                "subject": g.subject,
+                "predicate": g.predicate,
+                "object": g.object,
+                "line": g.line_start,
+            }))
+            .collect();
+        let moved_json: Vec<serde_json::Value> = moved
+            .iter()
+            .map(|(g, t)| serde_json::json!({
+                "subject": g.subject,
+                "predicate": g.predicate,
+                "object": g.object,
+                "from_line": g.line_start,
+                "to_line": t.line_start,
+            }))
+            .collect();
+        let out = serde_json::json!({
+            "file": path,
+            "added": added_json,
+            "removed": removed_json,
+            "moved": moved_json,
+            "summary": {
+                "added": added.len(),
+                "removed": removed.len(),
+                "moved": moved.len(),
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
+
+    if added.is_empty() && removed.is_empty() && moved.is_empty() {
+        println!("Diff: {path}");
+        println!("  No rule changes — file content differs only outside rule lines (or not at all).");
+        return Ok(());
+    }
+
+    println!("Diff: {path}");
+    println!(
+        "  +{} added   -{} removed   ~{} moved",
+        added.len(),
+        removed.len(),
+        moved.len(),
+    );
+    println!();
+    if !added.is_empty() {
+        println!("  Added:");
+        for t in &added {
+            let line = t.line_start.map(|l| format!(" L{l}")).unwrap_or_default();
+            println!("    + {} {}: {}{}", t.subject, t.predicate, t.object, line);
+        }
+        println!();
+    }
+    if !removed.is_empty() {
+        println!("  Removed:");
+        for g in &removed {
+            let line = g.line_start.map(|l| format!(" L{l}")).unwrap_or_default();
+            println!("    - {} {}: {}{}", g.subject, g.predicate, g.object, line);
+        }
+        println!();
+    }
+    if !moved.is_empty() {
+        println!("  Moved:");
+        for (g, t) in &moved {
+            let from = g.line_start.map(|l| l.to_string()).unwrap_or_default();
+            let to = t.line_start.map(|l| l.to_string()).unwrap_or_default();
+            println!(
+                "    ~ {} {}: {}  (L{from} \u{2192} L{to})",
+                g.subject, g.predicate, g.object,
+            );
+        }
+        println!();
+    }
+    Ok(())
+}
+
 
 /// Explain which guardrails would fire on a hypothetical tool call — same
 /// matching pipeline the live hook uses, but read-only and no audit write.
@@ -762,3 +1135,72 @@ fn parse_since(s: &str) -> Result<u64, String> {
         .unwrap_or(0);
     Ok(now.saturating_sub(delta))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn entry_rules_walks_top_level() {
+        let e = json!({"rules": [{"subject": "git", "predicate": "never", "object": "force"}]});
+        let collected: Vec<_> = entry_rules(&e).collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0]["subject"], "git");
+    }
+
+    #[test]
+    fn entry_rules_walks_compliance_payload() {
+        let e = json!({
+            "event": "Compliance",
+            "payload": {"rules": [{"triple_id": 7, "predicate": "never", "object": "force"}]}
+        });
+        let collected: Vec<_> = entry_rules(&e).collect();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0]["triple_id"], 7);
+    }
+
+    #[test]
+    fn entry_rules_walks_both_when_present() {
+        // Defensive: nothing in the audit format combines both today, but the
+        // helper should still surface every rule it can find.
+        let e = json!({
+            "rules": [{"subject": "a", "predicate": "p", "object": "o"}],
+            "payload": {"rules": [{"triple_id": 1, "predicate": "p", "object": "o"}]},
+        });
+        let collected: Vec<_> = entry_rules(&e).collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn entry_rules_empty_when_neither_present() {
+        let e = json!({"event": "PreToolUse", "tool": "Bash"});
+        let collected: Vec<_> = entry_rules(&e).collect();
+        assert!(collected.is_empty());
+    }
+
+    #[test]
+    fn rule_matches_pattern_substring_subject() {
+        let r = json!({"subject": "alembic", "predicate": "never", "object": "hand-write"});
+        assert!(rule_matches_pattern(&r, "alem"));
+        assert!(rule_matches_pattern(&r, "lemb")); // mid-substring
+        assert!(!rule_matches_pattern(&r, "django"));
+    }
+
+    #[test]
+    fn rule_matches_pattern_substring_object_and_predicate() {
+        let r = json!({"subject": "git", "predicate": "must_not", "object": "force-push"});
+        assert!(rule_matches_pattern(&r, "force"));
+        assert!(rule_matches_pattern(&r, "must_not"));
+    }
+
+    #[test]
+    fn rule_matches_pattern_handles_missing_fields() {
+        // A Compliance rule object only has predicate/object/triple_id — no
+        // subject.  The matcher must still handle it without panicking.
+        let r = json!({"triple_id": 1, "predicate": "never", "object": "x"});
+        assert!(rule_matches_pattern(&r, "never"));
+        assert!(!rule_matches_pattern(&r, "git"));
+    }
+}
+

@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- *(stats)* Per-rule compliance roll-up — `fires / obeyed / ignored /
+  unclear / ratio` joined across Pre firings and Compliance verdicts
+  via `triple_id`.  `arai stats` shows it inline; `arai stats
+  --by-rule` shows only that section.  ⚠ flag highlights low-ratio
+  rules with enough volume to mean it.
+- *(severity)* `arai severity` subcommand — pin a rule's severity
+  for incremental deny-mode rollout.  Stored in a new
+  `rule_intent.severity_override` column that survives `arai scan`
+  re-classification.  `arai severity --reset` drops the override.
+- *(mcp)* `arai_recent_decisions` tool — surfaces recent deny /
+  inject / review decisions back to the agent, so the model can
+  self-check after a refusal instead of repeating the same action.
+  Filters by `session_id`, `limit`, and `since`; skips `Compliance`
+  events.
+- *(audit)* `--rule` filter — case-insensitive substring match
+  against rule subject/predicate/object across both top-level
+  firings and Compliance `payload.rules[]`.  Pairs with `--outcome`.
+- *(diff)* `arai diff <file>` — preview rule-set delta vs. the live
+  store before saving an instruction-file edit.  Reports added,
+  removed, and moved (same SPO, different line); JSON output for
+  pre-commit hooks.
+
+
 ## [0.2.5] - 2026-04-27
 
 ### Miscellaneous
@@ -14,7 +41,6 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 
 - Align v0.3 references with actual v0.2.3 release
-
 
 ## [0.2.3] - 2026-04-24
 
