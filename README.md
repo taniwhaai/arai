@@ -108,7 +108,12 @@ arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
-arai stats                 # Aggregate audit log — top rules, tools, days
+arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring
+arai stats                 # Aggregate audit log — top rules, tools, days, per-rule compliance
+arai stats --by-rule       # Just the per-rule compliance section
+arai severity alembic block # Pin a rule's severity (incremental deny rollout)
+arai severity --reset alembic # Drop the override; severity reverts to predicate-derived
+arai diff CLAUDE.md        # Preview rule-set delta before saving an edit
 arai test scenarios.json   # Replay synthetic hook scenarios against rules
 arai record --since=1h     # Capture recent firings as a scenario skeleton
 arai lint CLAUDE.md        # Parse a file and preview extracted rules
@@ -219,8 +224,14 @@ arai audit --tool=Bash        # Only Bash tool calls
 arai audit --event=PreToolUse # Only pre-tool-use firings
 arai audit --event=Compliance # Compliance verdicts (Pre/Post correlation)
 arai audit --outcome=ignored  # Shortcut: Compliance events marked ignored
+arai audit --rule alembic     # Filter to firings/verdicts touching this rule
 arai audit --json             # JSONL stream (pipe-friendly)
 ```
+
+`--rule` is a case-insensitive substring match against the rule's
+subject, predicate, or object — the same shape `arai severity` uses.
+Pairs naturally with `--outcome=ignored` to answer "every time the
+alembic rule was ignored this week".
 
 Useful for answering:
 
@@ -254,15 +265,82 @@ source.
 the questions every maintainer asks after a few weeks of use:
 
 ```bash
-arai stats                # Top rules, tools, days since the log began
+arai stats                # Top rules, tools, days, per-rule compliance
 arai stats --since=30d    # Window to the last month
 arai stats --top=5        # Show only top 5 per section
+arai stats --by-rule      # Just the per-rule compliance table
 arai stats --json         # Machine-readable for dashboards
 ```
 
 Output includes: total firings, most-fired rules, tools attracting the
-most guardrails, day-by-day activity. Nothing leaves the machine —
-stats are a local view over your own audit log.
+most guardrails, day-by-day activity, **and a per-rule compliance
+roll-up** — for every rule that has fired, how many Pre/Post pairs
+ended up `obeyed` vs `ignored`, plus a ratio:
+
+```
+Per-rule compliance
+  fires obeyed ignored unclear   ratio  rule
+     12     11       1       0     92%  alembic must_not: hand-write migrations
+      7      4       3       0     57%  git must_not: --no-verify  ⚠
+      9      9       0       0    100%  cargo always: test before commit
+```
+
+The ⚠ flag highlights rules with low ratios and enough volume to
+mean it — these are the ones to either rewrite (rule subject too
+narrow / object too vague) or escalate via `arai severity` (see
+below) once you trust the wording.
+
+Nothing leaves the machine — stats are a local view over your own
+audit log.
+
+## Severity — per-rule deny-mode rollout
+
+`arai severity` pins a rule's enforcement strength so re-running
+`arai scan` won't reset it to the predicate-derived classification.
+Use it for **incremental deny-mode rollout**: ship the rule set in
+advise mode (`ARAI_DENY_MODE=off`), watch `arai stats --by-rule`,
+and flip individual rules into `block` once the model is honouring
+them in the wild — without forcing the whole rule set into a strict
+mode it isn't ready for yet.
+
+```bash
+arai severity                          # List active overrides
+arai severity alembic block            # Pin every rule whose subject/object
+                                       # contains "alembic" to block
+arai severity git warn                 # Demote git rules to advise-only
+arai severity --reset alembic          # Drop the override; severity reverts
+                                       # to the predicate-derived value
+arai severity alembic block --json     # Machine-readable list of changes
+```
+
+Pattern matching is case-insensitive substring against the rule's
+subject *or* object, so `arai severity migrate` covers both
+`alembic must_not: hand-write migrations` and `migrations require:
+backfill_plan`.
+
+Overrides survive `arai scan` and `arai init` — they live in their
+own column and are never touched by re-classification. Drop one with
+`--reset` when you're ready to re-derive severity from the rule's
+predicate.
+
+## Diff — preview rule-set changes
+
+`arai diff <file>` shows what changes a candidate edit to an
+instruction file would make to the live rule set — added, removed,
+moved — before you save and run `arai scan`. Read-only against
+the store; pairs with `arai lint` (preview a file in isolation)
+and `arai why` (preview a single tool call).
+
+```bash
+arai diff CLAUDE.md                            # Plain table view
+arai diff memory/feedback_testing.md --json    # For pre-commit hooks
+```
+
+Output is grouped into three sections — `Added` (rules in the file
+that aren't in the store yet), `Removed` (rules in the store whose
+text isn't in the new file), `Moved` (same rule, different line
+number — caught when you re-order a file without changing its rules).
+JSON output keeps the same shape for CI.
 
 ## Lint — preview what a file produces
 
@@ -380,18 +458,22 @@ one merged file.
 ## MCP: agent-authored guardrails
 
 `arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
-server on stdio. Two tools, exposed to any MCP-capable agent:
+server on stdio. Three tools, exposed to any MCP-capable agent:
 
 | Tool | What it does |
 |------|--------------|
 | `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. Takes effect on the next PreToolUse hook — same enforcement path as rules in your CLAUDE.md. |
 | `arai_list_guards(pattern?)` | List active guardrails, optionally substring-filtered, so the agent can check what constraints are live before acting. |
+| `arai_recent_decisions(session_id?, limit?, since?)` | Look up recent Ārai decisions (deny / inject / review) so the agent can self-check after a refusal — closes the model-side feedback loop. |
 
-This closes a gap instruction files don't cover: when an agent
+This closes two gaps instruction files don't cover. First, when an agent
 discovers a rule mid-session (*"from now on, never write to /etc"*,
 *"always run the full test suite before pushing"*), it now has
 somewhere to register it for deterministic enforcement rather than
-hoping context retention holds.
+hoping context retention holds. Second, after a deny, the agent can
+call `arai_recent_decisions` to see what it was just refused for —
+useful for avoiding "try the same thing twice" loops when a single
+rule keeps getting hit.
 
 Register it with Claude Code by adding to your MCP settings:
 

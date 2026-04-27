@@ -4,6 +4,13 @@
 //! and produces summary counts: which rules fire most, which tools attract
 //! the most firings, activity per day.  Separate from anonymous telemetry —
 //! stats stay on the user's machine.
+//!
+//! Compliance roll-up: when PostToolUse correlation has produced verdicts,
+//! `compute()` joins them against the Pre firings via `triple_id` and reports
+//! per-rule obeyed/ignored/unclear counts plus a "compliance ratio"
+//! `obeyed / (obeyed + ignored)`.  This is the single most actionable
+//! number for a maintainer evaluating Arai on a real project — it tells
+//! you which rules the model honours and which ones it routes around.
 
 use crate::config::Config;
 use crate::audit;
@@ -20,13 +27,38 @@ pub struct Stats {
     pub by_tool: Vec<(String, usize)>,
     pub by_event: Vec<(String, usize)>,
     pub by_day: Vec<(String, usize)>,
+    /// Per-rule compliance roll-up.  Empty when the audit log has no
+    /// `Compliance` events yet (typical for projects that have only ever
+    /// run with the audit log shipping but no PostToolUse handler wired up,
+    /// or projects where no Pre/Post pair has occurred).
+    pub by_rule_compliance: Vec<RuleCompliance>,
+}
+
+/// Per-rule compliance record, joined across Pre firings (which carry
+/// subject/predicate/object) and Compliance events (which carry triple_id +
+/// outcome).  `fires` is the number of Pre firings; `obeyed`/`ignored`/
+/// `unclear` are verdict counts; `ratio` is `obeyed / (obeyed + ignored)`
+/// or `None` when the denominator is zero.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RuleCompliance {
+    pub triple_id: i64,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub fires: usize,
+    pub obeyed: usize,
+    pub ignored: usize,
+    pub unclear: usize,
+    /// Ratio in `[0.0, 1.0]`.  `None` when neither `obeyed` nor `ignored`
+    /// is non-zero — there's no signal yet to compute a ratio from.
+    pub ratio: Option<f64>,
 }
 
 /// Compute aggregate stats over audit entries.  Entries are the raw JSON
 /// values emitted by `audit::query`; this function never re-reads the log.
 pub fn compute(entries: &[Value]) -> Stats {
     let mut s = Stats {
-        total_firings: entries.len(),
+        total_firings: 0,
         ..Stats::default()
     };
 
@@ -35,8 +67,16 @@ pub fn compute(entries: &[Value]) -> Stats {
     let mut event_counts: HashMap<String, usize> = HashMap::new();
     let mut day_counts: HashMap<String, usize> = HashMap::new();
 
+    // Per-triple-id accumulators for the compliance roll-up.  We discover
+    // SPO via Pre firings (which carry subject/predicate/object) and
+    // outcomes via Compliance events (which carry triple_id + outcome).
+    let mut spo_by_id: HashMap<i64, (String, String, String)> = HashMap::new();
+    let mut fires_by_id: HashMap<i64, usize> = HashMap::new();
+    let mut outcomes_by_id: HashMap<i64, (usize, usize, usize)> = HashMap::new(); // obeyed, ignored, unclear
+
     for entry in entries {
         let ts = entry.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+        let ev = entry.get("event").and_then(|v| v.as_str()).unwrap_or("");
         if !ts.is_empty() {
             // Newer entries come first in `entries`, so window_end is the
             // first non-empty timestamp and window_start is the last.
@@ -49,14 +89,42 @@ pub fn compute(entries: &[Value]) -> Stats {
             }
         }
 
+        // Compliance events live in their own bucket: they don't count as
+        // firings, they don't carry tool context worth tallying separately,
+        // and their rules live under `payload.rules[]` not `rules[]`.
+        if ev == "Compliance" {
+            if let Some(rules) = entry
+                .get("payload")
+                .and_then(|p| p.get("rules"))
+                .and_then(|r| r.as_array())
+            {
+                for r in rules {
+                    let triple_id = r.get("triple_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                    if triple_id < 0 {
+                        continue;
+                    }
+                    let outcome = r.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
+                    let entry_o = outcomes_by_id.entry(triple_id).or_insert((0, 0, 0));
+                    match outcome {
+                        "obeyed" => entry_o.0 += 1,
+                        "ignored" => entry_o.1 += 1,
+                        "unclear" => entry_o.2 += 1,
+                        _ => {}
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Non-Compliance events: count as firings, accumulate top-rule and
+        // tool/event histograms.
+        s.total_firings += 1;
+        if !ev.is_empty() {
+            *event_counts.entry(ev.to_string()).or_insert(0) += 1;
+        }
         let tool = entry.get("tool").and_then(|v| v.as_str()).unwrap_or("");
         if !tool.is_empty() {
             *tool_counts.entry(tool.to_string()).or_insert(0) += 1;
-        }
-
-        let ev = entry.get("event").and_then(|v| v.as_str()).unwrap_or("");
-        if !ev.is_empty() {
-            *event_counts.entry(ev.to_string()).or_insert(0) += 1;
         }
 
         if let Some(rules) = entry.get("rules").and_then(|v| v.as_array()) {
@@ -69,6 +137,20 @@ pub fn compute(entries: &[Value]) -> Stats {
                 }
                 let key = format!("{subj} {pred}: {obj}");
                 *rule_counts.entry(key).or_insert(0) += 1;
+
+                // Compliance roll-up bookkeeping: remember the SPO for this
+                // triple_id (Compliance events only carry the id), and bump
+                // the firing counter.  Only Pre firings count toward
+                // `fires` — Post events would double-count the same call.
+                let triple_id = r.get("triple_id").and_then(|v| v.as_i64()).unwrap_or(-1);
+                if triple_id >= 0 {
+                    spo_by_id
+                        .entry(triple_id)
+                        .or_insert_with(|| (subj.to_string(), pred.to_string(), obj.to_string()));
+                    if ev == "PreToolUse" {
+                        *fires_by_id.entry(triple_id).or_insert(0) += 1;
+                    }
+                }
             }
         }
     }
@@ -82,6 +164,49 @@ pub fn compute(entries: &[Value]) -> Stats {
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
     };
+
+    // Build the compliance roll-up: every triple_id we saw in a Pre firing
+    // OR a Compliance event becomes a row.  This includes rules that fired
+    // but produced no Compliance verdict (Pre with no matching Post in the
+    // correlation window).
+    let mut compliance: Vec<RuleCompliance> = spo_by_id
+        .into_iter()
+        .map(|(triple_id, (subject, predicate, object))| {
+            let fires = *fires_by_id.get(&triple_id).unwrap_or(&0);
+            let (obeyed, ignored, unclear) = outcomes_by_id
+                .get(&triple_id)
+                .copied()
+                .unwrap_or((0, 0, 0));
+            let denom = obeyed + ignored;
+            let ratio = if denom > 0 {
+                Some(obeyed as f64 / denom as f64)
+            } else {
+                None
+            };
+            RuleCompliance {
+                triple_id,
+                subject,
+                predicate,
+                object,
+                fires,
+                obeyed,
+                ignored,
+                unclear,
+                ratio,
+            }
+        })
+        .collect();
+    // Sort by fires desc, then by ignored desc (floutings float to the top
+    // for equal fire counts), then alphabetical for stability.
+    compliance.sort_by(|a, b| {
+        b.fires
+            .cmp(&a.fires)
+            .then_with(|| b.ignored.cmp(&a.ignored))
+            .then_with(|| a.subject.cmp(&b.subject))
+            .then_with(|| a.object.cmp(&b.object))
+    });
+    s.by_rule_compliance = compliance;
+
     s
 }
 
@@ -96,6 +221,7 @@ pub fn run(
     cfg: &Config,
     since_epoch_secs: Option<u64>,
     top: usize,
+    by_rule_only: bool,
     json: bool,
 ) -> Result<(), String> {
     let entries = audit::query(
@@ -109,25 +235,52 @@ pub fn run(
     let stats = compute(&entries);
 
     if json {
-        let out = serde_json::json!({
+        let mut out = serde_json::json!({
             "total_firings": stats.total_firings,
             "window_start": stats.window_start,
             "window_end": stats.window_end,
-            "by_rule": stats.by_rule.iter().map(|(k, v)| serde_json::json!({"rule": k, "count": v})).collect::<Vec<_>>(),
-            "by_tool": stats.by_tool.iter().map(|(k, v)| serde_json::json!({"tool": k, "count": v})).collect::<Vec<_>>(),
-            "by_event": stats.by_event.iter().map(|(k, v)| serde_json::json!({"event": k, "count": v})).collect::<Vec<_>>(),
-            "by_day": stats.by_day.iter().map(|(k, v)| serde_json::json!({"day": k, "count": v})).collect::<Vec<_>>(),
+            "by_rule_compliance": stats.by_rule_compliance,
         });
+        if !by_rule_only {
+            out["by_rule"] = serde_json::Value::Array(
+                stats
+                    .by_rule
+                    .iter()
+                    .map(|(k, v)| serde_json::json!({"rule": k, "count": v}))
+                    .collect(),
+            );
+            out["by_tool"] = serde_json::Value::Array(
+                stats
+                    .by_tool
+                    .iter()
+                    .map(|(k, v)| serde_json::json!({"tool": k, "count": v}))
+                    .collect(),
+            );
+            out["by_event"] = serde_json::Value::Array(
+                stats
+                    .by_event
+                    .iter()
+                    .map(|(k, v)| serde_json::json!({"event": k, "count": v}))
+                    .collect(),
+            );
+            out["by_day"] = serde_json::Value::Array(
+                stats
+                    .by_day
+                    .iter()
+                    .map(|(k, v)| serde_json::json!({"day": k, "count": v}))
+                    .collect(),
+            );
+        }
         println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
         return Ok(());
     }
 
-    print_table(&stats, top);
+    print_table(&stats, top, by_rule_only);
     Ok(())
 }
 
-fn print_table(stats: &Stats, top: usize) {
-    if stats.total_firings == 0 {
+fn print_table(stats: &Stats, top: usize, by_rule_only: bool) {
+    if stats.total_firings == 0 && stats.by_rule_compliance.is_empty() {
         println!("No audit entries.  Rules haven't fired yet, or --since excluded everything.");
         return;
     }
@@ -143,7 +296,13 @@ fn print_table(stats: &Stats, top: usize) {
     }
     println!();
 
+    if by_rule_only {
+        print_compliance_section(&stats.by_rule_compliance, top);
+        return;
+    }
+
     print_section("Top rules", &stats.by_rule, top);
+    print_compliance_section(&stats.by_rule_compliance, top);
     print_section("By tool", &stats.by_tool, top);
     print_section("By event", &stats.by_event, top);
     print_section("By day", &stats.by_day, top);
@@ -167,21 +326,73 @@ fn print_section(title: &str, rows: &[(String, usize)], top: usize) {
     println!();
 }
 
+fn print_compliance_section(rows: &[RuleCompliance], top: usize) {
+    if rows.is_empty() {
+        return;
+    }
+    let any_outcomes = rows.iter().any(|r| r.obeyed + r.ignored + r.unclear > 0);
+    println!("Per-rule compliance");
+    if !any_outcomes {
+        println!("  (no Compliance events yet — Pre/Post correlation produces these on PostToolUse)");
+    }
+    println!(
+        "  {:>5} {:>6} {:>7} {:>7} {:>7}  rule",
+        "fires", "obeyed", "ignored", "unclear", "ratio",
+    );
+    for r in rows.iter().take(top) {
+        let ratio = match r.ratio {
+            Some(v) => format!("{:>6.0}%", v * 100.0),
+            None => "  —  ".to_string(),
+        };
+        // Visual nudge for rules the model is routing around.
+        let flag = match r.ratio {
+            Some(v) if v < 0.6 && (r.obeyed + r.ignored) >= 2 => " ⚠",
+            _ => "",
+        };
+        println!(
+            "  {:>5} {:>6} {:>7} {:>7} {:>7}  {} {}: {}{}",
+            r.fires, r.obeyed, r.ignored, r.unclear, ratio,
+            r.subject, r.predicate, r.object, flag,
+        );
+    }
+    if rows.len() > top {
+        println!("        … {} more", rows.len() - top);
+    }
+    println!();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    fn e(ts: &str, tool: &str, event: &str, subj: &str, pred: &str, obj: &str) -> Value {
+    fn pre_firing(ts: &str, tool: &str, triple_id: i64, subj: &str, pred: &str, obj: &str) -> Value {
         json!({
             "ts": ts,
             "tool": tool,
-            "event": event,
+            "event": "PreToolUse",
             "rules": [{
+                "triple_id": triple_id,
                 "subject": subj,
                 "predicate": pred,
                 "object": obj,
             }],
+        })
+    }
+
+    fn compliance_event(ts: &str, tool: &str, triple_id: i64, outcome: &str) -> Value {
+        json!({
+            "ts": ts,
+            "tool": tool,
+            "event": "Compliance",
+            "payload": {
+                "rules": [{
+                    "triple_id": triple_id,
+                    "predicate": "never",
+                    "object": "force-push",
+                    "outcome": outcome,
+                }]
+            }
         })
     }
 
@@ -190,14 +401,15 @@ mod tests {
         let stats = compute(&[]);
         assert_eq!(stats.total_firings, 0);
         assert!(stats.by_rule.is_empty());
+        assert!(stats.by_rule_compliance.is_empty());
     }
 
     #[test]
     fn test_rule_count_aggregation() {
         let entries = vec![
-            e("2026-04-20T10:00:00Z", "Bash", "PreToolUse", "git", "never", "force-push"),
-            e("2026-04-20T11:00:00Z", "Bash", "PreToolUse", "git", "never", "force-push"),
-            e("2026-04-20T12:00:00Z", "Write", "PreToolUse", "alembic", "never", "hand-write"),
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T11:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T12:00:00Z", "Write", 2, "alembic", "never", "hand-write"),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.total_firings, 3);
@@ -209,9 +421,14 @@ mod tests {
     #[test]
     fn test_tool_and_event_counts() {
         let entries = vec![
-            e("2026-04-20T10:00:00Z", "Bash", "PreToolUse", "a", "b", "c"),
-            e("2026-04-20T10:01:00Z", "Bash", "PostToolUse", "a", "b", "c"),
-            e("2026-04-20T10:02:00Z", "Write", "PreToolUse", "a", "b", "c"),
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "a", "b", "c"),
+            json!({
+                "ts": "2026-04-20T10:01:00Z",
+                "tool": "Bash",
+                "event": "PostToolUse",
+                "rules": [{"triple_id": 1, "subject": "a", "predicate": "b", "object": "c"}]
+            }),
+            pre_firing("2026-04-20T10:02:00Z", "Write", 2, "a", "b", "c"),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.by_tool[0], ("Bash".to_string(), 2));
@@ -223,16 +440,14 @@ mod tests {
     fn test_by_day_ordering() {
         // Newer-first in input (matches audit::query output)
         let entries = vec![
-            e("2026-04-22T10:00:00Z", "Bash", "PreToolUse", "a", "b", "c"),
-            e("2026-04-20T10:00:00Z", "Bash", "PreToolUse", "a", "b", "c"),
-            e("2026-04-20T11:00:00Z", "Bash", "PreToolUse", "a", "b", "c"),
+            pre_firing("2026-04-22T10:00:00Z", "Bash", 1, "a", "b", "c"),
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "a", "b", "c"),
+            pre_firing("2026-04-20T11:00:00Z", "Bash", 1, "a", "b", "c"),
         ];
         let stats = compute(&entries);
-        // by_day is chronological ascending
         assert_eq!(stats.by_day[0].0, "2026-04-20");
         assert_eq!(stats.by_day[0].1, 2);
         assert_eq!(stats.by_day[1].0, "2026-04-22");
-        // window_start is oldest (last iterated), window_end is newest (first iterated)
         assert_eq!(stats.window_end.as_deref(), Some("2026-04-22T10:00:00Z"));
         assert_eq!(stats.window_start.as_deref(), Some("2026-04-20T11:00:00Z"));
     }
@@ -240,12 +455,88 @@ mod tests {
     #[test]
     fn test_rule_tiebreak_alphabetical() {
         let entries = vec![
-            e("2026-04-20T10:00:00Z", "Bash", "PreToolUse", "zebra", "never", "x"),
-            e("2026-04-20T11:00:00Z", "Bash", "PreToolUse", "alpha", "never", "x"),
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "zebra", "never", "x"),
+            pre_firing("2026-04-20T11:00:00Z", "Bash", 2, "alpha", "never", "x"),
         ];
         let stats = compute(&entries);
-        // equal counts → sorted alphabetically
         assert_eq!(stats.by_rule[0].0, "alpha never: x");
         assert_eq!(stats.by_rule[1].0, "zebra never: x");
+    }
+
+    #[test]
+    fn test_compliance_rollup_basic() {
+        // 3 Pre firings of rule 1, then 2 obeyed + 1 ignored verdicts.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed"),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed"),
+            compliance_event("2026-04-20T10:02:30Z", "Bash", 1, "ignored"),
+        ];
+        let stats = compute(&entries);
+
+        // Total firings excludes Compliance events.
+        assert_eq!(stats.total_firings, 3);
+
+        // One rule in the compliance roll-up.
+        assert_eq!(stats.by_rule_compliance.len(), 1);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.triple_id, 1);
+        assert_eq!(rc.subject, "git");
+        assert_eq!(rc.predicate, "never");
+        assert_eq!(rc.fires, 3);
+        assert_eq!(rc.obeyed, 2);
+        assert_eq!(rc.ignored, 1);
+        assert_eq!(rc.unclear, 0);
+        // 2 / (2 + 1) = 0.666...
+        let ratio = rc.ratio.unwrap();
+        assert!((ratio - 2.0 / 3.0).abs() < 1e-9, "ratio = {ratio}");
+    }
+
+    #[test]
+    fn test_compliance_rollup_no_outcomes_yields_none_ratio() {
+        // Pre firings only, no Compliance events: ratio is None.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 7, "alembic", "never", "hand-write"),
+        ];
+        let stats = compute(&entries);
+        assert_eq!(stats.by_rule_compliance.len(), 1);
+        assert_eq!(stats.by_rule_compliance[0].fires, 1);
+        assert!(stats.by_rule_compliance[0].ratio.is_none());
+    }
+
+    #[test]
+    fn test_compliance_rollup_unclear_does_not_affect_ratio() {
+        // Only unclear verdicts: ratio remains None (no signal).
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 5, "x", "always", "y"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 5, "unclear"),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 5, "unclear"),
+        ];
+        let stats = compute(&entries);
+        assert_eq!(stats.by_rule_compliance.len(), 1);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.unclear, 2);
+        assert_eq!(rc.obeyed, 0);
+        assert_eq!(rc.ignored, 0);
+        assert!(rc.ratio.is_none());
+    }
+
+    #[test]
+    fn test_compliance_rollup_sort_order() {
+        // Two rules: rule 1 fires more, rule 2 has more ignored — fires
+        // breaks the tie first, so rule 1 wins.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "a", "never", "x"),
+            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "a", "never", "x"),
+            pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "a", "never", "x"),
+            pre_firing("2026-04-20T10:03:00Z", "Bash", 2, "b", "never", "y"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed"),
+            compliance_event("2026-04-20T10:03:30Z", "Bash", 2, "ignored"),
+        ];
+        let stats = compute(&entries);
+        assert_eq!(stats.by_rule_compliance[0].triple_id, 1);
+        assert_eq!(stats.by_rule_compliance[1].triple_id, 2);
     }
 }
