@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- *(stats)* Per-Pre dedupe in compliance roll-up.  A single Pre
+  firing now produces at most one rolled-up verdict regardless of
+  how many Posts correlated against it inside the 5-minute window.
+  First-definitive-wins: the first `obeyed` or `ignored` verdict
+  for a Pre is the one counted; later Posts against the same Pre
+  are evidence about later state, not about the original warning.
+  Audit log behaviour is unchanged — `arai audit` still surfaces
+  every correlated firing for investigation.  Closes
+  [#37](https://github.com/taniwhaai/arai/issues/37).
+
 ## [0.2.6] - 2026-04-27
 
 ### Added
