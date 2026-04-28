@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-04-28
+
+### Fixed
+
+- *(stats)* Dedupe compliance verdicts per Pre firing (closes #37) ([#38](https://github.com/taniwhaai/arai/pull/38))
+
+
 ### Fixed
 
 - *(stats)* Per-Pre dedupe in compliance roll-up.  A single Pre
