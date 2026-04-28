@@ -70,9 +70,16 @@ pub fn compute(entries: &[Value]) -> Stats {
     // Per-triple-id accumulators for the compliance roll-up.  We discover
     // SPO via Pre firings (which carry subject/predicate/object) and
     // outcomes via Compliance events (which carry triple_id + outcome).
+    //
+    // `outcomes_by_pre` is keyed on `(session, pre_ts, triple_id)` so that a
+    // single Pre firing produces one rolled-up verdict regardless of how
+    // many Posts correlated against it inside the 5-minute window.  Without
+    // this dedupe, an unrelated Post that didn't trigger the rule still
+    // wrote an Obeyed Compliance entry against the original Pre, inflating
+    // the denominator of the ratio.  See arai#37.
     let mut spo_by_id: HashMap<i64, (String, String, String)> = HashMap::new();
     let mut fires_by_id: HashMap<i64, usize> = HashMap::new();
-    let mut outcomes_by_id: HashMap<i64, (usize, usize, usize)> = HashMap::new(); // obeyed, ignored, unclear
+    let mut outcomes_by_pre: HashMap<(String, String, i64), Vec<(String, String)>> = HashMap::new();
 
     for entry in entries {
         let ts = entry.get("ts").and_then(|v| v.as_str()).unwrap_or("");
@@ -92,7 +99,18 @@ pub fn compute(entries: &[Value]) -> Stats {
         // Compliance events live in their own bucket: they don't count as
         // firings, they don't carry tool context worth tallying separately,
         // and their rules live under `payload.rules[]` not `rules[]`.
+        //
+        // We collect *all* observed outcomes per `(session, pre_ts,
+        // triple_id)` and resolve them after the scan — a single Pre
+        // firing produces at most one rolled-up verdict (first-definitive-
+        // wins), regardless of how many Posts correlated against it.
         if ev == "Compliance" {
+            let session = entry
+                .get("session")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let post_ts = ts.to_string();
             if let Some(rules) = entry
                 .get("payload")
                 .and_then(|p| p.get("rules"))
@@ -103,14 +121,20 @@ pub fn compute(entries: &[Value]) -> Stats {
                     if triple_id < 0 {
                         continue;
                     }
-                    let outcome = r.get("outcome").and_then(|v| v.as_str()).unwrap_or("");
-                    let entry_o = outcomes_by_id.entry(triple_id).or_insert((0, 0, 0));
-                    match outcome {
-                        "obeyed" => entry_o.0 += 1,
-                        "ignored" => entry_o.1 += 1,
-                        "unclear" => entry_o.2 += 1,
-                        _ => {}
-                    }
+                    let pre_ts = r
+                        .get("pre_ts")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let outcome = r
+                        .get("outcome")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    outcomes_by_pre
+                        .entry((session.clone(), pre_ts, triple_id))
+                        .or_default()
+                        .push((post_ts.clone(), outcome));
                 }
             }
             continue;
@@ -164,6 +188,28 @@ pub fn compute(entries: &[Value]) -> Stats {
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
     };
+
+    // Resolve per-Pre outcome lists into a single verdict per Pre firing.
+    // First-definitive-wins: scan in post-ts order, take the first
+    // `obeyed` or `ignored`; if none appear, the verdict is `unclear`.
+    // The first observation after the warning is what tells us whether
+    // the model honored the rule on that specific call — later commands
+    // are evidence about later state, not the original Pre.
+    let mut outcomes_by_id: HashMap<i64, (usize, usize, usize)> = HashMap::new();
+    for ((_session, _pre_ts, triple_id), mut occurrences) in outcomes_by_pre {
+        occurrences.sort_by(|a, b| a.0.cmp(&b.0));
+        let resolved = occurrences
+            .iter()
+            .find(|(_, o)| matches!(o.as_str(), "obeyed" | "ignored"))
+            .map(|(_, o)| o.as_str())
+            .unwrap_or("unclear");
+        let entry_o = outcomes_by_id.entry(triple_id).or_insert((0, 0, 0));
+        match resolved {
+            "obeyed" => entry_o.0 += 1,
+            "ignored" => entry_o.1 += 1,
+            _ => entry_o.2 += 1,
+        }
+    }
 
     // Build the compliance roll-up: every triple_id we saw in a Pre firing
     // OR a Compliance event becomes a row.  This includes rules that fired
@@ -371,6 +417,7 @@ mod tests {
             "ts": ts,
             "tool": tool,
             "event": "PreToolUse",
+            "session": "s1",
             "rules": [{
                 "triple_id": triple_id,
                 "subject": subj,
@@ -380,14 +427,26 @@ mod tests {
         })
     }
 
-    fn compliance_event(ts: &str, tool: &str, triple_id: i64, outcome: &str) -> Value {
+    /// Build a Compliance event correlated against a specific Pre firing.
+    /// `pre_ts` must match the timestamp of the Pre this Post is responding
+    /// to so the dedupe key `(session, pre_ts, triple_id)` collapses
+    /// correctly.  Use a fresh `pre_ts` to simulate a separate Pre firing.
+    fn compliance_event(
+        post_ts: &str,
+        tool: &str,
+        triple_id: i64,
+        outcome: &str,
+        pre_ts: &str,
+    ) -> Value {
         json!({
-            "ts": ts,
+            "ts": post_ts,
             "tool": tool,
             "event": "Compliance",
+            "session": "s1",
             "payload": {
                 "rules": [{
                     "triple_id": triple_id,
+                    "pre_ts": pre_ts,
                     "predicate": "never",
                     "object": "force-push",
                     "outcome": outcome,
@@ -465,14 +524,15 @@ mod tests {
 
     #[test]
     fn test_compliance_rollup_basic() {
-        // 3 Pre firings of rule 1, then 2 obeyed + 1 ignored verdicts.
+        // 3 distinct Pre firings of rule 1 (different pre_ts), each
+        // correlated with one definitive Post: 2 obeyed + 1 ignored.
         let entries = vec![
             pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
             pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
             pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push"),
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed"),
-            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed"),
-            compliance_event("2026-04-20T10:02:30Z", "Bash", 1, "ignored"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:01:00Z"),
+            compliance_event("2026-04-20T10:02:30Z", "Bash", 1, "ignored", "2026-04-20T10:02:00Z"),
         ];
         let stats = compute(&entries);
 
@@ -507,17 +567,22 @@ mod tests {
     }
 
     #[test]
-    fn test_compliance_rollup_unclear_does_not_affect_ratio() {
-        // Only unclear verdicts: ratio remains None (no signal).
+    fn test_compliance_rollup_unclear_only_yields_unclear_verdict() {
+        // Two unclear Compliance events for the same Pre dedupe to one
+        // unclear verdict; ratio remains None (no signal).
+        let pre = "2026-04-20T10:00:00Z";
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 5, "x", "always", "y"),
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 5, "unclear"),
-            compliance_event("2026-04-20T10:01:30Z", "Bash", 5, "unclear"),
+            pre_firing(pre, "Bash", 5, "x", "always", "y"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 5, "unclear", pre),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 5, "unclear", pre),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.by_rule_compliance.len(), 1);
         let rc = &stats.by_rule_compliance[0];
-        assert_eq!(rc.unclear, 2);
+        assert_eq!(
+            rc.unclear, 1,
+            "two unclear verdicts on the same Pre should dedupe to one"
+        );
         assert_eq!(rc.obeyed, 0);
         assert_eq!(rc.ignored, 0);
         assert!(rc.ratio.is_none());
@@ -525,18 +590,136 @@ mod tests {
 
     #[test]
     fn test_compliance_rollup_sort_order() {
-        // Two rules: rule 1 fires more, rule 2 has more ignored — fires
-        // breaks the tie first, so rule 1 wins.
+        // Two rules: rule 1 has more Pre firings, rule 2 fewer.  Sort
+        // primary key is fires desc, so rule 1 sorts first.  Each rule
+        // has its own distinct Pre/pre_ts pairing.
         let entries = vec![
             pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "a", "never", "x"),
             pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "a", "never", "x"),
             pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "a", "never", "x"),
             pre_firing("2026-04-20T10:03:00Z", "Bash", 2, "b", "never", "y"),
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed"),
-            compliance_event("2026-04-20T10:03:30Z", "Bash", 2, "ignored"),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            compliance_event("2026-04-20T10:03:30Z", "Bash", 2, "ignored", "2026-04-20T10:03:00Z"),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.by_rule_compliance[0].triple_id, 1);
         assert_eq!(stats.by_rule_compliance[1].triple_id, 2);
+    }
+
+    // ── #37 dedupe semantics ─────────────────────────────────────────
+
+    #[test]
+    fn test_compliance_dedupe_one_pre_many_obeyed_posts_counts_once() {
+        // The reproduction case from arai#37: one Pre fires, eight
+        // unrelated Posts in the correlation window each emit an `obeyed`
+        // Compliance entry against the same Pre.  Pre/before #37: 8 obeyed.
+        // Post-fix: dedupes to 1 obeyed, ratio is 100% on n=1 not n=8.
+        let pre = "2026-04-20T10:00:00Z";
+        let entries = vec![
+            pre_firing(pre, "Bash", 1, "git", "never", "force-push"),
+            compliance_event("2026-04-20T10:00:05Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:02:00Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:02:30Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:03:00Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:03:30Z", "Bash", 1, "obeyed", pre),
+        ];
+        let stats = compute(&entries);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.fires, 1);
+        assert_eq!(
+            rc.obeyed, 1,
+            "8 obeyed Posts against the same Pre should dedupe to 1 verdict"
+        );
+        assert_eq!(rc.ignored, 0);
+        assert_eq!(rc.ratio, Some(1.0));
+    }
+
+    #[test]
+    fn test_compliance_dedupe_first_definitive_wins_ignored_then_obeyed() {
+        // First definitive-wins: model runs the forbidden command first,
+        // then later runs unrelated commands.  Verdict is `ignored`
+        // because that's the first non-unclear outcome after the warning.
+        let pre = "2026-04-20T10:00:00Z";
+        let entries = vec![
+            pre_firing(pre, "Bash", 1, "git", "never", "force-push"),
+            // The transgression comes first — this is the verdict.
+            compliance_event("2026-04-20T10:00:10Z", "Bash", 1, "ignored", pre),
+            // Subsequent unrelated commands don't get to "rehabilitate" the
+            // original Pre's verdict.
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "obeyed", pre),
+        ];
+        let stats = compute(&entries);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.ignored, 1);
+        assert_eq!(rc.obeyed, 0);
+        assert_eq!(rc.ratio, Some(0.0));
+    }
+
+    #[test]
+    fn test_compliance_dedupe_first_definitive_wins_obeyed_then_ignored() {
+        // Symmetric inverse: model is initially compliant, then runs the
+        // forbidden command later.  Verdict is `obeyed` — the first thing
+        // after the warning is what's measured.  The later `ignored` is
+        // about subsequent state, not the original Pre.  (If the rule
+        // would have fired again on that later command, that's a separate
+        // Pre and a separate verdict.)
+        let pre = "2026-04-20T10:00:00Z";
+        let entries = vec![
+            pre_firing(pre, "Bash", 1, "git", "never", "force-push"),
+            compliance_event("2026-04-20T10:00:10Z", "Bash", 1, "obeyed", pre),
+            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "ignored", pre),
+        ];
+        let stats = compute(&entries);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.obeyed, 1);
+        assert_eq!(rc.ignored, 0);
+        assert_eq!(rc.ratio, Some(1.0));
+    }
+
+    #[test]
+    fn test_compliance_dedupe_unclear_then_definitive_picks_definitive() {
+        // Unclear is not a definitive outcome.  Even if it appears first
+        // in time, a later definitive outcome (obeyed or ignored) wins.
+        let pre = "2026-04-20T10:00:00Z";
+        let entries = vec![
+            pre_firing(pre, "Bash", 1, "git", "never", "force-push"),
+            compliance_event("2026-04-20T10:00:10Z", "Bash", 1, "unclear", pre),
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "ignored", pre),
+            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "obeyed", pre),
+        ];
+        let stats = compute(&entries);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.ignored, 1, "first definitive wins, even if preceded by unclear");
+        assert_eq!(rc.obeyed, 0);
+        assert_eq!(rc.unclear, 0);
+    }
+
+    #[test]
+    fn test_compliance_dedupe_distinct_pres_count_independently() {
+        // Two separate Pre firings of the same rule (different pre_ts)
+        // each get their own verdict.  Dedupe is per-Pre, not per-rule —
+        // multiple firings of the same rule are still independent
+        // observations.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T11:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            // Pre #1: lots of correlated obeyed, dedupes to 1 obeyed.
+            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            // Pre #2: ignored.
+            compliance_event("2026-04-20T11:00:30Z", "Bash", 1, "ignored", "2026-04-20T11:00:00Z"),
+        ];
+        let stats = compute(&entries);
+        let rc = &stats.by_rule_compliance[0];
+        assert_eq!(rc.fires, 2);
+        assert_eq!(rc.obeyed, 1);
+        assert_eq!(rc.ignored, 1);
+        // 1 / (1 + 1) = 0.5
+        assert_eq!(rc.ratio, Some(0.5));
     }
 }

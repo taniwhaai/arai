@@ -290,6 +290,14 @@ mean it — these are the ones to either rewrite (rule subject too
 narrow / object too vague) or escalate via `arai severity` (see
 below) once you trust the wording.
 
+The ratio is computed **once per Pre firing** using a first-
+definitive-wins rule: the first non-`unclear` Compliance verdict
+correlated against a Pre is the verdict for that Pre, regardless
+of how many subsequent Posts also fall inside the 5-minute
+correlation window. So a rule that fires once and is honored stays
+at 1 obeyed / 1 fire, not 8 obeyed / 1 fire just because eight
+unrelated commands followed.
+
 Nothing leaves the machine — stats are a local view over your own
 audit log.
 
