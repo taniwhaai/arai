@@ -343,16 +343,35 @@ const MAX_RULES_PER_HOOK: usize = 5;
 
 /// Format matched guardrails as additionalContext string.
 /// Limits output to the top N rules by confidence to avoid context bloat.
-pub fn format_context(matched: &[(Guardrail, u8)]) -> String {
+///
+/// When `seen_set` contains a rule's `triple_id`, that rule was already
+/// fully injected earlier in the same session and the model has its full
+/// text in context.  We emit a compact one-liner for it instead — saves
+/// roughly 50 tokens per re-fire and reduces attention dilution from
+/// repeated re-reads of the same rule.  Pass `&Default::default()` if
+/// seen-tracking is unavailable (e.g. unit tests, empty session_id).
+pub fn format_context(
+    matched: &[(Guardrail, u8)],
+    seen_set: &std::collections::HashSet<i64>,
+) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("Arai guardrails:".to_string());
     let limit = matched.len().min(MAX_RULES_PER_HOOK);
     for (g, pct) in &matched[..limit] {
-        let trace = format_trace(g);
-        lines.push(format!(
-            "- {} {}: {} ({}% match){}",
-            g.subject, g.predicate, g.object, pct, trace
-        ));
+        if seen_set.contains(&g.triple_id) {
+            // Compact form: model already has the full text from earlier
+            // in this session; just remind it the rule is still active.
+            lines.push(format!(
+                "- still: {} {} {} ({}% match)",
+                g.subject, g.predicate, g.object, pct
+            ));
+        } else {
+            let trace = format_trace(g);
+            lines.push(format!(
+                "- {} {}: {} ({}% match){}",
+                g.subject, g.predicate, g.object, pct, trace
+            ));
+        }
     }
     if matched.len() > MAX_RULES_PER_HOOK {
         lines.push(format!("  ({} more suppressed)", matched.len() - MAX_RULES_PER_HOOK));
@@ -706,5 +725,66 @@ mod tests {
             "push rule should not fire for pull command");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn mk_guardrail(triple_id: i64, subject: &str, predicate: &str, object: &str) -> Guardrail {
+        Guardrail {
+            triple_id,
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            confidence: 0.9,
+            source_file: "CLAUDE.md".to_string(),
+            file_path: "CLAUDE.md".to_string(),
+            layer: Some(1),
+            line_start: Some(42),
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn format_context_emits_full_form_for_unseen_rules() {
+        let matched = vec![(mk_guardrail(1, "git", "never", "force-push to main"), 95u8)];
+        let seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let ctx = format_context(&matched, &seen);
+        // Full form carries the source trace.
+        assert!(ctx.contains("CLAUDE.md:42"), "full form should cite source: {ctx:?}");
+        assert!(ctx.contains("layer-1"), "full form should cite layer: {ctx:?}");
+        assert!(!ctx.contains("still:"), "first injection should NOT use compact prefix");
+    }
+
+    #[test]
+    fn format_context_emits_compact_form_for_seen_rules() {
+        let matched = vec![(mk_guardrail(7, "git", "never", "force-push to main"), 95u8)];
+        let seen: std::collections::HashSet<i64> = [7i64].iter().copied().collect();
+        let ctx = format_context(&matched, &seen);
+        // Compact form drops source/layer trace; uses "still:" prefix.
+        assert!(ctx.contains("still:"), "repeat injection should use compact prefix");
+        assert!(!ctx.contains("CLAUDE.md:42"), "compact form should NOT re-cite source");
+        assert!(!ctx.contains("layer-1"), "compact form should NOT re-cite layer");
+        // Compact form is shorter — the whole point.
+        let unseen_ctx = format_context(&matched, &std::collections::HashSet::new());
+        assert!(
+            ctx.len() < unseen_ctx.len(),
+            "compact form should be shorter than full form ({} vs {})",
+            ctx.len(),
+            unseen_ctx.len(),
+        );
+    }
+
+    #[test]
+    fn format_context_mixes_full_and_compact_per_rule() {
+        // Two rules, only one already seen — output should have one full
+        // line and one compact line.
+        let matched = vec![
+            (mk_guardrail(1, "alembic", "must_not", "hand-write migrations"), 90u8),
+            (mk_guardrail(2, "git", "never", "force-push to main"), 95u8),
+        ];
+        let seen: std::collections::HashSet<i64> = [1i64].iter().copied().collect();
+        let ctx = format_context(&matched, &seen);
+        // alembic is seen → compact; git is fresh → full.
+        assert!(ctx.contains("- still: alembic must_not hand-write migrations"));
+        assert!(ctx.contains("git never: force-push to main"));
+        assert!(ctx.contains("[CLAUDE.md:42 layer-1]"));
     }
 }

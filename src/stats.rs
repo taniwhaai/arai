@@ -32,6 +32,40 @@ pub struct Stats {
     /// run with the audit log shipping but no PostToolUse handler wired up,
     /// or projects where no Pre/Post pair has occurred).
     pub by_rule_compliance: Vec<RuleCompliance>,
+    /// Token-economics roll-up — calibrated estimates of saved + spent
+    /// tokens.  Not measurements; the constants are documented and
+    /// labelled as estimates everywhere.
+    pub token_economics: TokenEconomics,
+}
+
+/// Calibrated estimate of Arai's effect on token burn over the audit window.
+///
+/// Two streams contribute: the *suppression* stream (counted directly from
+/// `seen_before` flags on firings — repeat injections that emit a compact
+/// one-liner instead of the full rule payload) and the *counterfactual*
+/// stream (each `obeyed` Compliance verdict, weighted by the original Pre's
+/// severity, attributing the avoided cost of a mistake we believe we
+/// prevented).
+///
+/// **These are estimates, not measurements.**  The compact-form delta is a
+/// rough average from sampling a few real rules; the counterfactual
+/// constants are conservative bounds on what "fix the mess" cycles
+/// typically cost.  Calibration constants live in `compute()` so they can
+/// move without rewriting the audit log.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct TokenEconomics {
+    /// Re-firings of a rule that already had its full context injected
+    /// earlier in the same session — these emit a compact form.
+    pub suppressed_repeats: usize,
+    /// `obeyed` Compliance verdicts where the original Pre was `block`
+    /// severity — i.e. denials the model honored.
+    pub blocked_obeyed: usize,
+    /// `obeyed` Compliance verdicts where the original Pre was advisory
+    /// (`warn` or `inform`) — the model complied without being denied.
+    pub advisory_obeyed: usize,
+    /// Sum of the three streams under the documented calibration constants.
+    /// Treat as an order-of-magnitude reading, not a precise number.
+    pub estimated_tokens_saved: usize,
 }
 
 /// Per-rule compliance record, joined across Pre firings (which carry
@@ -54,6 +88,26 @@ pub struct RuleCompliance {
     pub ratio: Option<f64>,
 }
 
+/// Calibration constants for `TokenEconomics`.  Documented here so they
+/// move atomically and the audit log never carries derived numbers that
+/// depend on a constant the user can't re-derive from the data.
+///
+/// - **Per suppression**: the byte-count delta between a full firing and
+///   a compact one-liner is roughly 200 chars (≈50 tokens at typical
+///   tokenisation).  Sampled by hand on a few representative rules.
+/// - **Per blocked-then-obeyed**: a denied destructive action that the
+///   model would otherwise have run typically costs 1–5K tokens of
+///   recovery (revert files, undo migrations, rollback push).  We pick
+///   2K as a conservative midpoint — over-claiming here would be the
+///   easy mistake to make.
+/// - **Per advisory-obeyed**: a warned-and-complied action saves less
+///   because we don't know the model wouldn't have done the right thing
+///   anyway.  500 tokens captures the value of the warning without
+///   over-attributing.
+const TOKENS_PER_SUPPRESSION: usize = 50;
+const TOKENS_PER_BLOCKED_OBEYED: usize = 2000;
+const TOKENS_PER_ADVISORY_OBEYED: usize = 500;
+
 /// Compute aggregate stats over audit entries.  Entries are the raw JSON
 /// values emitted by `audit::query`; this function never re-reads the log.
 pub fn compute(entries: &[Value]) -> Stats {
@@ -66,6 +120,11 @@ pub fn compute(entries: &[Value]) -> Stats {
     let mut tool_counts: HashMap<String, usize> = HashMap::new();
     let mut event_counts: HashMap<String, usize> = HashMap::new();
     let mut day_counts: HashMap<String, usize> = HashMap::new();
+
+    // Token-economics counters — accumulated as we walk the entries.
+    let mut suppressed_repeats: usize = 0;
+    let mut blocked_obeyed: usize = 0;
+    let mut advisory_obeyed: usize = 0;
 
     // Per-triple-id accumulators for the compliance roll-up.  We discover
     // SPO via Pre firings (which carry subject/predicate/object) and
@@ -131,6 +190,22 @@ pub fn compute(entries: &[Value]) -> Stats {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+
+                    // Token-economics: weight obeyed verdicts by the
+                    // original Pre's severity.  Denied-and-honored is the
+                    // high-confidence saving (the model would otherwise
+                    // have run the destructive command); advisory-and-
+                    // honored is lower-confidence (we don't know the
+                    // model wouldn't have done the right thing anyway).
+                    if outcome == "obeyed" {
+                        let severity = r.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+                        match severity {
+                            "block" => blocked_obeyed += 1,
+                            "warn" | "inform" => advisory_obeyed += 1,
+                            _ => {}
+                        }
+                    }
+
                     outcomes_by_pre
                         .entry((session.clone(), pre_ts, triple_id))
                         .or_default()
@@ -161,6 +236,15 @@ pub fn compute(entries: &[Value]) -> Stats {
                 }
                 let key = format!("{subj} {pred}: {obj}");
                 *rule_counts.entry(key).or_insert(0) += 1;
+
+                // Token-economics: a `seen_before` rule was emitted in the
+                // compact form, so the model didn't re-read the full
+                // payload.  Older audit entries don't carry the field —
+                // treat absent as `false` (first-time injection, no
+                // saving claimed).
+                if r.get("seen_before").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    suppressed_repeats += 1;
+                }
 
                 // Compliance roll-up bookkeeping: remember the SPO for this
                 // triple_id (Compliance events only carry the id), and bump
@@ -253,6 +337,16 @@ pub fn compute(entries: &[Value]) -> Stats {
     });
     s.by_rule_compliance = compliance;
 
+    let estimated_tokens_saved = suppressed_repeats * TOKENS_PER_SUPPRESSION
+        + blocked_obeyed * TOKENS_PER_BLOCKED_OBEYED
+        + advisory_obeyed * TOKENS_PER_ADVISORY_OBEYED;
+    s.token_economics = TokenEconomics {
+        suppressed_repeats,
+        blocked_obeyed,
+        advisory_obeyed,
+        estimated_tokens_saved,
+    };
+
     s
 }
 
@@ -286,6 +380,7 @@ pub fn run(
             "window_start": stats.window_start,
             "window_end": stats.window_end,
             "by_rule_compliance": stats.by_rule_compliance,
+            "token_economics": stats.token_economics,
         });
         if !by_rule_only {
             out["by_rule"] = serde_json::Value::Array(
@@ -344,11 +439,13 @@ fn print_table(stats: &Stats, top: usize, by_rule_only: bool) {
 
     if by_rule_only {
         print_compliance_section(&stats.by_rule_compliance, top);
+        print_token_economics(&stats.token_economics);
         return;
     }
 
     print_section("Top rules", &stats.by_rule, top);
     print_compliance_section(&stats.by_rule_compliance, top);
+    print_token_economics(&stats.token_economics);
     print_section("By tool", &stats.by_tool, top);
     print_section("By event", &stats.by_event, top);
     print_section("By day", &stats.by_day, top);
@@ -369,6 +466,42 @@ fn print_section(title: &str, rows: &[(String, usize)], top: usize) {
     if rows.len() > top {
         println!("        … {} more", rows.len() - top);
     }
+    println!();
+}
+
+fn print_token_economics(t: &TokenEconomics) {
+    // Skip the section entirely when there's nothing to report — avoids
+    // bragging "0 tokens saved" on first runs.
+    if t.suppressed_repeats == 0 && t.blocked_obeyed == 0 && t.advisory_obeyed == 0 {
+        return;
+    }
+    println!("Token economics (estimates)");
+    if t.suppressed_repeats > 0 {
+        let saved = t.suppressed_repeats * TOKENS_PER_SUPPRESSION;
+        println!(
+            "  {:>5}  repeat-injection suppressions  (~{} tokens, {} ea.)",
+            t.suppressed_repeats, saved, TOKENS_PER_SUPPRESSION,
+        );
+    }
+    if t.blocked_obeyed > 0 {
+        let saved = t.blocked_obeyed * TOKENS_PER_BLOCKED_OBEYED;
+        println!(
+            "  {:>5}  denied-and-honored mistakes    (~{} tokens, {} ea.)",
+            t.blocked_obeyed, saved, TOKENS_PER_BLOCKED_OBEYED,
+        );
+    }
+    if t.advisory_obeyed > 0 {
+        let saved = t.advisory_obeyed * TOKENS_PER_ADVISORY_OBEYED;
+        println!(
+            "  {:>5}  advised-and-honored events     (~{} tokens, {} ea.)",
+            t.advisory_obeyed, saved, TOKENS_PER_ADVISORY_OBEYED,
+        );
+    }
+    println!(
+        "         total estimated tokens saved:  ~{}",
+        t.estimated_tokens_saved,
+    );
+    println!("         (calibrated estimates, not measurements — see CLAUDE.md)");
     println!();
 }
 
@@ -696,6 +829,156 @@ mod tests {
         assert_eq!(rc.ignored, 1, "first definitive wins, even if preceded by unclear");
         assert_eq!(rc.obeyed, 0);
         assert_eq!(rc.unclear, 0);
+    }
+
+    // ── Token economics ──────────────────────────────────────────────
+
+    fn pre_firing_seen(
+        ts: &str,
+        tool: &str,
+        triple_id: i64,
+        subj: &str,
+        pred: &str,
+        obj: &str,
+        seen_before: bool,
+    ) -> Value {
+        json!({
+            "ts": ts,
+            "tool": tool,
+            "event": "PreToolUse",
+            "session": "s1",
+            "rules": [{
+                "triple_id": triple_id,
+                "subject": subj,
+                "predicate": pred,
+                "object": obj,
+                "seen_before": seen_before,
+            }],
+        })
+    }
+
+    fn compliance_event_with_severity(
+        post_ts: &str,
+        tool: &str,
+        triple_id: i64,
+        outcome: &str,
+        pre_ts: &str,
+        severity: &str,
+    ) -> Value {
+        json!({
+            "ts": post_ts,
+            "tool": tool,
+            "event": "Compliance",
+            "session": "s1",
+            "payload": {
+                "rules": [{
+                    "triple_id": triple_id,
+                    "pre_ts": pre_ts,
+                    "predicate": "never",
+                    "object": "force-push",
+                    "severity": severity,
+                    "outcome": outcome,
+                }]
+            }
+        })
+    }
+
+    #[test]
+    fn test_token_economics_counts_suppressed_repeats() {
+        // 4 firings of rule 1: first is fresh, next 3 are seen_before.
+        // Suppression count is 3; tokens saved = 3 * 50 = 150.
+        let entries = vec![
+            pre_firing_seen("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push", false),
+            pre_firing_seen("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push", true),
+            pre_firing_seen("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push", true),
+            pre_firing_seen("2026-04-20T10:03:00Z", "Bash", 1, "git", "never", "force-push", true),
+        ];
+        let stats = compute(&entries);
+        let t = &stats.token_economics;
+        assert_eq!(t.suppressed_repeats, 3);
+        assert_eq!(t.blocked_obeyed, 0);
+        assert_eq!(t.advisory_obeyed, 0);
+        assert_eq!(t.estimated_tokens_saved, 3 * 50);
+    }
+
+    #[test]
+    fn test_token_economics_weights_blocked_vs_advisory() {
+        // 2 obeyed-block + 3 obeyed-warn → 2*2000 + 3*500 = 5500.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:02:00Z", "Bash", 2, "cargo", "always", "test before commit"),
+            pre_firing("2026-04-20T10:03:00Z", "Bash", 2, "cargo", "always", "test before commit"),
+            pre_firing("2026-04-20T10:04:00Z", "Bash", 2, "cargo", "always", "test before commit"),
+            compliance_event_with_severity("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z", "block"),
+            compliance_event_with_severity("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:01:00Z", "block"),
+            compliance_event_with_severity("2026-04-20T10:02:30Z", "Bash", 2, "obeyed", "2026-04-20T10:02:00Z", "warn"),
+            compliance_event_with_severity("2026-04-20T10:03:30Z", "Bash", 2, "obeyed", "2026-04-20T10:03:00Z", "warn"),
+            compliance_event_with_severity("2026-04-20T10:04:30Z", "Bash", 2, "obeyed", "2026-04-20T10:04:00Z", "warn"),
+        ];
+        let stats = compute(&entries);
+        let t = &stats.token_economics;
+        assert_eq!(t.blocked_obeyed, 2);
+        assert_eq!(t.advisory_obeyed, 3);
+        assert_eq!(t.estimated_tokens_saved, 2 * 2000 + 3 * 500);
+    }
+
+    #[test]
+    fn test_token_economics_ignored_does_not_save() {
+        // An `ignored` verdict means the model ran the action despite the
+        // rule.  No tokens saved — we don't claim retroactive credit.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            compliance_event_with_severity("2026-04-20T10:00:30Z", "Bash", 1, "ignored", "2026-04-20T10:00:00Z", "block"),
+        ];
+        let stats = compute(&entries);
+        let t = &stats.token_economics;
+        assert_eq!(t.blocked_obeyed, 0);
+        assert_eq!(t.advisory_obeyed, 0);
+        assert_eq!(t.estimated_tokens_saved, 0);
+    }
+
+    #[test]
+    fn test_token_economics_unknown_severity_does_not_save() {
+        // Defensive: an `obeyed` verdict with a missing or unrecognised
+        // severity field shouldn't blow up or attribute tokens.  Older
+        // audit entries (pre-severity tracking) take this path.
+        let entries = vec![
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            json!({
+                "ts": "2026-04-20T10:00:30Z",
+                "tool": "Bash",
+                "event": "Compliance",
+                "session": "s1",
+                "payload": {
+                    "rules": [{
+                        "triple_id": 1,
+                        "pre_ts": "2026-04-20T10:00:00Z",
+                        "outcome": "obeyed",
+                    }]
+                }
+            }),
+        ];
+        let stats = compute(&entries);
+        let t = &stats.token_economics;
+        assert_eq!(t.blocked_obeyed, 0);
+        assert_eq!(t.advisory_obeyed, 0);
+        assert_eq!(t.estimated_tokens_saved, 0);
+    }
+
+    #[test]
+    fn test_token_economics_old_audit_entries_have_no_seen_before() {
+        // Audit entries written before this fix have no `seen_before`
+        // field.  They should be treated as first-time injections (no
+        // suppression credit) — never as `seen_before: true`.
+        let entries = vec![
+            // Vanilla pre_firing helper omits seen_before.
+            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push"),
+        ];
+        let stats = compute(&entries);
+        assert_eq!(stats.token_economics.suppressed_repeats, 0);
     }
 
     #[test]

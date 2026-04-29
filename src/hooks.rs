@@ -318,6 +318,19 @@ pub fn handle_stdin() -> Result<(), String> {
         ("PostToolUse", _) => "review",
         (other, _) => other,
     };
+    // Per-session seen-rule tracking.  Rules already fully injected earlier
+    // in this session emit a compact one-liner instead of re-injecting the
+    // full source/layer/severity payload — saves tokens on long sessions
+    // and avoids attention dilution from repeat re-reads.  Empty session_id
+    // means we can't track, so all matches behave as first-time injections.
+    let triple_ids: Vec<i64> = result.matched.iter().map(|(g, _)| g.triple_id).collect();
+    let (unseen, seen) = session::partition_seen_rules(
+        &cfg.arai_base_dir,
+        &result.session_id,
+        &triple_ids,
+    );
+    let seen_set: std::collections::HashSet<i64> = seen.iter().copied().collect();
+
     audit::record_firing(
         &cfg,
         &result.event,
@@ -327,9 +340,17 @@ pub fn handle_stdin() -> Result<(), String> {
         &result.matched,
         decision,
         Some(&db),
+        &seen_set,
     );
 
-    let context = guardrails::format_context(&result.matched);
+    let context = guardrails::format_context(&result.matched, &seen_set);
+
+    // Mark the unseen rules as seen now that we've emitted full context for
+    // them.  Done after the audit write so a panic between match and write
+    // doesn't permanently suppress a rule the model never actually saw.
+    if !unseen.is_empty() {
+        session::mark_rules_seen(&cfg.arai_base_dir, &result.session_id, &unseen);
+    }
     let response = match (result.event.as_str(), blocking) {
         ("PreToolUse", true) => {
             let reason = deny_reason(&result.matched, &db);
