@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- *(hooks)* Per-session repeat-injection suppression.  When a rule
+  fires a second time in the same session, the hook emits a compact
+  "still: subject predicate object" line instead of re-injecting
+  the full source / layer / severity payload — the model already
+  has that context from the first firing.  Saves roughly 50 tokens
+  per re-fire on long sessions and reduces attention dilution from
+  reading the same rule N times.
+- *(audit)* New `seen_before` flag per rule on every firing entry.
+  `arai stats` rolls this up into a suppression count.  Additive
+  field; older audit lines are treated as `seen_before: false`.
+- *(stats)* Token-economics section in `arai stats` — calibrated
+  estimates of saved tokens from three streams: repeat-injection
+  suppressions (50 each), denied-and-honored mistakes (2000 each),
+  advised-and-honored events (500 each).  Labelled as estimates,
+  not measurements; constants documented in `src/stats.rs`.  JSON
+  output exposes a `token_economics` object with the per-stream
+  counts.
+
 ## [0.2.8] - 2026-04-29
 
 This release closes attack surfaces flagged in an internal audit. No known

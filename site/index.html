@@ -309,6 +309,10 @@
                 <p><code>arai stats</code> rolls up the audit log into <em>fires / obeyed / ignored / ratio</em> per rule. Now you can answer "is this rule actually working?" &mdash; not "is it firing?" The &#x26A0; flag highlights low-ratio rules with enough volume to mean it.</p>
             </div>
             <div class="feature">
+                <h3>Token economics</h3>
+                <p>Repeat firings of the same rule in a session emit a compact one-liner instead of re-injecting the full payload. <code>arai stats</code> surfaces a calibrated <em>tokens saved</em> estimate from suppressed repeats plus denied-and-honored mistakes &mdash; secondary signal, primary mission stays correctness.</p>
+            </div>
+            <div class="feature">
                 <h3>Rule regression tests</h3>
                 <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
             </div>

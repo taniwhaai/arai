@@ -12,6 +12,16 @@ struct ToolCallRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SessionState {
     tool_calls: Vec<ToolCallRecord>,
+    /// Triple IDs that have already had a full guardrail injection in this
+    /// session.  When the same rule fires a second time the hook handler
+    /// emits a compact one-liner instead of re-injecting source/layer/
+    /// severity that the model already saw — both for token economics and
+    /// because re-reading the same rule N times dilutes the model's
+    /// attention to it.  Defaulted to empty for old session files so the
+    /// first hook call after upgrade produces full context (the safe
+    /// fallback).
+    #[serde(default)]
+    seen_rules: Vec<i64>,
 }
 
 /// Get the session state file path.
@@ -82,6 +92,60 @@ pub fn prerequisite_met(
     })
 }
 
+/// Partition matched-rule triple_ids into `(unseen, seen)` for this session.
+/// Unseen → emit full context.  Seen → emit compact "still active" form.
+/// Reads session state once; doesn't mutate.  Empty `session_id` yields
+/// every id as unseen (we have no way to track without a session key).
+pub fn partition_seen_rules(
+    arai_base: &Path,
+    session_id: &str,
+    triple_ids: &[i64],
+) -> (Vec<i64>, Vec<i64>) {
+    if session_id.is_empty() {
+        return (triple_ids.to_vec(), Vec::new());
+    }
+    let state = load_session(arai_base, session_id);
+    let seen_set: std::collections::HashSet<i64> = state.seen_rules.iter().copied().collect();
+    let mut unseen = Vec::new();
+    let mut seen = Vec::new();
+    for id in triple_ids {
+        if seen_set.contains(id) {
+            seen.push(*id);
+        } else {
+            unseen.push(*id);
+        }
+    }
+    (unseen, seen)
+}
+
+/// Mark a batch of rules as having had their full context injected in this
+/// session.  Subsequent firings of the same triple_id in this session will
+/// emit a compact form via `partition_seen_rules`.  No-op for empty
+/// `session_id` (nothing to key on).
+pub fn mark_rules_seen(arai_base: &Path, session_id: &str, triple_ids: &[i64]) {
+    if session_id.is_empty() || triple_ids.is_empty() {
+        return;
+    }
+    let mut state = load_session(arai_base, session_id);
+    let mut existing: std::collections::HashSet<i64> = state.seen_rules.iter().copied().collect();
+    let mut changed = false;
+    for id in triple_ids {
+        if existing.insert(*id) {
+            state.seen_rules.push(*id);
+            changed = true;
+        }
+    }
+    if changed {
+        // Cap at 500 ids to prevent unbounded growth — a session that touches
+        // 500 distinct rules has bigger problems than the seen-rules list.
+        if state.seen_rules.len() > 500 {
+            let drop = state.seen_rules.len() - 500;
+            state.seen_rules.drain(..drop);
+        }
+        save_session(arai_base, session_id, &state);
+    }
+}
+
 /// Extract prerequisite terms from a rule's object text.
 /// Looks for patterns like "without running X first", "before X", "unless X".
 pub fn extract_prerequisite(object: &str) -> Vec<String> {
@@ -145,6 +209,81 @@ mod tests {
     fn test_extract_prerequisite_none() {
         let terms = extract_prerequisite("force-push to main");
         assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn test_partition_seen_rules_empty_session_id_returns_all_unseen() {
+        // Without a session_id we can't track anything, so every id reads
+        // as unseen and the hook will emit full context for all of them.
+        let dir = std::env::temp_dir().join("arai_seen_test_empty");
+        let (unseen, seen) = partition_seen_rules(&dir, "", &[1, 2, 3]);
+        assert_eq!(unseen, vec![1, 2, 3]);
+        assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn test_partition_and_mark_round_trip() {
+        let dir = std::env::temp_dir().join("arai_seen_test_round_trip");
+        std::fs::create_dir_all(&dir).ok();
+        let _ = std::fs::remove_file(session_path(&dir, "rt-sess"));
+
+        // Fresh session: nothing seen.
+        let (unseen, seen) = partition_seen_rules(&dir, "rt-sess", &[10, 20, 30]);
+        assert_eq!(unseen, vec![10, 20, 30]);
+        assert!(seen.is_empty());
+
+        // Mark 10 and 20 seen; 30 still unseen.
+        mark_rules_seen(&dir, "rt-sess", &[10, 20]);
+        let (unseen, seen) = partition_seen_rules(&dir, "rt-sess", &[10, 20, 30]);
+        assert_eq!(unseen, vec![30]);
+        assert_eq!(seen, vec![10, 20]);
+
+        // Marking already-seen ids is idempotent.
+        mark_rules_seen(&dir, "rt-sess", &[10, 20]);
+        let state = load_session(&dir, "rt-sess");
+        assert_eq!(state.seen_rules.len(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_seen_rules_isolated_per_session() {
+        let dir = std::env::temp_dir().join("arai_seen_test_isolated");
+        std::fs::create_dir_all(&dir).ok();
+        let _ = std::fs::remove_file(session_path(&dir, "iso-a"));
+        let _ = std::fs::remove_file(session_path(&dir, "iso-b"));
+
+        mark_rules_seen(&dir, "iso-a", &[100]);
+
+        // Different session — id 100 is fresh again.  This is the spec:
+        // a model in a new session needs the full rule context, even if
+        // a previous session already saw it.
+        let (unseen, _) = partition_seen_rules(&dir, "iso-b", &[100]);
+        assert_eq!(unseen, vec![100]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_seen_rules_capped_at_500() {
+        // Defensive: an unbounded list could grow on a session that
+        // touches every rule in a 1000-rule project.  Cap at 500 to keep
+        // the JSON small; the cost is that very-old `seen_before`
+        // markers in a long session may roll out and a re-injection
+        // happens.  Acceptable given the cap.
+        let dir = std::env::temp_dir().join("arai_seen_test_cap");
+        std::fs::create_dir_all(&dir).ok();
+        let _ = std::fs::remove_file(session_path(&dir, "cap-sess"));
+
+        let many: Vec<i64> = (0..600).collect();
+        mark_rules_seen(&dir, "cap-sess", &many);
+        let state = load_session(&dir, "cap-sess");
+        assert_eq!(state.seen_rules.len(), 500, "should cap at 500 entries");
+        // The newest entries must be retained — drain pulls from the front.
+        assert_eq!(*state.seen_rules.last().unwrap(), 599);
+        assert_eq!(*state.seen_rules.first().unwrap(), 100);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -54,7 +54,7 @@ src/
 ├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)
 ├── audit.rs              # Local JSONL firing log — record_firing, record_event, layer_label
 ├── compliance.rs         # Pre/Post correlation — Obeyed/Ignored/Unclear verdicts per rule
-├── stats.rs              # Aggregate views — `arai stats`, per-rule compliance roll-up
+├── stats.rs              # Aggregate views — `arai stats`, per-rule compliance, token economics
 ├── scenarios.rs          # Scenario replay harness — `arai test <file>`
 ├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
 ├── mcp.rs                # Stdio MCP server — arai_add_guard + arai_list_guards for agent-authored rules

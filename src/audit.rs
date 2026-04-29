@@ -48,6 +48,13 @@ pub fn layer_label(layer: u8) -> &'static str {
 /// available.  Falls back to predicate-derived severity otherwise.  `db` may
 /// be `None` for callers that don't hold an open connection (offline tools,
 /// tests) — the log entry is still written, just without enriched severity.
+///
+/// `seen_set` carries the triple_ids that have already been fully injected
+/// earlier in this session.  Each rule entry in the audit log records a
+/// `seen_before` boolean so `arai stats` can roll up the token-economics
+/// view of how often the compact-format suppression kicked in.  Pass an
+/// empty set when the caller doesn't track session state (every rule is
+/// recorded as `seen_before: false` → first-time injection).
 #[allow(clippy::too_many_arguments)]
 pub fn record_firing(
     cfg: &Config,
@@ -58,6 +65,7 @@ pub fn record_firing(
     matched: &[(Guardrail, u8)],
     decision: &str,
     db: Option<&Store>,
+    seen_set: &std::collections::HashSet<i64>,
 ) {
     if matched.is_empty() {
         return;
@@ -88,6 +96,7 @@ pub fn record_firing(
                 "confidence": g.confidence,
                 "match_pct": pct,
                 "severity": severity.as_str(),
+                "seen_before": seen_set.contains(&g.triple_id),
             });
             // Derivation trace: parser layer + label + line, so reviewers can see
             // "fired from CLAUDE.md:42 (layer-1 imperative)" without opening

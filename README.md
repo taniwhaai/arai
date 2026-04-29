@@ -301,6 +301,43 @@ unrelated commands followed.
 Nothing leaves the machine — stats are a local view over your own
 audit log.
 
+## Token economics — calibrated estimates
+
+`arai stats` also surfaces a *token economics* section with
+calibrated estimates of how Arai is affecting your model's token
+burn. Two streams contribute:
+
+```
+Token economics (estimates)
+     12  repeat-injection suppressions  (~600 tokens, 50 ea.)
+      4  denied-and-honored mistakes    (~8000 tokens, 2000 ea.)
+     17  advised-and-honored events     (~8500 tokens, 500 ea.)
+            total estimated tokens saved:  ~17100
+            (calibrated estimates, not measurements)
+```
+
+- **Repeat-injection suppressions** — when a rule fires a second
+  time in the same session, Arai emits a compact "still: subject
+  predicate object" line instead of re-injecting the full source /
+  layer / severity payload. The model already has that context from
+  the first firing. The 50-token estimate is the rough delta
+  between the full and compact forms.
+- **Denied-and-honored mistakes** — a `block`-severity rule fired,
+  the model would otherwise have run a destructive action, and the
+  PostToolUse correlation confirms it didn't. The 2000-token
+  estimate is a conservative bound on what "fix the mess" cycles
+  cost (revert files, undo migrations, rollback deploys).
+- **Advised-and-honored events** — a `warn` or `inform` rule fired
+  and the model complied. Lower confidence saving (the model might
+  have done the right thing anyway), so a smaller 500-token
+  estimate.
+
+These are **estimates, not measurements**. The constants live in
+[`src/stats.rs`](src/stats.rs) and are documented there; treat the
+total as an order-of-magnitude reading, not a precise number. If
+you want to see the underlying counts, `arai stats --json` exposes
+the `token_economics` object with all three streams broken out.
+
 ## Severity — per-rule deny-mode rollout
 
 `arai severity` pins a rule's enforcement strength so re-running
