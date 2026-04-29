@@ -103,7 +103,7 @@ pub fn record_firing(
         }).collect::<Vec<_>>(),
     });
 
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut f) = open_audit_file(&log_path) {
         let _ = writeln!(f, "{}", entry);
     }
 }
@@ -173,12 +173,37 @@ pub fn query(
     Ok(out)
 }
 
-/// Compute today's log path, creating parent directories if needed.
+/// Compute today's log path, creating parent directories if needed.  On Unix
+/// the directory is locked down to 0700 — the audit log contains session ids,
+/// truncated prompt previews, and rule subjects.  Without this, the default
+/// umask (typically 0022) leaves the per-day file world-readable on
+/// multi-user systems.
 fn audit_log_path(arai_base: &Path, project_slug: &str) -> Result<PathBuf, String> {
     let dir = arai_base.join("audit").join(project_slug);
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir audit: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Best-effort — if the chmod fails we still write the file (with file
+        // mode 0600 below), so the leak surface is limited to file *names*.
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
     let fname = format!("{}.jsonl", today_yyyymmdd());
     Ok(dir.join(fname))
+}
+
+/// Open an audit-log file with restrictive permissions.  On Unix the file is
+/// created with mode 0600 (owner-only read/write); on Windows the inherited
+/// ACL from the parent dir applies (typically user-only by default).
+fn open_audit_file(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
 }
 
 /// Append a non-firing event (Compliance, Diff-check, ad-hoc trace) to the
@@ -199,7 +224,7 @@ pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str
         "session": session_id,
         "payload": payload,
     });
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut f) = open_audit_file(&log_path) {
         let _ = writeln!(f, "{}", entry);
     }
 }
@@ -317,5 +342,58 @@ mod tests {
         let s = today_yyyymmdd();
         assert_eq!(s.len(), 8);
         assert!(s.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_audit_file_created_with_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "arai_audit_perm_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("today.jsonl");
+        {
+            let _f = open_audit_file(&path).expect("open audit file");
+        }
+        let meta = std::fs::metadata(&path).expect("stat audit file");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "audit log should be 0600 on Unix (got {mode:o})"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_audit_dir_locked_to_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "arai_audit_dir_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let _path = audit_log_path(&base, "test-slug").expect("compute audit path");
+        let dir = base.join("audit").join("test-slug");
+        let mode = std::fs::metadata(&dir)
+            .expect("stat audit dir")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "audit dir should be 0700 on Unix (got {mode:o})"
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 }

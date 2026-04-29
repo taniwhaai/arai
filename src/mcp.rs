@@ -23,6 +23,20 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "arai";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Maximum length of a rule body accepted by `arai_add_guard`.  Real
+/// guardrail rules fit in a tweet; 1 KiB is generous.  Without a cap an agent
+/// could hand us multi-MB inputs that go on to be parsed, classified, and
+/// stored in SQLite.
+const MAX_MCP_RULE_LEN: usize = 1024;
+/// Maximum length of the optional reason field — a sentence or two of
+/// rationale, not a manifesto.
+const MAX_MCP_REASON_LEN: usize = 4096;
+/// Maximum number of MCP-source rules an agent can register in one project.
+/// Past this we refuse new adds — the agent should stop accumulating noise
+/// and the user should review the rules already there.  Existing rules from
+/// CLAUDE.md and other instruction files are *not* counted toward this limit.
+const MAX_MCP_RULES_PER_PROJECT: usize = 1000;
+
 /// Block on stdin, dispatch JSON-RPC messages until EOF.  Called from
 /// `arai mcp`.
 pub fn run() -> Result<(), String> {
@@ -199,9 +213,34 @@ fn tool_add_guard(args: &Value) -> Result<Value, String> {
     if rule.trim().is_empty() {
         return Err("rule is empty".to_string());
     }
+    if rule.len() > MAX_MCP_RULE_LEN {
+        return Err(format!(
+            "rule exceeds {MAX_MCP_RULE_LEN}-byte cap (got {} bytes)",
+            rule.len()
+        ));
+    }
+    if reason.len() > MAX_MCP_REASON_LEN {
+        return Err(format!(
+            "reason exceeds {MAX_MCP_REASON_LEN}-byte cap (got {} bytes)",
+            reason.len()
+        ));
+    }
 
     let cfg = config::Config::load()?;
     let db = store::Store::open(&cfg.db_path())?;
+
+    // Cap the number of MCP-source rules per project so a runaway agent
+    // can't fill the SQLite store.  Manual rules from `arai add` and rules
+    // from CLAUDE.md don't count — only rules whose source-file URL was
+    // produced by this MCP server.
+    let mcp_rule_count = db.count_mcp_rules().map_err(|e| e.to_string())?;
+    if mcp_rule_count >= MAX_MCP_RULES_PER_PROJECT as i64 {
+        return Err(format!(
+            "this project already has {mcp_rule_count} MCP-registered rules \
+             (cap: {MAX_MCP_RULES_PER_PROJECT}). \
+             Review them with `arai_list_guards` and prune before adding more."
+        ));
+    }
 
     // Parse via the same path as `arai add`: extract triples from the
     // imperative, store under a content-hashed manual:// path so repeat
@@ -510,5 +549,34 @@ mod tests {
         let v: Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["error"]["code"], -32601);
         assert_eq!(v["error"]["message"], "Method not found: foo");
+    }
+
+    #[test]
+    fn add_guard_rejects_oversized_rule() {
+        let oversize = "a".repeat(MAX_MCP_RULE_LEN + 1);
+        let args = json!({ "rule": oversize });
+        let err = tool_add_guard(&args).unwrap_err();
+        assert!(err.contains("exceeds"), "got: {err}");
+        assert!(err.contains(&MAX_MCP_RULE_LEN.to_string()), "got: {err}");
+    }
+
+    #[test]
+    fn add_guard_rejects_oversized_reason() {
+        let oversize_reason = "a".repeat(MAX_MCP_REASON_LEN + 1);
+        // Use a short, valid rule so the rule check passes and we hit the
+        // reason check.
+        let args = json!({
+            "rule": "Never force-push to main",
+            "reason": oversize_reason,
+        });
+        let err = tool_add_guard(&args).unwrap_err();
+        assert!(err.contains("reason exceeds"), "got: {err}");
+    }
+
+    #[test]
+    fn add_guard_rejects_empty_rule() {
+        let args = json!({ "rule": "   " });
+        let err = tool_add_guard(&args).unwrap_err();
+        assert!(err.contains("empty"), "got: {err}");
     }
 }

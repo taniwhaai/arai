@@ -5,6 +5,12 @@ use crate::{audit, compliance, config, guardrails, session, store};
 use serde_json::Value;
 use std::io::Read;
 
+/// Hard cap on the size of a hook payload from stdin.  Real Claude Code hook
+/// invocations are well under 100 KB; 1 MiB is generous.  Without a cap, a
+/// malicious or runaway tool that pipes gigabytes into our hook handler
+/// would OOM the binary on the hot path.
+const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
+
 /// Environment variable that, when set to `off` or `0`, forces Arai into
 /// advise-only mode — even `Block`-severity rules fall back to
 /// `permissionDecision: "allow"` with the rule attached as context.  Useful
@@ -181,10 +187,24 @@ pub fn match_hook(
 
 pub fn handle_stdin() -> Result<(), String> {
     let start = std::time::Instant::now();
-    let mut input = String::new();
+    // Read up to MAX_HOOK_INPUT_BYTES + 1 so we can distinguish "natural EOF"
+    // from "hit the cap mid-stream".  Reject overruns rather than silently
+    // truncating the JSON (a partial JSON would parse-fail anyway, but being
+    // explicit gives a clearer error and prevents memory exhaustion by a
+    // hostile pipe before the parse step).
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
     std::io::stdin()
-        .read_to_string(&mut input)
+        .lock()
+        .take(MAX_HOOK_INPUT_BYTES + 1)
+        .read_to_end(&mut buf)
         .map_err(|e| format!("Failed to read stdin: {e}"))?;
+    if buf.len() as u64 > MAX_HOOK_INPUT_BYTES {
+        return Err(format!(
+            "Hook input exceeded {MAX_HOOK_INPUT_BYTES}-byte cap"
+        ));
+    }
+    let input = String::from_utf8(buf)
+        .map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
 
     let hook: Value = serde_json::from_str(&input)
         .map_err(|e| format!("Invalid hook JSON: {e}"))?;

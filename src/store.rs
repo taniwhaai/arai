@@ -249,6 +249,20 @@ impl Store {
         )
     }
 
+    /// Count rules registered via the MCP server (`arai_add_guard`).  Used to
+    /// bound the number of MCP-source rules so a runaway agent can't fill the
+    /// store.  MCP rules live under synthetic file paths starting with
+    /// `manual://arai-mcp/` (see `mcp::tool_add_guard`).
+    pub fn count_mcp_rules(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM triples t \
+             JOIN files f ON f.id = t.file_id \
+             WHERE f.path LIKE 'manual://arai-mcp/%'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+    }
+
     pub fn get_meta(&self, key: &str) -> rusqlite::Result<Option<String>> {
         self.conn
             .query_row(

@@ -108,6 +108,27 @@ fn extract_imports(_ext: &str, _content: &str) -> Option<Vec<String>> {
 /// Walk the AST and collect import nodes based on language-specific node kinds.
 #[cfg(feature = "code-graph")]
 fn collect_imports(node: Node, source: &[u8], ext: &str, tools: &mut Vec<String>) {
+    collect_imports_bounded(node, source, ext, tools, 0);
+}
+
+/// Maximum AST recursion depth.  Tree-sitter has historically panicked on
+/// adversarial inputs with extreme nesting; we bound the walk so a malicious
+/// or generated source file can't blow the stack.  500 covers any realistic
+/// program — the deepest legitimate Python/TS files are <100 levels deep.
+#[cfg(feature = "code-graph")]
+const MAX_AST_DEPTH: u32 = 500;
+
+#[cfg(feature = "code-graph")]
+fn collect_imports_bounded(
+    node: Node,
+    source: &[u8],
+    ext: &str,
+    tools: &mut Vec<String>,
+    depth: u32,
+) {
+    if depth > MAX_AST_DEPTH {
+        return;
+    }
     let kind = node.kind();
 
     let import_text = match ext {
@@ -133,7 +154,7 @@ fn collect_imports(node: Node, source: &[u8], ext: &str, tools: &mut Vec<String>
     // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_imports(child, source, ext, tools);
+        collect_imports_bounded(child, source, ext, tools, depth + 1);
     }
 }
 
