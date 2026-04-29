@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-04-29
+
+### Added
+
+- Per-session repeat-injection suppression + token-economics estimates ([#41](https://github.com/taniwhaai/arai/pull/41))
+
+### Documentation
+
+- Post-merge polish for token-economics work ([#43](https://github.com/taniwhaai/arai/pull/43))
+
+
 ### Added
 
 - *(hooks)* Per-session repeat-injection suppression.  When a rule
