@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-04-29
+
+### Fixed
+
+- *(security)* Harden hot path, MCP server, and arai:extends fetcher
+
+
 ## [0.2.7] - 2026-04-28
 
 ### Fixed
