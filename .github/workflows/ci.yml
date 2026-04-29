@@ -162,7 +162,10 @@ jobs:
       - name: Generate checksums
         run: |
           cd binaries
-          sha256sum * > checksums.txt
+          # Hash only release binaries — globbing `*` would race with the
+          # redirect target and self-include checksums.txt with the empty
+          # hash.  Restricting to `arai-*` keeps the manifest deterministic.
+          sha256sum arai-* > checksums.txt
           cat checksums.txt
 
       - name: Attach to release

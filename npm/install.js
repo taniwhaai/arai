@@ -13,7 +13,9 @@ function main() {
   const version = getVersion();
   const binaryName = getBinaryDownloadName(platform);
   const url = `https://github.com/${REPO}/releases/download/v${version}/${binaryName}`;
+  const checksumsUrl = `https://github.com/${REPO}/releases/download/v${version}/checksums.txt`;
   const dest = path.join(__dirname, "bin", getLocalBinaryName());
+  const checksumsPath = path.join(__dirname, "bin", "checksums.txt");
 
   console.log(`  Downloading arai v${version} for ${platform}...`);
 
@@ -42,12 +44,70 @@ function main() {
     process.exit(1);
   }
 
+  // Verify SHA-256 against checksums.txt published with the release.
+  // ARAI_SKIP_CHECKSUM=1 escape hatch matches install.sh; intended only for
+  // local dev against unsigned builds.
+  if (process.env.ARAI_SKIP_CHECKSUM === "1") {
+    console.warn("  \u26a0 Skipping checksum verification (ARAI_SKIP_CHECKSUM=1)");
+  } else {
+    try {
+      execSync(`curl -sL --fail -o "${checksumsPath}" "${checksumsUrl}"`, {
+        stdio: "pipe",
+      });
+    } catch (e) {
+      console.error(`  Failed to fetch checksums.txt from ${checksumsUrl}`);
+      console.error("  This release is missing checksums.txt \u2014 refusing to install.");
+      console.error("  Set ARAI_SKIP_CHECKSUM=1 to bypass (NOT recommended).");
+      fs.unlinkSync(dest);
+      process.exit(1);
+    }
+
+    const checksums = fs.readFileSync(checksumsPath, "utf8");
+    const expected = parseChecksum(checksums, binaryName);
+    if (!expected) {
+      console.error(`  ${binaryName} not present in checksums.txt`);
+      fs.unlinkSync(dest);
+      fs.unlinkSync(checksumsPath);
+      process.exit(1);
+    }
+
+    const crypto = require("crypto");
+    const actual = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(dest))
+      .digest("hex");
+
+    if (actual !== expected) {
+      console.error(`  Checksum mismatch for ${binaryName}`);
+      console.error(`    expected: ${expected}`);
+      console.error(`    actual:   ${actual}`);
+      fs.unlinkSync(dest);
+      fs.unlinkSync(checksumsPath);
+      process.exit(1);
+    }
+
+    fs.unlinkSync(checksumsPath);
+    console.log(`  \u2713 Checksum verified`);
+  }
+
   // Make executable on Unix
   if (process.platform !== "win32") {
     fs.chmodSync(dest, 0o755);
   }
 
   console.log(`  \u2713 arai v${version} installed`);
+}
+
+// Parse a `sha256sum` output line for the given filename.  Format is
+// `<64hex>  <filename>` per GNU coreutils.  Returns the hex digest or null.
+function parseChecksum(content, filename) {
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^([a-f0-9]{64})\s+(.+)$/i);
+    if (match && match[2].trim() === filename) {
+      return match[1].toLowerCase();
+    }
+  }
+  return null;
 }
 
 function detectPlatform() {
