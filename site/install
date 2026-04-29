@@ -17,6 +17,7 @@ main() {
     get_version
     select_binary
     download_binary
+    verify_checksum
     install_binary
     print_success
 }
@@ -105,6 +106,56 @@ download_binary() {
     fi
 
     chmod +x "$TMPFILE"
+}
+
+# Verify SHA-256 of the downloaded binary against checksums.txt published with
+# the release.  Aborts if checksums.txt is missing, the file isn't listed, or
+# the hash doesn't match.  Setting ARAI_SKIP_CHECKSUM=1 is supported as an
+# escape hatch but should only be used during local development against
+# unsigned dev builds.
+verify_checksum() {
+    if [ "${ARAI_SKIP_CHECKSUM:-0}" = "1" ]; then
+        echo "  ⚠ Skipping checksum verification (ARAI_SKIP_CHECKSUM=1)"
+        return
+    fi
+
+    CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+    CHECKSUMS_FILE="${TMPDIR}/checksums.txt"
+
+    echo "  Fetching checksums..."
+    if ! curl -sSfL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL"; then
+        echo "Error: could not fetch ${CHECKSUMS_URL}"
+        echo "  This release is missing checksums.txt — refusing to install."
+        echo "  Set ARAI_SKIP_CHECKSUM=1 to bypass (NOT recommended)."
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+
+    EXPECTED=$(grep "  ${FILENAME}\$" "$CHECKSUMS_FILE" | awk '{print $1}')
+    if [ -z "$EXPECTED" ]; then
+        echo "Error: ${FILENAME} not present in checksums.txt"
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TMPFILE" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$TMPFILE" | awk '{print $1}')
+    else
+        echo "Error: no sha256sum or shasum command available — cannot verify"
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+
+    if [ "$ACTUAL" != "$EXPECTED" ]; then
+        echo "Error: checksum mismatch for ${FILENAME}"
+        echo "  expected: ${EXPECTED}"
+        echo "  actual:   ${ACTUAL}"
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+    echo "  ✓ Checksum verified (sha256: ${EXPECTED})"
 }
 
 install_binary() {

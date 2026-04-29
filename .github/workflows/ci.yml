@@ -32,6 +32,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --features enrich
 
+  # Cloudflare Pages serves arai.taniwha.ai/install from site/install, which
+  # is a copy of the canonical install.sh at the repo root.  Catch drift
+  # before it ships an outdated installer to every `curl | sh` user.
+  install-script-sync:
+    name: install.sh sync check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: site/install matches install.sh
+        run: |
+          if ! diff -q install.sh site/install; then
+            echo "::error::site/install is out of sync with install.sh."
+            echo "::error::Run \`cp install.sh site/install\` and commit."
+            exit 1
+          fi
+
   # After tests pass on main: create release PR + tag/publish on merge
   release-plz:
     name: Release-plz
