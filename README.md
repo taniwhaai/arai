@@ -109,8 +109,8 @@ arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring
-arai stats                 # Aggregate audit log — top rules, tools, days, per-rule compliance
-arai stats --by-rule       # Just the per-rule compliance section
+arai stats                 # Aggregate audit log — top rules, compliance, token economics
+arai stats --by-rule       # Just the per-rule compliance + token economics
 arai severity alembic block # Pin a rule's severity (incremental deny rollout)
 arai severity --reset alembic # Drop the override; severity reverts to predicate-derived
 arai diff CLAUDE.md        # Preview rule-set delta before saving an edit
@@ -265,10 +265,10 @@ source.
 the questions every maintainer asks after a few weeks of use:
 
 ```bash
-arai stats                # Top rules, tools, days, per-rule compliance
+arai stats                # Top rules, compliance, token economics
 arai stats --since=30d    # Window to the last month
 arai stats --top=5        # Show only top 5 per section
-arai stats --by-rule      # Just the per-rule compliance table
+arai stats --by-rule      # Compliance + token economics only
 arai stats --json         # Machine-readable for dashboards
 ```
 

@@ -95,13 +95,40 @@ leaves the machine.
 - **<5ms no-match hook** — fast exit when no guardrails apply
 - **Single binary** — no runtime dependencies for users
 
-## v0.2.4 additions at a glance
+## v0.2.9 additions at a glance
+
+- **Per-session repeat-injection suppression** (`session::partition_
+  seen_rules`, `session::mark_rules_seen`).  When the same rule fires
+  a second time in a session the hook emits a compact one-liner
+  (`- still: subject predicate object`) instead of re-injecting the
+  full source/layer/severity payload.  Saves ~50 tokens per re-fire
+  and reduces attention dilution.  State lives in the existing
+  per-session JSON pattern, capped at 500 ids.  Mark-as-seen happens
+  *after* the audit write so a panic between match and write can't
+  permanently suppress a rule the model never saw.
+- **`seen_before` per-rule audit field**.  Additive boolean on
+  every entry in `rules[]`; older lines are read as `false`.  Lets
+  `arai stats` count suppression events post-hoc without holding
+  any session state of its own.
+- **Token-economics section in `arai stats`** (`stats::TokenEconomics`).
+  Three streams: repeat-injection suppressions (~50 ea.), denied-
+  and-honored mistakes (`obeyed` + `block` severity, ~2000 ea.),
+  advised-and-honored events (~500 ea.).  Calibration constants
+  documented in `src/stats.rs` so they move atomically.  Output is
+  labelled "estimates, not measurements" everywhere — over-claiming
+  here is the easy mistake to make.  Suppressed entirely when no
+  streams have data, so first-run users don't see a "0 saved" line.
+  `arai stats --json` exposes a `token_economics` object.
+
+## v0.2.6 additions at a glance
 
 - **Per-rule compliance roll-up** in `arai stats` — joins Pre firings
   and Compliance verdicts via `triple_id` to produce
   `fires/obeyed/ignored/unclear/ratio` per rule. `--by-rule` shows
   only that section. The maintainer's "is this rule actually
   working?" question, answered from data Arai already collects.
+  *(v0.2.7: dedupe per Pre — first-definitive-wins so unrelated
+  Posts don't inflate the denominator.)*
 - **Per-rule severity override** (`arai severity`).  Stored in a new
   `rule_intent.severity_override` column that `classify_all_guardrails`
   doesn't touch on re-scan, so manual rollout decisions survive.
