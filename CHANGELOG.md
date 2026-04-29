@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-04-29
+
+This release closes attack surfaces flagged in an internal audit. No known
+exploits in the wild; report any future findings via GitHub Security
+Advisories at <https://github.com/taniwhaai/arai/security/advisories/new>.
+
+### Security
+
+- **`arai:extends` SSRF.** The upstream-policy fetcher now resolves
+  hostnames and refuses loopback, RFC1918, link-local (including cloud
+  metadata at `169.254.169.254`), CGNAT, multicast, and IPv6 ULA /
+  link-local addresses. Redirects are disabled (`max_redirects(0)`) so a
+  302 cannot bypass the trust list, and `Accept-Encoding: identity` is
+  forced so a small gzip body cannot decompress past the 512 KB cap.
+  Cache writes refuse to follow symlinks on both the fresh-write and
+  stale-while-error paths.
+- **MCP server unbounded input.** `arai_add_guard` now caps rule bodies
+  at 1 KiB, reasons at 4 KiB, and refuses new adds once a project has
+  accumulated 1000 MCP-source rules. Prevents a malfunctioning or
+  malicious agent from filling the local SQLite store and triggering
+  expensive re-classification on each call.
+- **Hook stdin OOM.** The hook handler caps stdin at 1 MiB so a runaway
+  pipe cannot exhaust memory before JSON parsing.
+- **Audit log file mode.** Audit JSONL files are now created with mode
+  `0600` and the audit directory with `0700` on Unix. Previously the
+  umask-derived defaults (typically `0644` / `0755`) left session ids,
+  prompt previews, and rule subjects readable by other users on
+  multi-user systems.
+- **AST recursion bound.** `code_scanner` now caps tree-sitter walk depth
+  at 500, preventing a stack overflow on adversarially nested source
+  files during a `--code` scan.
+- **Installer signature verification.** `install.sh` and
+  `npm/install.js` now download `checksums.txt` from the matching
+  release and verify the binary's SHA-256 before writing it to disk.
+  `ARAI_SKIP_CHECKSUM=1` is supported as an escape hatch for local dev
+  against unsigned builds. Closes the supply-chain gap where a
+  compromised GitHub release or DNS hijack could ship arbitrary code to
+  every `curl | sh` or `npm install` user.
+
+### Dependencies
+
+- Bumped `rustls-webpki` 0.103.12 → 0.103.13
+  ([RUSTSEC-2026-0104](https://rustsec.org/advisories/RUSTSEC-2026-0104):
+  denial of service via panic on malformed CRL `BIT STRING`).
+
+### Fixed
+
+- *(security)* Harden hot path, MCP server, and arai:extends fetcher
+- *(release)* Verify SHA-256 in install.sh and npm before installing
+
+
 ## [0.2.7] - 2026-04-28
 
 ### Fixed
