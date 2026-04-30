@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-04-30
+
+### Documentation
+
+- Clarify enforcement scope across non-Claude assistants ([#44](https://github.com/taniwhaai/arai/pull/44))
+
+
 ## [0.2.9] - 2026-04-29
 
 ### Added
