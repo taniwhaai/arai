@@ -1,0 +1,38 @@
+# Build artifacts — never copy into the build context.
+target/
+debug/
+
+# Version control / CI / editor metadata
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+
+# Project workspaces and local state
+.arai/
+.claude/
+
+# Distribution channel scaffolding (npm wrapper, install script, site)
+npm/
+site/
+install.sh
+
+# Maintainer-only files not needed by `cargo build`
+CHANGELOG.md
+CONTRIBUTING.md
+CLAUDE.md
+README.md
+llms-install.md
+cliff.toml
+release-plz.toml
+docs/
+scenarios/
+tasks/
+tests/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
