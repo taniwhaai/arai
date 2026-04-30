@@ -1,0 +1,29 @@
+# Convenience wrapper for running Arai in a container with persistent state.
+# The audit log and rule store live in the named volume `arai-data`, so they
+# survive container restarts and image rebuilds.
+#
+# Quick start:
+#   docker compose run --rm arai
+#       Boots the stdio MCP server. Pipe JSON-RPC in, read responses out.
+#       Used by orchestrators that auto-spawn the container.
+#
+#   docker compose run --rm arai status
+#       Any other arai subcommand by overriding the default CMD.
+#
+# To run project-aware commands (init, scan, audit) against a real project,
+# bind-mount the project directory:
+#   docker compose run --rm \
+#     -v "$(pwd):/work" -w /work \
+#     arai init
+
+services:
+  arai:
+    build: .
+    image: arai:latest
+    stdin_open: true   # stdio MCP reads JSON-RPC from stdin
+    tty: false         # MCP is JSON-RPC, not a terminal protocol
+    volumes:
+      - arai-data:/home/arai/.arai
+
+volumes:
+  arai-data:
