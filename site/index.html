@@ -237,7 +237,7 @@
 <section class="hero">
     <div class="container">
         <h1><span>CLAUDE.md</span> that actually blocks.</h1>
-        <p>Enforce AI coding assistant instruction files via hooks. Rules marked <code>never</code> deny the tool call. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
+        <p>Enforce AI coding assistant instruction files via Claude Code hooks &mdash; or advisory MCP for Cursor and Windsurf. Rules marked <code>never</code> deny the tool call in Claude Code. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -278,7 +278,7 @@
             </div>
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code>. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code> in Claude Code. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor and Windsurf get advisory enforcement via MCP &mdash; no other assistant exposes a deny hook today.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule rollout</h3>
@@ -334,7 +334,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call. <code>arai_recent_decisions</code> lets the agent self-check what it was just denied for &mdash; no more looping on the same refused action.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call. <code>arai_recent_decisions</code> lets the agent self-check what it was just denied for &mdash; no more looping on the same refused action. MCP is also how Cursor and Windsurf integrate: same rule set, advisory only.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>

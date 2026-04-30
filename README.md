@@ -45,14 +45,24 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 
 ## Supported Instruction Files
 
-| File | Tool |
-|------|------|
-| `CLAUDE.md` | Claude Code |
-| `~/.claude/CLAUDE.md` | Claude Code (global) |
-| `.cursorrules` / `.cursor/rules` | Cursor |
-| `.github/copilot-instructions.md` | GitHub Copilot |
-| `.windsurfrules` | Windsurf |
-| `~/.claude/projects/*/memory/*.md` | Claude Code memory |
+| File | Tool | Enforcement |
+|------|------|-------------|
+| `CLAUDE.md` | Claude Code | Hooks (block + advise) |
+| `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
+| `~/.claude/projects/*/memory/*.md` | Claude Code memory | Hooks (block + advise) |
+| `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
+| `.windsurfrules` | Windsurf | MCP (advise) |
+| `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
+
+Rules from every file are parsed, classified, and stored the same way — but
+enforcement strength depends on what surface the assistant exposes. Only
+Claude Code has PreToolUse hooks, so only Claude Code can `deny` a tool
+call. Cursor and Windsurf are MCP clients, so they get advisory enforcement
+via [`arai mcp`](#mcp-agent-authored-guardrails) — the agent can list
+guards, register new ones, and self-check recent decisions, but Arai cannot
+block its tool calls. GitHub Copilot has no integration surface today; the
+file is ingested so its rules show up in `arai stats`, `arai diff`, and
+the audit log alongside the rest.
 
 ## Smart Matching
 
@@ -501,6 +511,14 @@ local rules before the parser runs, so the rest of the pipeline sees
 one merged file.
 
 ## MCP: agent-authored guardrails
+
+`arai mcp` is also the integration path for assistants that don't have a
+PreToolUse hook surface. Cursor and Windsurf are both MCP clients — point
+them at `arai mcp` and the agent can read the same rule set Claude Code
+sees, register new guards mid-session, and self-check recent decisions.
+The blocking path is still Claude-Code-only (no other assistant exposes
+a deny hook today), but everything else — rule lookup, agent-authored
+guards, decision history — is shared.
 
 `arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
 server on stdio. Three tools, exposed to any MCP-capable agent:
