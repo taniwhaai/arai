@@ -551,6 +551,28 @@ Register it with Claude Code by adding to your MCP settings:
 }
 ```
 
+For Cline (in `cline_mcp_settings.json`, or via the MCP UI):
+
+```json
+{
+  "mcpServers": {
+    "arai": {
+      "command": "arai",
+      "args": ["mcp"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+For Cursor and Windsurf, follow each tool's MCP server registration UI
+and point it at the same `arai mcp` command — the protocol is identical.
+
+Prerequisite: `arai` must be on your `PATH`. The install script, `cargo
+install arai`, `npm install -g @taniwhaai/arai`, and the Homebrew tap all
+put it there.
+
 ## Installation
 
 ```bash
