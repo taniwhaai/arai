@@ -251,15 +251,19 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         return None;
     }
 
-    // Bold-label discriminator — "**No build process** - this is a zero-build
-    // extension." is a feature-absence DESCRIPTION, not a prohibition; same
-    // shape with `**Consider X:**`/`**No Y:**` etc.  When the text starts
-    // with a bold-wrapped phrase followed by `:` or ` - `/` — `, we treat
-    // the bullet as a labelled description and skip patterns that would
-    // otherwise misfire (`^no`, `^consider`).  Other Layer 1 patterns
-    // (`never`/`always`/`don't`) aren't gated by this — `**Always** run
-    // tests` is real emphasis-on-rule and should still extract.
-    let bold_label_re = Regex::new(r"^\*\*[^*]+\*\*\s*[:\-—]").ok()?;
+    // Bold-label discriminator — `**No build process** - this is a zero-
+    // build extension.` and `**Consider constraints:** What are the goals?`
+    // are feature-absence DESCRIPTIONS or section headings, not rules.
+    //
+    // Heuristic: a *multi-word* bold prefix is a label; a *single-word*
+    // bold prefix is emphasis on a leader word.  This handles three
+    // shapes the corpus actually contains:
+    //   `**No build process** - this is a zero-build extension.` (label)
+    //   `**Consider constraints:** What are the goals?`           (label)
+    //   `**Always** run tests before push`                         (emphasis — keep)
+    // Catches the colon-inside-bold case the previous trailing-separator
+    // regex missed.
+    let bold_label_re = Regex::new(r"^\*\*[^*]+\s[^*]*\*\*").ok()?;
     let is_bold_label = bold_label_re.is_match(text.trim_start());
 
     // Strip markdown formatting before matching
@@ -396,7 +400,74 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         }
     }
 
-    // Layer 4: Mid-sentence imperatives — "If X, STOP/never/don't Y"
+    // Layer 7: Conditional imperatives — evaluated *before* Layer 4 because
+    // a conditional shape is more specific than a generic mid-sentence
+    // imperative ("When deploying to production, never skip smoke tests"
+    // wants the conditional reading, not just the comma-imperative).
+    // Layer 4 still fires for non-conditional comma-imperatives that don't
+    // start with a trigger word.
+    //
+    // Shape: ^(Before|After|When|Whenever|If|For)\s+<condition>(,|:|→|—)\s+<verb>\s+<rest>
+    // The verb must be in the union of recognised imperatives so we don't
+    // accidentally extract a rule from "When X, see Y" prose continuations.
+    let conditional_re = Regex::new(
+        r"(?ix)
+        ^\s*(?:before|after|when|whenever|if|for)\s+   # trigger word
+        (.+?)                                          # condition phrase
+        \s*[,:\u{2192}\u{2014}]\s+                     # `,`, `:`, `→`, or `—`
+        (\w+)                                          # imperative verb
+        \s+(.+)                                        # rule body
+        ",
+    )
+    .ok()?;
+    if let Some(caps) = conditional_re.captures(&cleaned) {
+        let verb = caps.get(2)?.as_str().to_lowercase();
+        let body = caps.get(3)?.as_str().trim();
+        let condition = caps.get(1)?.as_str().trim().to_lowercase();
+        let allowed_verbs = [
+            // From Layer 6
+            "enter", "exit", "run", "check", "test", "write", "read", "review",
+            "update", "delete", "add", "remove", "set", "get", "keep", "find",
+            "fix", "verify", "demonstrate", "prove", "show", "deploy", "build",
+            "install", "configure", "enable", "disable", "start", "stop",
+            "offload", "throw", "challenge", "pause", "diff", "ask",
+            "point", "create", "implement", "document", "define", "store",
+            "state", "share", "explain", "describe", "connect", "apply",
+            // Layer 1 leaders
+            "never", "always", "don't", "dont", "do", "must", "should",
+            "shouldn't", "shouldnt", "avoid", "ensure", "use", "prefer",
+            "consider", "recommend", "make", "be", "no", "only",
+        ];
+        if allowed_verbs.contains(&verb.as_str()) {
+            // Decide predicate based on the inner verb.  Bias toward
+            // `requires` because most conditionals are positive imperatives;
+            // map clear prohibitives explicitly.
+            let predicate = match verb.as_str() {
+                "never" | "don't" | "dont" | "avoid" | "stop" => "never",
+                "shouldn't" | "shouldnt" => "must_not",
+                "always" | "must" | "ensure" => "always",
+                "should" | "prefer" | "consider" | "recommend" => "prefers",
+                _ => "requires",
+            };
+            let object = format!("{verb} {body}");
+            // Subject: prefer a known tool name in the condition phrase, else
+            // fall through to the standard subject-extraction logic.
+            let subject = if let Some(tool) = find_earliest_tool(&condition) {
+                capitalize(tool)
+            } else {
+                extract_subject(&lower, section_context)
+            };
+            return Some((subject, predicate.to_string(), clean_object(&object), 7));
+        }
+        // Conditional shape but verb not in whitelist — fall through to
+        // Layer 4 / Layer 6 / etc.  Don't return None here; one of the
+        // later layers might still extract from prose like "When uncertain,
+        // see ..." (in which case we explicitly want them to skip).
+    }
+
+    // Layer 4: Mid-sentence imperatives — "If X, STOP/never/don't Y" without
+    // the trigger-word prefix Layer 7 expects (covers ", never X" and
+    // "-- don't X" cases that don't lead with Before/After/When/If/For).
     let mid_patterns: Vec<(&str, &str)> = vec![
         (r"(?i),\s*never\s+(.+)", "never"),
         (r"(?i),\s*always\s+(.+)", "always"),
@@ -450,74 +521,17 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         // v0.2.11 additions — measured against the broadened public corpus
         // (~80 additional rule extractions; see CHANGELOG).
         "create", "implement", "document", "define", "store",
+        // Common imperatives observed in instruction prose (kraken,
+        // arai, public corpora).  Each unambiguous in list-item-leading
+        // position; low false-positive risk.  Also referenced by Layer 7's
+        // allowed_verbs whitelist.
+        "state", "share", "explain", "describe", "connect", "apply",
     ];
 
     let first_word = lower.split_whitespace().next().unwrap_or("");
     if verb_starts.contains(&first_word) {
         let subject = extract_subject(&lower, section_context);
         return Some((subject, "requires".to_string(), clean_object(&cleaned), 6));
-    }
-
-    // Layer 7: Conditional imperatives — "Before X, do Y" / "When X: do Y" /
-    // "If X → do Y".  Catches the very common pattern where a writer pairs
-    // the trigger with the action inline rather than leading with the verb.
-    //
-    // Shape: ^(Before|After|When|If|For)\s+<trigger>(,|:|→)\s+<verb>\s+<rest>
-    // The verb must be in the union of recognised imperatives so we don't
-    // accidentally extract a rule from "Before completing work, see the
-    // checklist below" or other prose-shaped continuations.
-    let conditional_re = Regex::new(
-        r"(?ix)
-        ^\s*(?:before|after|when|whenever|if|for)\s+   # trigger word
-        (.+?)                                          # condition phrase
-        \s*[,:\u{2192}\u{2014}]\s+                     # `,`, `:`, `→`, or `—`
-        (\w+)                                          # imperative verb
-        \s+(.+)                                        # rule body
-        ",
-    )
-    .ok()?;
-    if let Some(caps) = conditional_re.captures(&cleaned) {
-        let verb = caps.get(2)?.as_str().to_lowercase();
-        let body = caps.get(3)?.as_str().trim();
-        // Same imperative whitelist Layer 6 uses, plus the Layer 1 leaders
-        // that can appear on the right side of a conditional ("If X, never
-        // Y" / "When Z, always W").
-        let condition = caps.get(1)?.as_str().trim().to_lowercase();
-        let allowed_verbs = [
-            // From Layer 6
-            "enter", "exit", "run", "check", "test", "write", "read", "review",
-            "update", "delete", "add", "remove", "set", "get", "keep", "find",
-            "fix", "verify", "demonstrate", "prove", "show", "deploy", "build",
-            "install", "configure", "enable", "disable", "start", "stop",
-            "offload", "throw", "challenge", "pause", "diff", "ask",
-            "point", "create", "implement", "document", "define", "store",
-            // Layer 1 leaders
-            "never", "always", "don't", "dont", "do", "must", "should",
-            "shouldn't", "shouldnt", "avoid", "ensure", "use", "prefer",
-            "consider", "recommend", "make", "be", "no", "only",
-        ];
-        if !allowed_verbs.contains(&verb.as_str()) {
-            return None;
-        }
-        // Decide predicate based on the inner verb.  Bias toward `requires`
-        // because most conditionals are positive imperatives; map clear
-        // prohibitives explicitly.
-        let predicate = match verb.as_str() {
-            "never" | "don't" | "dont" | "avoid" | "stop" => "never",
-            "shouldn't" | "shouldnt" => "must_not",
-            "always" | "must" | "ensure" => "always",
-            "should" | "prefer" | "consider" | "recommend" => "prefers",
-            _ => "requires",
-        };
-        let object = format!("{verb} {body}");
-        // Subject: prefer a known tool name in the condition phrase, else
-        // fall through to the standard subject-extraction logic.
-        let subject = if let Some(tool) = find_earliest_tool(&condition) {
-            capitalize(tool)
-        } else {
-            extract_subject(&lower, section_context)
-        };
-        return Some((subject, predicate.to_string(), clean_object(&object), 7));
     }
 
     None
