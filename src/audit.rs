@@ -33,8 +33,9 @@ pub fn layer_label(layer: u8) -> &'static str {
         2 => "layer-2 passive forbidden/required",
         3 => "layer-3 colon-separated label",
         4 => "layer-4 mid-sentence imperative",
-        5 => "layer-5 use-X two-signal gate",
+        5 => "layer-5 use-X gated (tool / co-imperative / rules section)",
         6 => "layer-6 verb-start catch-all",
+        7 => "layer-7 conditional imperative (Before/After/When/If/For \u{2026})",
         _ => "unknown",
     }
 }

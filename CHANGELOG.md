@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- *(parser)* Twelve new imperative-extraction patterns, measured against
+  a 93-file public CLAUDE.md corpus and shipped together so users who
+  write rules in any of these styles get them honoured rather than
+  silently dropped:
+  - **Layer 1**: `^should\s+not` / `^shouldn't` → `must_not` (Block);
+    `^should` → `prefers` (Inform — softer than `must`/`always`);
+    `^cannot` → `must_not`; `^refuse to` → `forbids`;
+    `^enforce` → `enforces`; `^make sure` / `^be sure` → `enforces`;
+    `^consider` / `^recommend(ed)?` → `prefers`.
+  - **Layer 1b**: bare `^no\s+(.+)` → `must_not` (Block), gated against
+    bold-label feature-absence form (`**No build process** - this is a
+    zero-build extension.` does NOT extract).
+  - **Layer 5**: `^use\s+` now also fires when the section header
+    matches `Conventions / Rules / Style / Guidelines / Best Practices /
+    Coding Standards / Policies` — covers the very common style-guide
+    pattern where the section framing makes the imperative explicit
+    even without a known tool name in the line.
+  - **Layer 6 verb additions**: `create`, `implement`, `document`,
+    `define`, `store` — measured ~80 real rules across the public
+    corpus.
+  - **Layer 7 (new)**: conditional imperatives —
+    `^(Before|After|When|Whenever|If|For)\s+<condition>(,|:|→|—)\s+<verb>\s+<rest>`
+    where `<verb>` is in the recognised imperative whitelist.  Catches
+    the trigger-paired-with-imperative form ("When working in parallel,
+    run tests in isolation") that previously slipped past every layer.
+- *(audit)* Layer 7 label in the derivation trace.
+- *(tests)* `tests/parser_coverage/corpus.md` + `tests/parser_coverage.rs`
+  — synthetic CLAUDE.md exercising every pattern (positive + negative
+  cases) plus an integration test driven through the live `arai lint
+  --json` binary.  17 spot-check assertions including the
+  `**No build process**` regression guard.
+
 ## [0.2.10] - 2026-04-30
 
 ### Documentation
