@@ -591,6 +591,12 @@ cargo install arai --features enrich   # with ONNX model support
 
 # Homebrew
 brew install taniwhaai/tap/arai
+
+# Docker (sandboxed install or CI-side enforcement)
+docker build -t arai .
+docker run --rm -i -v "$(pwd)/.arai:/home/arai/.arai" arai
+# Or via compose with a persistent named volume:
+docker compose run --rm arai
 ```
 
 ## Performance
