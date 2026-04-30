@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-04-30
+
+### Documentation
+
+- Clarify enforcement scope across non-Claude assistants ([#44](https://github.com/taniwhaai/arai/pull/44))
+- Prep for Cline MCP marketplace submission ([#46](https://github.com/taniwhaai/arai/pull/46))
+
+### Build
+
+- Add Dockerfile + .dockerignore ([#48](https://github.com/taniwhaai/arai/pull/48))
+
+
 ## [0.2.9] - 2026-04-29
 
 ### Added
