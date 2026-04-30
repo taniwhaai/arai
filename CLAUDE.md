@@ -43,7 +43,7 @@ src/
 ├── main.rs               # CLI entry (clap) — init, status, guardrails, scan, add, audit, mcp, upgrade, why
 ├── config.rs             # Config, project paths + slug, env vars, LLM command
 ├── discovery.rs          # Instruction file discovery (CLAUDE.md, .cursorrules, etc.)
-├── parser.rs             # Rule extraction from markdown (6 layers of pattern matching); tracks layer + expiry
+├── parser.rs             # Rule extraction from markdown (7 layers of pattern matching); tracks layer + expiry
 ├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent); expired-rule filter
 ├── guardrails.rs         # Term extraction, subject matching, tool scope filtering; format_trace
 ├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit; severity → deny/allow
@@ -94,6 +94,34 @@ leaves the machine.
 - **Severity-aware** — prohibitive predicates block, affirmative predicates warn, prefers informs
 - **<5ms no-match hook** — fast exit when no guardrails apply
 - **Single binary** — no runtime dependencies for users
+
+## v0.2.11 additions at a glance
+
+- **Twelve new parser patterns** (`parser::match_imperative`) shipped
+  together so users who write rules in any of these styles get them
+  honoured rather than silently dropped.  Severity mapping mirrors
+  grammatical weight (`should` is softer than `must`, so it routes to
+  `prefers`/Inform; `should not` is an explicit prohibition so it
+  routes to `must_not`/Block).
+- **New Layer 7 (`conditional imperative`)** — catches the trigger-
+  paired-with-imperative shape that previously slipped past every
+  layer ("When working in parallel, run tests in isolation").
+- **Layer 5 section-context gate** — `^use\s+` now also fires when the
+  section header matches `Conventions / Rules / Style / Guidelines /
+  Best Practices / ...`, capturing the style-guide pattern where the
+  framing makes the imperative explicit.
+- **Bold-label discriminator** (`is_bold_label`) — `**No build process**
+  - this is a zero-build extension.` is feature-absence DESCRIPTION,
+  not a rule; the guard prevents `^no` and `^consider` from
+  over-extracting on labelled list items, while still letting
+  `**Always** run tests` (bold emphasis on a Layer 1 leader) extract
+  normally.
+- **Coverage corpus + integration test** — `tests/parser_coverage/`
+  ships a synthetic CLAUDE.md exercising every pattern with positive
+  AND negative cases, plus a `tests/parser_coverage.rs` integration
+  test that drives the live `arai lint --json` binary.  Locks the
+  expected behaviour so future parser changes can't silently
+  regress on the most-common shapes.
 
 ## v0.2.9 additions at a glance
 
@@ -153,7 +181,7 @@ leaves the machine.
   `ARAI_DENY_MODE=off` forces advise-only for incremental rollout.
 - **Rule derivation trace** (`parser::Triple::layer`,
   `Guardrail::layer`, `Guardrail::line_start`, `audit::layer_label`).
-  Every firing records which of the six `match_imperative` layers
+  Every firing records which of the seven `match_imperative` layers
   produced the rule, plus the source line — exposed via
   `additionalContext`, the audit JSON, and `arai why`.
 - **Compliance tracking** (`compliance.rs`).  On PostToolUse, correlate

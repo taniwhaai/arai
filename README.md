@@ -73,6 +73,7 @@ Arai doesn't just do keyword matching. It understands your rules:
 - **Content sniffing** — detects `from alembic import op` in file content being written
 - **Session awareness** — "never push without running tests" suppresses after tests have been run
 - **Timing routing** — domain rules fire on tool calls, principles stay silent (already in CLAUDE.md)
+- **Broad imperative coverage** — recognises `never/always/don't/must`, `should/shouldn't`, `cannot/refuse`, `make sure/be sure`, `consider/recommend`, bare `No X` prohibitions, conditional shapes (`When X, do Y` / `Before X: do Y` / `If X → do Y`), and the section-aware `Use X` style-guide pattern. Severity mapping mirrors grammatical weight: `should` is `Inform` (soft), `should not` is `Block` (the writer chose to call out a specific prohibition).
 
 ## Enrichment
 
