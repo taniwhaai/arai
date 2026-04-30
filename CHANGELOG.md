@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-04-30
+
+### Added
+
+- *(parser)* Broaden imperative coverage with 12 patterns + corpus regression test ([#51](https://github.com/taniwhaai/arai/pull/51))
+
+### Miscellaneous
+
+- Add glama.json for MCP server claim ([#49](https://github.com/taniwhaai/arai/pull/49))
+
+
 ### Added
 
 - *(parser)* Twelve new imperative-extraction patterns, measured against
