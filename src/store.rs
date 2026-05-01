@@ -7,6 +7,14 @@ pub struct Store {
     conn: Connection,
 }
 
+/// Schema migrations.  Each entry is a one-way step that brings the DB from
+/// `user_version = i` to `i + 1`.  Append, never edit — once a migration has
+/// shipped, treat it as immutable history.  Idempotent operations only:
+/// migrations may run on a fresh DB or on an upgrading DB that already
+/// happens to have some columns from a previous schema-on-every-open era.
+type Migration = fn(&Connection) -> rusqlite::Result<()>;
+const MIGRATIONS: &[Migration] = &[migrate_v1];
+
 impl Store {
     pub fn open(db_path: &Path) -> Result<Store, String> {
         // Ensure parent directory exists
@@ -18,117 +26,48 @@ impl Store {
         let conn = Connection::open(db_path)
             .map_err(|e| format!("Failed to open database: {e}"))?;
 
+        // Connection PRAGMAs.  journal_mode=WAL and synchronous=NORMAL are
+        // persistent (set on the database file once); temp_store=MEMORY and
+        // foreign_keys=ON are per-connection.  Issuing all four every open is
+        // cheap (a metadata read for the persistent ones) and keeps the open
+        // path self-healing if the DB file was reset.
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA foreign_keys = ON;",
+        )
+        .map_err(|e| format!("Failed to set PRAGMAs: {e}"))?;
+
         let store = Store { conn };
-        store.init_schema().map_err(|e| format!("Failed to init schema: {e}"))?;
+        store
+            .run_migrations()
+            .map_err(|e| format!("Failed to run migrations: {e}"))?;
         Ok(store)
     }
 
-    fn init_schema(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL UNIQUE,
-                checksum TEXT NOT NULL DEFAULT '',
-                mtime REAL DEFAULT 0,
-                scanned_at TEXT
-            );
+    /// Run any pending migrations.  Reads `PRAGMA user_version`, runs the
+    /// migrations indexed `[current..target)`, then bumps `user_version` to
+    /// the target.  No-op when current == target — this is the cheap path on
+    /// every hook invocation.
+    fn run_migrations(&self) -> rusqlite::Result<()> {
+        let current: i64 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let target = MIGRATIONS.len() as i64;
 
-            CREATE TABLE IF NOT EXISTS triples (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-                s TEXT NOT NULL,
-                p TEXT NOT NULL,
-                o TEXT NOT NULL,
-                domain TEXT DEFAULT 'general',
-                confidence REAL DEFAULT 0.7,
-                line_start INTEGER,
-                line_end INTEGER,
-                source_file TEXT,
-                layer INTEGER,
-                expires_at TEXT
-            );
+        if current >= target {
+            return Ok(());
+        }
 
-            CREATE INDEX IF NOT EXISTS idx_triples_file ON triples(file_id);
-            CREATE INDEX IF NOT EXISTS idx_triples_p ON triples(p);
-            CREATE INDEX IF NOT EXISTS idx_triples_s ON triples(s);
+        for i in current..target {
+            MIGRATIONS[i as usize](&self.conn)?;
+        }
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS triples_fts USING fts5(
-                s, p, o,
-                content='triples',
-                content_rowid='id'
-            );
-
-            CREATE TRIGGER IF NOT EXISTS triples_ai AFTER INSERT ON triples BEGIN
-                INSERT INTO triples_fts(rowid, s, p, o) VALUES (new.id, new.s, new.p, new.o);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS triples_ad AFTER DELETE ON triples BEGIN
-                INSERT INTO triples_fts(triples_fts, rowid, s, p, o)
-                    VALUES('delete', old.id, old.s, old.p, old.o);
-            END;
-
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS code_graph (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                directory TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                source_file TEXT NOT NULL,
-                scanned_at TEXT,
-                UNIQUE(directory, tool_name, source_file)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_code_graph_dir ON code_graph(directory);
-
-            CREATE TABLE IF NOT EXISTS rule_intent (
-                triple_id INTEGER PRIMARY KEY REFERENCES triples(id) ON DELETE CASCADE,
-                action TEXT NOT NULL DEFAULT 'general',
-                timing TEXT NOT NULL DEFAULT 'tool_call',
-                tools TEXT NOT NULL DEFAULT '*',
-                allow_inverse INTEGER DEFAULT 0,
-                enriched_by TEXT DEFAULT 'taxonomy',
-                enriched_at TEXT,
-                severity TEXT NOT NULL DEFAULT 'warn',
-                severity_override TEXT
-            );
-
-            PRAGMA foreign_keys = ON;
-            ",
-        )?;
-
-        // Migration: add severity column to older rule_intent tables.  Safe to
-        // call on every open — the ALTER is a no-op once the column exists.
-        let _ = self.conn.execute(
-            "ALTER TABLE rule_intent ADD COLUMN severity TEXT NOT NULL DEFAULT 'warn'",
-            [],
-        );
-
-        // Migration: per-rule severity override.  Survives `arai scan` re-
-        // classification (which would otherwise stomp the predicate-derived
-        // severity back).  NULL means "use the classified severity".
-        let _ = self.conn.execute(
-            "ALTER TABLE rule_intent ADD COLUMN severity_override TEXT",
-            [],
-        );
-
-        // Migration: add layer column to older triples tables so derivation
-        // trace surfaces even on upgraded stores (NULL for pre-trace rows).
-        let _ = self.conn.execute(
-            "ALTER TABLE triples ADD COLUMN layer INTEGER",
-            [],
-        );
-
-        // Migration: add expires_at for rule self-pruning.  ISO date strings;
-        // NULL for rules without an annotation.
-        let _ = self.conn.execute(
-            "ALTER TABLE triples ADD COLUMN expires_at TEXT",
-            [],
-        );
-
+        // PRAGMAs cannot be parameterised; target is derived from the const
+        // array length so there is no injection surface.
+        self.conn
+            .execute_batch(&format!("PRAGMA user_version = {};", target))?;
         Ok(())
     }
 
@@ -770,6 +709,121 @@ fn compute_checksum(content: &str) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Add a column only if it isn't already on the table.  SQLite has no
+/// `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; the previous codepath relied
+/// on swallowing duplicate-column errors via `let _ = ...`.  This helper
+/// keeps migrations idempotent on user databases that may already have the
+/// column from a pre-versioned-schema era.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    column_def: &str,
+) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {column_def}"),
+        [],
+    )?;
+    Ok(())
+}
+
+/// Migration v0 -> v1: initial schema.  Includes the original CREATE TABLE
+/// batch plus idempotent ALTERs for the four columns that were added in
+/// v0.2.x via the schema-on-every-open ALTER pattern.  After this migration
+/// runs, dbs from any prior version converge on the same shape.
+fn migrate_v1(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            checksum TEXT NOT NULL DEFAULT '',
+            mtime REAL DEFAULT 0,
+            scanned_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS triples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            s TEXT NOT NULL,
+            p TEXT NOT NULL,
+            o TEXT NOT NULL,
+            domain TEXT DEFAULT 'general',
+            confidence REAL DEFAULT 0.7,
+            line_start INTEGER,
+            line_end INTEGER,
+            source_file TEXT,
+            layer INTEGER,
+            expires_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_triples_file ON triples(file_id);
+        CREATE INDEX IF NOT EXISTS idx_triples_p ON triples(p);
+        CREATE INDEX IF NOT EXISTS idx_triples_s ON triples(s);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS triples_fts USING fts5(
+            s, p, o,
+            content='triples',
+            content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS triples_ai AFTER INSERT ON triples BEGIN
+            INSERT INTO triples_fts(rowid, s, p, o) VALUES (new.id, new.s, new.p, new.o);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS triples_ad AFTER DELETE ON triples BEGIN
+            INSERT INTO triples_fts(triples_fts, rowid, s, p, o)
+                VALUES('delete', old.id, old.s, old.p, old.o);
+        END;
+
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS code_graph (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            directory TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            source_file TEXT NOT NULL,
+            scanned_at TEXT,
+            UNIQUE(directory, tool_name, source_file)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_code_graph_dir ON code_graph(directory);
+
+        CREATE TABLE IF NOT EXISTS rule_intent (
+            triple_id INTEGER PRIMARY KEY REFERENCES triples(id) ON DELETE CASCADE,
+            action TEXT NOT NULL DEFAULT 'general',
+            timing TEXT NOT NULL DEFAULT 'tool_call',
+            tools TEXT NOT NULL DEFAULT '*',
+            allow_inverse INTEGER DEFAULT 0,
+            enriched_by TEXT DEFAULT 'taxonomy',
+            enriched_at TEXT,
+            severity TEXT NOT NULL DEFAULT 'warn',
+            severity_override TEXT
+        );",
+    )?;
+
+    // Bridge for v0.2.x dbs: these columns are now in the CREATE TABLE
+    // statements above, so on a fresh DB the helper is a no-op.  On an
+    // upgrading DB whose tables predate one or more of these columns, the
+    // helper backfills them once.
+    add_column_if_missing(conn, "rule_intent", "severity", "TEXT NOT NULL DEFAULT 'warn'")?;
+    add_column_if_missing(conn, "rule_intent", "severity_override", "TEXT")?;
+    add_column_if_missing(conn, "triples", "layer", "INTEGER")?;
+    add_column_if_missing(conn, "triples", "expires_at", "TEXT")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1108,6 +1162,127 @@ mod tests {
         let subjects: Vec<_> = rails.iter().map(|g| g.subject.clone()).collect();
         assert!(subjects.iter().any(|s| s == "git"), "unexpired rule should load");
         assert!(!subjects.iter().any(|s| s == "legacy"), "expired rule should NOT load");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_fresh_db_user_version_at_target_after_open() {
+        let (_store, dir) = temp_db();
+        let db_path = dir.join("test.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_pragmas_set_journal_mode_wal() {
+        let (_store, dir) = temp_db();
+        let db_path = dir.join("test.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_reopen_skips_migrations_when_at_target() {
+        // First open runs migration v1 and bumps user_version.
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_test_reopen_{}_{}", std::process::id(), id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+
+        let _s1 = Store::open(&db_path).unwrap();
+        // Reopen — must succeed without error and user_version unchanged.
+        let _s2 = Store::open(&db_path).unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_migration_bridges_pre_versioned_db() {
+        // Build a v0.2.x-shape DB by hand: rule_intent without severity /
+        // severity_override, triples without layer / expires_at, and
+        // user_version=0.  Open via Store and verify migration v1 backfills
+        // the missing columns idempotently.
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_test_bridge_{}_{}", std::process::id(), id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT NOT NULL UNIQUE,
+                    checksum TEXT NOT NULL DEFAULT '',
+                    scanned_at TEXT
+                );
+                CREATE TABLE triples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    s TEXT NOT NULL,
+                    p TEXT NOT NULL,
+                    o TEXT NOT NULL,
+                    domain TEXT DEFAULT 'general',
+                    confidence REAL DEFAULT 0.7,
+                    line_start INTEGER,
+                    line_end INTEGER,
+                    source_file TEXT
+                );
+                CREATE TABLE rule_intent (
+                    triple_id INTEGER PRIMARY KEY REFERENCES triples(id) ON DELETE CASCADE,
+                    action TEXT NOT NULL DEFAULT 'general',
+                    timing TEXT NOT NULL DEFAULT 'tool_call',
+                    tools TEXT NOT NULL DEFAULT '*',
+                    allow_inverse INTEGER DEFAULT 0,
+                    enriched_by TEXT DEFAULT 'taxonomy',
+                    enriched_at TEXT
+                );
+                PRAGMA user_version = 0;",
+            )
+            .unwrap();
+        }
+
+        // Run migrations
+        let _store = Store::open(&db_path).unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, MIGRATIONS.len() as i64, "user_version should advance to target");
+
+        let columns_for = |table: &str| -> Vec<String> {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        let ri = columns_for("rule_intent");
+        assert!(ri.contains(&"severity".to_string()), "severity backfilled");
+        assert!(ri.contains(&"severity_override".to_string()), "severity_override backfilled");
+
+        let tr = columns_for("triples");
+        assert!(tr.contains(&"layer".to_string()), "layer backfilled");
+        assert!(tr.contains(&"expires_at".to_string()), "expires_at backfilled");
 
         std::fs::remove_dir_all(&dir).ok();
     }
