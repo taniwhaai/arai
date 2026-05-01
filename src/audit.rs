@@ -118,6 +118,29 @@ pub fn record_firing(
     }
 }
 
+/// Record an `ARAI_DISABLED` bypass entry — written when the env var
+/// short-circuits the hook so `arai stats` can still see "Arai was off
+/// during this firing window".  No rule matching ran, so `rules` is empty
+/// and `decision` is the literal string `"bypassed"`.  Best-effort, silent
+/// on failure (matches `record_firing`'s I/O-handling).
+pub fn record_bypass(cfg: &Config, event: &str, tool_name: &str, session_id: &str) {
+    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let entry = json!({
+        "ts": now_rfc3339(),
+        "event": event,
+        "tool": tool_name,
+        "session": session_id,
+        "decision": "bypassed",
+        "rules": [],
+    });
+    if let Ok(mut f) = open_audit_file(&log_path) {
+        let _ = writeln!(f, "{}", entry);
+    }
+}
+
 /// Read firings matching the filter from the project's audit directory.
 /// Walks files in reverse chronological order so newest entries come first.
 pub fn query(

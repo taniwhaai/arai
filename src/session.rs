@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Validate a Claude Code session id before it is allowed to influence a
+/// filesystem path.  Real session ids from Claude Code are uuid-shaped; we
+/// accept any short alphanumeric token plus `-` / `_`.  Rejects the empty
+/// string, anything containing `/`, `\\`, `..`, or NUL bytes — which closes
+/// the path-traversal window where a hostile hook payload could write to
+/// `{arai_base}/sessions/<crafted>.json` outside the sessions directory.
+pub fn valid_session_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// A record of a tool call within a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ToolCallRecord {
@@ -24,7 +36,11 @@ struct SessionState {
     seen_rules: Vec<i64>,
 }
 
-/// Get the session state file path.
+/// Get the session state file path.  Callers MUST first run the id through
+/// `valid_session_id` (or use the post-validation empty-string fallback) —
+/// invalid ids that reach this function will produce paths inside the
+/// sessions directory regardless, but this is enforced one layer up at the
+/// hook entry point so callers don't have to redo the check on every read.
 fn session_path(arai_base: &Path, session_id: &str) -> PathBuf {
     arai_base.join("sessions").join(format!("{session_id}.json"))
 }
@@ -197,6 +213,30 @@ mod tests {
         let terms = extract_prerequisite("git push without running cargo test first");
         assert!(terms.contains(&"cargo".to_string()));
         assert!(terms.contains(&"test".to_string()));
+    }
+
+    #[test]
+    fn valid_session_id_accepts_uuid_shapes_and_short_tokens() {
+        assert!(valid_session_id("abc123"));
+        assert!(valid_session_id("01HXYZ_AB-CD"));
+        assert!(valid_session_id(
+            "550e8400-e29b-41d4-a716-446655440000"
+        ));
+        // Boundary: exactly 128 chars allowed.
+        let max = "a".repeat(128);
+        assert!(valid_session_id(&max));
+    }
+
+    #[test]
+    fn valid_session_id_rejects_traversal_and_oversize() {
+        assert!(!valid_session_id(""), "empty rejected");
+        assert!(!valid_session_id("../../../etc/passwd"), "dot-dot rejected");
+        assert!(!valid_session_id("foo/bar"), "slash rejected");
+        assert!(!valid_session_id("foo\\bar"), "backslash rejected");
+        assert!(!valid_session_id("foo\0bar"), "NUL rejected");
+        assert!(!valid_session_id("café"), "non-ASCII rejected");
+        let too_long = "a".repeat(129);
+        assert!(!valid_session_id(&too_long), "129 chars rejected");
     }
 
     #[test]

@@ -18,6 +18,14 @@ const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
 /// a week, then flip deny mode on once you trust the rule set.
 const DENY_MODE_ENV: &str = "ARAI_DENY_MODE";
 
+/// Hard kill switch: `ARAI_DISABLED` short-circuits the hook entirely.
+/// Different from `ARAI_DENY_MODE=off` (which still injects rules as
+/// advisories) — `ARAI_DISABLED` is the "Arai is causing a problem,
+/// turn it OFF right now" emergency lever.  We still write a single
+/// `bypassed` audit entry so post-hoc inspection can tell "no rules fired"
+/// from "Arai was disabled".
+const DISABLED_ENV: &str = "ARAI_DISABLED";
+
 fn deny_mode_enabled() -> bool {
     match std::env::var(DENY_MODE_ENV) {
         Ok(v) => {
@@ -25,6 +33,16 @@ fn deny_mode_enabled() -> bool {
             v != "off" && v != "0" && v != "false" && v != "no"
         }
         Err(_) => true,
+    }
+}
+
+fn is_disabled_via_env() -> bool {
+    match std::env::var(DISABLED_ENV) {
+        Ok(v) => {
+            let v = v.to_lowercase();
+            matches!(v.as_str(), "1" | "true" | "on" | "yes")
+        }
+        Err(_) => false,
     }
 }
 
@@ -89,9 +107,14 @@ pub fn match_hook(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    // Sanitize session_id at the boundary — anything that wouldn't survive
+    // path-traversal validation is treated as no-session (session features
+    // silently disable, the rest of the hook still works).  See
+    // `session::valid_session_id` for the accepted shape.
     let session_id = hook
         .get("session_id")
         .and_then(|v| v.as_str())
+        .filter(|s| session::valid_session_id(s))
         .unwrap_or("")
         .to_string();
 
@@ -211,10 +234,27 @@ pub fn handle_stdin() -> Result<(), String> {
         .get("hook_event_name")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
+    // Sanitize session_id (see `session::valid_session_id`).  Hostile
+    // payloads with `..` or `/` bytes in the id no longer reach the
+    // session-file writer.
     let session_id = hook
         .get("session_id")
         .and_then(|v| v.as_str())
+        .filter(|s| session::valid_session_id(s))
         .unwrap_or("");
+
+    // Global emergency short-circuit.  When `ARAI_DISABLED` is set to a
+    // truthy value we skip rule matching entirely but still log a single
+    // `decision="bypassed"` audit entry per invocation so `arai stats`
+    // continues to see when Arai was off vs simply quiet.  No telemetry
+    // and no stdout response — the model behaves exactly as if no hook
+    // were installed.
+    if is_disabled_via_env() {
+        if let Ok(cfg) = config::Config::load() {
+            audit::record_bypass(&cfg, event, tool_name, session_id);
+        }
+        return Ok(());
+    }
 
     // Fast exit mirrors match_hook — avoids loading config/db for skipped tools
     if !tool_name.is_empty() && guardrails::should_skip_tool(tool_name) {
