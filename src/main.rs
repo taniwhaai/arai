@@ -214,6 +214,23 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Disable a rule by triple-id so it stops firing on the hot path.  The
+    /// disable is keyed by the rule's content (subject/predicate/object), so
+    /// it survives `arai scan` re-extraction.  No arguments → list current
+    /// disables.
+    ///
+    /// Examples:
+    ///   arai disable                       # list disabled rules
+    ///   arai disable 42                    # silence rule with triple-id 42
+    Disable {
+        /// triple-id of the rule to disable.  Omit to list current disables.
+        triple_id: Option<i64>,
+    },
+    /// Re-enable a previously disabled rule by triple-id.
+    Enable {
+        /// triple-id of the rule to re-enable.
+        triple_id: i64,
+    },
     /// Explain which guardrails would fire on a hypothetical tool call —
     /// useful for debugging "why did this rule fire?" without running the
     /// hook live.  Pass either a Bash command or `--tool Edit <path>`.
@@ -263,6 +280,8 @@ fn main() {
         Commands::Stats { since, top, by_rule, json } => cmd_stats(since, top, by_rule, json),
         Commands::Severity { pattern, level, reset, json } => cmd_severity(pattern, level, reset, json),
         Commands::Diff { file, json } => cmd_diff(&file, json),
+        Commands::Disable { triple_id } => cmd_disable(triple_id),
+        Commands::Enable { triple_id } => cmd_enable(triple_id),
         Commands::Why { input, tool, event, json } => cmd_why(input, tool, event, json),
     };
 
@@ -989,6 +1008,61 @@ fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Disable a rule (or list current disables when called with no id).  The
+/// disable is keyed by the rule's content so it survives `arai scan` —
+/// re-extracting the same rule from the same source hits the same key.
+fn cmd_disable(triple_id: Option<i64>) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let db = store::Store::open(&cfg.db_path())?;
+
+    if let Some(tid) = triple_id {
+        let rule = db.rule_by_triple_id(tid).map_err(|e| e.to_string())?;
+        let (s, p, o) = match rule {
+            Some(r) => r,
+            None => return Err(format!("no rule with triple-id {tid}")),
+        };
+        let inserted = db.disable_rule(&s, &p, &o).map_err(|e| e.to_string())?;
+        if inserted {
+            println!("disabled: \"{s} {p} {o}\"");
+        } else {
+            println!("already disabled: \"{s} {p} {o}\"");
+        }
+        return Ok(());
+    }
+
+    let rows = db.list_disabled_rules().map_err(|e| e.to_string())?;
+    if rows.is_empty() {
+        println!("no rules disabled");
+        return Ok(());
+    }
+    println!("Disabled rules ({} total):", rows.len());
+    for (s, p, o, at) in rows {
+        println!("  {at}  \"{s} {p} {o}\"");
+    }
+    Ok(())
+}
+
+/// Re-enable a previously disabled rule.  Resolves the triple-id to its
+/// (s,p,o) content key — works even after `arai scan` because the rule's
+/// triple_id may change but `rule_by_triple_id` lookup pulls the live row,
+/// and `enable_rule` deletes by content, not by id.
+fn cmd_enable(triple_id: i64) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let db = store::Store::open(&cfg.db_path())?;
+
+    let rule = db.rule_by_triple_id(triple_id).map_err(|e| e.to_string())?;
+    let (s, p, o) = match rule {
+        Some(r) => r,
+        None => return Err(format!("no rule with triple-id {triple_id}")),
+    };
+    let removed = db.enable_rule(&s, &p, &o).map_err(|e| e.to_string())?;
+    if removed {
+        println!("enabled: \"{s} {p} {o}\"");
+    } else {
+        println!("not currently disabled: \"{s} {p} {o}\"");
+    }
+    Ok(())
+}
 
 /// Explain which guardrails would fire on a hypothetical tool call — same
 /// matching pipeline the live hook uses, but read-only and no audit write.

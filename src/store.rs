@@ -13,7 +13,7 @@ pub struct Store {
 /// migrations may run on a fresh DB or on an upgrading DB that already
 /// happens to have some columns from a previous schema-on-every-open era.
 type Migration = fn(&Connection) -> rusqlite::Result<()>;
-const MIGRATIONS: &[Migration] = &[migrate_v1];
+const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2];
 
 impl Store {
     pub fn open(db_path: &Path) -> Result<Store, String> {
@@ -148,8 +148,16 @@ impl Store {
     /// hot path used to call `get_rule_intent` per matched rule — that's now
     /// a field access.
     pub fn load_guardrails(&self) -> rusqlite::Result<Vec<Guardrail>> {
+        // `NOT EXISTS` filter excludes rules whose (s,p,o) appears in
+        // `disabled_rules`.  `arai diff` and `rules_for_file` deliberately
+        // skip this filter — disabled rules still belong to their source
+        // file, they just don't fire on the hot path.
         let mut stmt = self.conn.prepare(&format!(
             "{} AND (t.expires_at IS NULL OR t.expires_at >= date('now')) \
+             AND NOT EXISTS ( \
+                SELECT 1 FROM disabled_rules d \
+                WHERE d.s = t.s AND d.p = t.p AND d.o = t.o \
+             ) \
              ORDER BY t.confidence DESC",
             GUARDRAIL_SELECT_PREDICATE_FILTERED
         ))?;
@@ -159,6 +167,57 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(guardrails)
+    }
+
+    /// Mark a rule (by content) as disabled — `load_guardrails` will skip it
+    /// on every subsequent read.  Returns `true` if a new row was inserted,
+    /// `false` if the rule was already disabled (idempotent).
+    pub fn disable_rule(&self, s: &str, p: &str, o: &str) -> rusqlite::Result<bool> {
+        let n = self.conn.execute(
+            "INSERT OR IGNORE INTO disabled_rules (s, p, o) VALUES (?1, ?2, ?3)",
+            params![s, p, o],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Re-enable a rule by deleting its `disabled_rules` row.  Returns `true`
+    /// if a row was deleted, `false` if the rule wasn't disabled.
+    pub fn enable_rule(&self, s: &str, p: &str, o: &str) -> rusqlite::Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM disabled_rules WHERE s = ?1 AND p = ?2 AND o = ?3",
+            params![s, p, o],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// List currently disabled rules `(s, p, o, disabled_at)` — surfaced by
+    /// `arai disable` (no args) so users can audit what's been silenced.
+    pub fn list_disabled_rules(&self) -> rusqlite::Result<Vec<(String, String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s, p, o, disabled_at FROM disabled_rules ORDER BY disabled_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Look up a guardrail by triple_id.  Used by `arai disable <id>` to
+    /// resolve a stable display id to the (s,p,o) tuple that
+    /// `disable_rule` stores.  Includes disabled rules so `arai enable <id>`
+    /// can find them.
+    pub fn rule_by_triple_id(&self, triple_id: i64) -> rusqlite::Result<Option<(String, String, String)>> {
+        match self.conn.query_row(
+            "SELECT s, p, o FROM triples WHERE id = ?1",
+            params![triple_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ) {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn list_files(&self) -> rusqlite::Result<Vec<String>> {
@@ -870,6 +929,23 @@ fn migrate_v1(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Migration v1 -> v2: per-rule disable list.  Survives `arai scan` because
+/// it keys by the rule's content (s/p/o) — re-extracting the same imperative
+/// from CLAUDE.md hits the same key, so the disable persists.  If the user
+/// later edits the rule text, the new content has a fresh key and the
+/// disable no longer applies — that's intentional (changed rule = re-evaluate).
+fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS disabled_rules (
+            s TEXT NOT NULL,
+            p TEXT NOT NULL,
+            o TEXT NOT NULL,
+            disabled_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (s, p, o)
+        );",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1253,6 +1329,103 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, MIGRATIONS.len() as i64);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_disabled_rules_are_filtered_from_load() {
+        let (store, dir) = temp_db();
+        let triples = vec![
+            Triple {
+                subject: "git".to_string(),
+                predicate: "never".to_string(),
+                object: "force-push to main".to_string(),
+                confidence: 0.92,
+                domain: "test".to_string(),
+                source_file: "CLAUDE.md".to_string(),
+                line_start: Some(1),
+                line_end: Some(1),
+                layer: Some(1),
+                expires_at: None,
+            },
+            Triple {
+                subject: "cargo".to_string(),
+                predicate: "always".to_string(),
+                object: "run tests before commit".to_string(),
+                confidence: 0.92,
+                domain: "test".to_string(),
+                source_file: "CLAUDE.md".to_string(),
+                line_start: Some(2),
+                line_end: Some(2),
+                layer: Some(1),
+                expires_at: None,
+            },
+        ];
+        store.upsert_file("CLAUDE.md", "x", &triples, "test").unwrap();
+
+        // Both rules visible initially.
+        assert_eq!(store.load_guardrails().unwrap().len(), 2);
+
+        // Disable one — load_guardrails drops it; rules_for_file keeps it.
+        let inserted = store.disable_rule("git", "never", "force-push to main").unwrap();
+        assert!(inserted, "disable should insert a new row");
+        let rails = store.load_guardrails().unwrap();
+        assert_eq!(rails.len(), 1);
+        assert_eq!(rails[0].subject, "cargo");
+        let all_for_file = store.rules_for_file("CLAUDE.md").unwrap();
+        assert_eq!(all_for_file.len(), 2, "rules_for_file ignores disable");
+
+        // Disable is idempotent.
+        let inserted_again = store
+            .disable_rule("git", "never", "force-push to main")
+            .unwrap();
+        assert!(!inserted_again);
+
+        // Enable restores.
+        let removed = store.enable_rule("git", "never", "force-push to main").unwrap();
+        assert!(removed);
+        assert_eq!(store.load_guardrails().unwrap().len(), 2);
+
+        // Listing reports disabled rows in newest-first order.
+        store.disable_rule("cargo", "always", "run tests before commit").unwrap();
+        let listed = store.list_disabled_rules().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "cargo");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_disabled_rules_survive_arai_scan_re_extraction() {
+        // Re-running `arai scan` deletes triples for a file and re-inserts
+        // them.  triple_id changes; (s,p,o) does not.  Verify the disable
+        // sticks across a re-upsert.
+        let (store, dir) = temp_db();
+        let t = Triple {
+            subject: "git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            domain: "test".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store.upsert_file("CLAUDE.md", "x", &[t.clone()], "test").unwrap();
+        store.disable_rule("git", "never", "force-push to main").unwrap();
+        assert_eq!(store.load_guardrails().unwrap().len(), 0);
+
+        // Simulate a re-scan: same content → upsert short-circuits, but force
+        // a re-insert by changing the file content checksum.
+        store.upsert_file("CLAUDE.md", "x changed", &[t], "test").unwrap();
+        assert_eq!(
+            store.load_guardrails().unwrap().len(),
+            0,
+            "re-extracted rule should still be disabled"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
