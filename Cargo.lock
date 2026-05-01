@@ -85,6 +85,7 @@ dependencies = [
 name = "arai"
 version = "0.2.11"
 dependencies = [
+ "aho-corasick",
  "clap",
  "dirs",
  "ignore",

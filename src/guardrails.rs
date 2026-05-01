@@ -1,6 +1,8 @@
 use crate::parser::KNOWN_TOOLS;
 use crate::store::Guardrail;
+use aho_corasick::{AhoCorasick, MatchKind};
 use serde_json::Value;
+use std::sync::OnceLock;
 
 /// Tools that never need guardrails — fast exit, no DB query.
 const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
@@ -165,21 +167,45 @@ pub fn sniff_content_for_tools_pub(content: &str, terms: &mut Vec<String>) {
     sniff_content_for_tools(content, terms);
 }
 
-/// Scan text content for known tool/library names.
-/// Uses word-boundary-aware matching to avoid false positives.
+/// Compiled Aho-Corasick automaton over `KNOWN_TOOLS`, ASCII-case-insensitive.
+/// Built once per process (the hook is a fresh process per Claude Code tool
+/// call, so "per process" is "per call" — the build cost is paid once instead
+/// of every loop iteration).  `MatchKind::LeftmostLongest` ensures `pytest`
+/// is preferred over `py` when both happen to be in the pattern set.
+static KNOWN_TOOLS_AUTOMATON: OnceLock<AhoCorasick> = OnceLock::new();
+
+fn known_tools_automaton() -> &'static AhoCorasick {
+    KNOWN_TOOLS_AUTOMATON.get_or_init(|| {
+        AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .match_kind(MatchKind::LeftmostLongest)
+            .build(KNOWN_TOOLS)
+            .expect("KNOWN_TOOLS is a const &[&str] of valid ASCII patterns")
+    })
+}
+
+/// Scan text content for known tool/library names.  Single Aho-Corasick pass
+/// over the original (non-lowercased) bytes — replaces the old O(N_tools ×
+/// content_len) loop that lowercased the entire content first.  Word
+/// boundaries are checked on the byte before/after each match using
+/// `is_ascii_alphanumeric`; non-ASCII bytes count as boundaries (which is
+/// what we want — `KNOWN_TOOLS` are all ASCII).
 fn sniff_content_for_tools(content: &str, terms: &mut Vec<String>) {
-    let lower = content.to_lowercase();
-    for tool in KNOWN_TOOLS {
-        // Word boundary check: tool must be surrounded by non-alphanumeric chars
-        for (idx, _) in lower.match_indices(tool) {
-            let before_ok = idx == 0
-                || !lower.as_bytes()[idx - 1].is_ascii_alphanumeric();
-            let after_idx = idx + tool.len();
-            let after_ok = after_idx >= lower.len()
-                || !lower.as_bytes()[after_idx].is_ascii_alphanumeric();
-            if before_ok && after_ok {
-                terms.push(tool.to_string());
-                break; // Found once is enough
+    let bytes = content.as_bytes();
+    let automaton = known_tools_automaton();
+    // Keep "found once is enough" semantics — track which patterns have
+    // already been pushed via a small bitset over pattern indices.
+    let mut seen = vec![false; KNOWN_TOOLS.len()];
+    for m in automaton.find_iter(content) {
+        let idx = m.start();
+        let after = m.end();
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            let pat = m.pattern().as_usize();
+            if !seen[pat] {
+                seen[pat] = true;
+                terms.push(KNOWN_TOOLS[pat].to_string());
             }
         }
     }
@@ -504,6 +530,40 @@ mod tests {
         let terms = extract_grep_terms(&input);
         assert!(terms.contains(&"grep".to_string()));
         assert!(terms.contains(&"src".to_string()));
+    }
+
+    #[test]
+    fn sniff_finds_tool_at_word_boundary_case_insensitively() {
+        let mut terms = Vec::new();
+        sniff_content_for_tools("Git pull origin main", &mut terms);
+        assert!(terms.contains(&"git".to_string()), "case-insensitive prefix match: {terms:?}");
+    }
+
+    #[test]
+    fn sniff_rejects_substring_inside_word() {
+        // "github" contains "git" but is its own word — must NOT match `git`.
+        let mut terms = Vec::new();
+        sniff_content_for_tools("see github.com/foo", &mut terms);
+        assert!(!terms.contains(&"git".to_string()), "substring leak: {terms:?}");
+    }
+
+    #[test]
+    fn sniff_dedupes_repeat_occurrences() {
+        let mut terms = Vec::new();
+        sniff_content_for_tools("cargo build && cargo test && cargo run", &mut terms);
+        assert_eq!(
+            terms.iter().filter(|t| t.as_str() == "cargo").count(),
+            1,
+            "should push each tool once: {terms:?}"
+        );
+    }
+
+    #[test]
+    fn sniff_handles_non_ascii_content_without_panicking() {
+        let mut terms = Vec::new();
+        sniff_content_for_tools("café résumé — git checkout", &mut terms);
+        // The ASCII bytes around `git` are spaces/punctuation; still matches.
+        assert!(terms.contains(&"git".to_string()), "got: {terms:?}");
     }
 
     #[test]
