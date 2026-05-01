@@ -149,6 +149,40 @@ fn handle_tools_list() -> Value {
                 }
             },
             {
+                "name": "arai_check_action",
+                "description":
+                    "Probe whether a hypothetical tool call would match any active \
+                     guardrail — without executing the call or writing to the audit log. \
+                     Use BEFORE taking an action you think might be regulated to avoid a \
+                     deny-and-retry loop.  Returns matched rules with severity (block / \
+                     warn / inform) and source file:line, exactly the same shape \
+                     `arai_recent_decisions` returns for actual firings.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {
+                            "type": "string",
+                            "description":
+                                "Tool name to simulate (Bash, Edit, Write, etc).  Required."
+                        },
+                        "tool_input": {
+                            "type": "object",
+                            "description":
+                                "Tool input object — same shape Claude Code would send. \
+                                 e.g. for Bash: {\"command\": \"git push --force\"}; \
+                                 for Edit/Write: {\"file_path\": \"src/x.py\", \"content\": \"...\"}."
+                        },
+                        "event": {
+                            "type": "string",
+                            "description":
+                                "Hook event to simulate.  Defaults to PreToolUse.",
+                            "enum": ["PreToolUse", "PostToolUse"]
+                        }
+                    },
+                    "required": ["tool", "tool_input"]
+                }
+            },
+            {
                 "name": "arai_recent_decisions",
                 "description":
                     "Look up the most recent guardrail decisions Ārai has emitted in this \
@@ -198,6 +232,7 @@ fn handle_tools_call(params: &Value) -> Result<Value, String> {
     match name {
         "arai_add_guard" => tool_add_guard(&args),
         "arai_list_guards" => tool_list_guards(&args),
+        "arai_check_action" => tool_check_action(&args),
         "arai_recent_decisions" => tool_recent_decisions(&args),
         other => Err(format!("unknown tool: {other}")),
     }
@@ -332,6 +367,80 @@ fn tool_list_guards(args: &Value) -> Result<Value, String> {
         .collect();
     let text = format!("{} active guard(s):\n{}", filtered.len(), lines.join("\n"));
     Ok(content_text(&text))
+}
+
+/// Probe what guardrails a hypothetical tool call would hit.  Mirrors
+/// `cmd_why`'s pipeline (`hooks::match_hook` against a synthesised hook
+/// payload) but exposes it via MCP so the calling agent can self-check
+/// before taking an action — closes the loop on "would this be denied?".
+/// No audit write, no telemetry, no session-state mutation.
+fn tool_check_action(args: &Value) -> Result<Value, String> {
+    let tool = args
+        .get("tool")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'tool'".to_string())?;
+    if tool.is_empty() {
+        return Err("'tool' must not be empty".to_string());
+    }
+    let tool_input = args.get("tool_input").cloned().unwrap_or(json!({}));
+    if !tool_input.is_object() {
+        return Err("'tool_input' must be an object".to_string());
+    }
+    let event = args
+        .get("event")
+        .and_then(|v| v.as_str())
+        .unwrap_or("PreToolUse");
+
+    let cfg = config::Config::load()?;
+    let db = store::Store::open(&cfg.db_path())?;
+
+    let hook = json!({
+        "hook_event_name": event,
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "session_id": "",
+    });
+
+    let result = crate::hooks::match_hook(&hook, &cfg, &db).map_err(|e| e.to_string())?;
+
+    let entries: Vec<Value> = result
+        .matched
+        .iter()
+        .map(|(g, pct)| {
+            let severity = g
+                .intent
+                .as_ref()
+                .map(|i| i.severity.as_str().to_string())
+                .unwrap_or_else(|| {
+                    crate::intent::Severity::from_predicate(&g.predicate)
+                        .as_str()
+                        .to_string()
+                });
+            json!({
+                "triple_id": g.triple_id,
+                "subject": g.subject,
+                "predicate": g.predicate,
+                "object": g.object,
+                "source": g.file_path,
+                "line": g.line_start,
+                "severity": severity,
+                "match_pct": pct,
+            })
+        })
+        .collect();
+
+    let payload = json!({
+        "tool": result.tool_name,
+        "event": result.event,
+        "terms": result.terms,
+        "skipped": result.skipped,
+        "matched": entries,
+    });
+
+    Ok(json!({
+        "content": [{"type": "text", "text": serde_json::to_string_pretty(&payload).unwrap_or_default()}],
+        "structuredContent": payload,
+    }))
 }
 
 /// Look up recent hook decisions from the audit log so the calling agent can
@@ -508,14 +617,28 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_three_entries() {
+    fn tools_list_has_four_entries() {
         let v = handle_tools_list();
         let tools = v["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 4);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"arai_add_guard"));
         assert!(names.contains(&"arai_list_guards"));
+        assert!(names.contains(&"arai_check_action"));
         assert!(names.contains(&"arai_recent_decisions"));
+    }
+
+    #[test]
+    fn check_action_rejects_missing_tool() {
+        let err = tool_check_action(&json!({"tool_input": {}})).unwrap_err();
+        assert!(err.contains("missing 'tool'"), "got: {err}");
+    }
+
+    #[test]
+    fn check_action_rejects_non_object_tool_input() {
+        let err = tool_check_action(&json!({"tool": "Bash", "tool_input": "not an obj"}))
+            .unwrap_err();
+        assert!(err.contains("must be an object"), "got: {err}");
     }
 
     #[test]
