@@ -104,6 +104,11 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
     let mut current_section: Option<String> = None;
     let mut in_code_block = false;
     let mut in_table = false;
+    // Section-scoped skip: an `<!-- arai:skip -->` comment causes every list
+    // item from that point to the next heading to be ignored.  Used to mark
+    // CLAUDE.md sections (e.g. "Anti-patterns", "Examples") that contain
+    // imperative-looking prose the parser would otherwise pick up as rules.
+    let mut skip_section = false;
 
     for (line_idx, line) in body.lines().enumerate() {
         let line_num = line_idx + 1;
@@ -126,13 +131,15 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
             in_table = false;
         }
 
-        // Track section headers
+        // Track section headers — also clears the skip flag so each new
+        // section starts fresh.
         if trimmed.starts_with('#') {
             let header = trimmed.trim_start_matches('#').trim().to_string();
             // Strip leading numbered prefix like "4. " and trailing formatting like " (§3)"
             let header = strip_list_prefix(&header);
             let header = header.split('(').next().unwrap_or(&header).trim().to_string();
             current_section = if header.is_empty() { None } else { Some(header) };
+            skip_section = false;
             // Flush any pending item
             if let Some((text, start)) = current_item.take() {
                 items.push(ListItem {
@@ -145,18 +152,35 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
             continue;
         }
 
+        // Skip-section opt-out: case-insensitive `<!-- arai:skip -->`, with
+        // tolerant whitespace inside the comment.  Once seen, every list
+        // item until the next heading is dropped.  Drop any pending item
+        // too — it pre-dates the marker on the same line, but the user's
+        // intent is "this section is examples, ignore it".
+        if line_contains_skip_marker(trimmed) {
+            skip_section = true;
+            current_item = None;
+            continue;
+        }
+
         // Check for list item start
         let is_list_item = is_list_start(trimmed);
 
         if is_list_item {
-            // Flush previous item
+            // Flush previous item (if any) — but skip emission while inside
+            // a skip-marked section.
             if let Some((text, start)) = current_item.take() {
-                items.push(ListItem {
-                    text,
-                    line_start: start,
-                    line_end: line_num - 1,
-                    section_context: current_section.clone(),
-                });
+                if !skip_section {
+                    items.push(ListItem {
+                        text,
+                        line_start: start,
+                        line_end: line_num - 1,
+                        section_context: current_section.clone(),
+                    });
+                }
+            }
+            if skip_section {
+                continue;
             }
             let item_text = strip_list_prefix(trimmed);
             current_item = Some((item_text, line_num));
@@ -191,18 +215,30 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
         }
     }
 
-    // Flush last item
+    // Flush last item — unless the last section was skip-marked.
     if let Some((text, start)) = current_item.take() {
-        let line_end = body.lines().count();
-        items.push(ListItem {
-            text,
-            line_start: start,
-            line_end,
-            section_context: current_section,
-        });
+        if !skip_section {
+            let line_end = body.lines().count();
+            items.push(ListItem {
+                text,
+                line_start: start,
+                line_end,
+                section_context: current_section,
+            });
+        }
     }
 
     items
+}
+
+/// Detect a `<!-- arai:skip -->` marker anywhere in a line.  Case-insensitive
+/// and whitespace-tolerant: `<!--arai:skip-->`, `<!-- ARAI:SKIP -->`, etc.
+fn line_contains_skip_marker(line: &str) -> bool {
+    static MARKER: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = MARKER.get_or_init(|| {
+        Regex::new(r"(?i)<!--\s*arai\s*:\s*skip\s*-->").expect("valid regex")
+    });
+    re.is_match(line)
 }
 
 fn is_list_start(trimmed: &str) -> bool {
@@ -684,6 +720,71 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].predicate, "never");
         assert!(rules[0].object.contains("hand-write migration files"));
+    }
+
+    #[test]
+    fn skip_marker_drops_subsequent_bullets_until_next_heading() {
+        let md = "\
+## Anti-patterns
+<!-- arai:skip -->
+- Never use console.log in production
+- Always commit secrets to git
+
+## Real Rules
+- Never force-push to main
+";
+        let rules = extract_rules(md, "test", 0.9);
+        let objects: Vec<&str> = rules.iter().map(|r| r.object.as_str()).collect();
+        assert!(
+            objects.iter().any(|o| o.contains("force-push to main")),
+            "real rule should still extract: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("console.log")),
+            "skipped section should drop console.log: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("commit secrets")),
+            "skipped section should drop commit-secrets: {objects:?}"
+        );
+    }
+
+    #[test]
+    fn skip_marker_is_case_and_whitespace_tolerant() {
+        let md = "\
+## Examples
+<!--ARAI:SKIP-->
+- Never X
+
+## Rules
+<!-- arai : skip -->
+- Never Y
+
+## Real
+- Never Z
+";
+        let rules = extract_rules(md, "test", 0.9);
+        let objects: Vec<&str> = rules.iter().map(|r| r.object.as_str()).collect();
+        assert!(objects.iter().any(|o| o.contains("Z")), "Z should fire: {objects:?}");
+        assert!(!objects.iter().any(|o| o.contains("X")), "X should be skipped: {objects:?}");
+        assert!(!objects.iter().any(|o| o.contains("Y")), "Y should be skipped: {objects:?}");
+    }
+
+    #[test]
+    fn skip_marker_resets_at_next_heading() {
+        // The marker scopes only to the heading it's under — once we cross
+        // a heading boundary, normal extraction resumes.
+        let md = "\
+## A
+<!-- arai:skip -->
+- Never one
+
+## B
+- Never two
+";
+        let rules = extract_rules(md, "test", 0.9);
+        assert_eq!(rules.len(), 1, "exactly one rule should remain: {rules:?}");
+        assert!(rules[0].object.contains("two"));
     }
 
     #[test]
