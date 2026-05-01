@@ -239,13 +239,14 @@ pub fn match_guardrails(
     terms: &[String],
     tool_name: &str,
     hook_event: &str,
-    store: &crate::store::Store,
 ) -> Vec<(Guardrail, u8)> {
     let mut matched: Vec<(Guardrail, usize)> = guardrails
         .iter()
         .filter(|g| {
-            // Check timing — only fire rules meant for this hook event
-            if let Ok(Some(intent)) = store.get_rule_intent(g.triple_id) {
+            // Check timing — only fire rules meant for this hook event.  Intent
+            // is already attached to the guardrail by `load_guardrails` (LEFT
+            // JOIN), so no per-rule DB round trip here.
+            if let Some(intent) = g.intent.as_ref() {
                 // Rule must match the current hook event
                 if intent.timing.hook_event() != hook_event {
                     return false;
@@ -255,7 +256,7 @@ pub fn match_guardrails(
                 if intent.timing == crate::intent::Timing::ToolCall {
                     let subj = g.subject.to_lowercase();
                     let subject_matches = terms.iter().any(|t| subj.contains(t));
-                    subject_matches && crate::intent::tool_matches_intent(&intent, tool_name)
+                    subject_matches && crate::intent::tool_matches_intent(intent, tool_name)
                 } else {
                     true
                 }
@@ -552,22 +553,22 @@ mod tests {
 
         // Alembic "hand-write" rule: ToolCall timing, create scope
         let terms = vec!["alembic".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Write", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Write", "PreToolUse");
         assert_eq!(matched.len(), 1, "hand-write rule should fire on Write/PreToolUse");
 
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 0, "hand-write rule should not fire on Bash");
 
-        let matched = match_guardrails(&guardrails, &terms, "Edit", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Edit", "PreToolUse");
         assert_eq!(matched.len(), 0, "hand-write rule should not fire on Edit (allow_inverse)");
 
         // Git "force-push" rule: principle timing → doesn't fire on any hook
         // (principles are already in CLAUDE.md, Arai doesn't repeat them)
         let terms = vec!["git".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 0, "principle rule should not fire on PreToolUse");
 
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "UserPromptSubmit", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "UserPromptSubmit");
         assert_eq!(matched.len(), 0, "principle rule should not fire on UserPromptSubmit either");
 
         std::fs::remove_dir_all(&dir).ok();
@@ -708,19 +709,19 @@ mod tests {
 
         // "git push origin main" should ONLY fire the push rule
         let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
         assert!(matched[0].0.object.contains("push"), "push rule should fire, got: {}", matched[0].0.object);
 
         // "git commit -m test" should ONLY fire the commit rule
         let terms = vec!["git".to_string(), "commit".to_string(), "test".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
         assert!(matched[0].0.object.contains("commit"), "commit rule should fire, got: {}", matched[0].0.object);
 
         // "git pull origin main" — push rule should be suppressed (pull ≠ push)
         let terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse", &store);
+        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
         assert!(matched.is_empty() || matched[0].0.object.contains("commit"),
             "push rule should not fire for pull command");
 
@@ -739,6 +740,7 @@ mod tests {
             layer: Some(1),
             line_start: Some(42),
             expires_at: None,
+            intent: None,
         }
     }
 

@@ -366,6 +366,7 @@ mod tests {
                 layer: None,
                 line_start: None,
                 expires_at: None,
+                intent: None,
             },
             100,
         )

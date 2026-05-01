@@ -142,31 +142,20 @@ impl Store {
     /// Load all actionable guardrails, ordered by confidence.  Rules with an
     /// `expires_at` date in the past are filtered out — they self-prune
     /// without any manual cleanup.
+    ///
+    /// LEFT JOIN against `rule_intent` so each guardrail carries its
+    /// classified intent (or `None` if unclassified) in a single query.  The
+    /// hot path used to call `get_rule_intent` per matched rule — that's now
+    /// a field access.
     pub fn load_guardrails(&self) -> rusqlite::Result<Vec<Guardrail>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at
-             FROM triples t
-             JOIN files f ON t.file_id = f.id
-             WHERE t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')
-               AND (t.expires_at IS NULL OR t.expires_at >= date('now'))
+        let mut stmt = self.conn.prepare(&format!(
+            "{} AND (t.expires_at IS NULL OR t.expires_at >= date('now')) \
              ORDER BY t.confidence DESC",
-        )?;
+            GUARDRAIL_SELECT_PREDICATE_FILTERED
+        ))?;
 
         let guardrails = stmt
-            .query_map([], |row| {
-                Ok(Guardrail {
-                    triple_id: row.get(0)?,
-                    subject: row.get(1)?,
-                    predicate: row.get(2)?,
-                    object: row.get(3)?,
-                    confidence: row.get(4)?,
-                    source_file: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                    file_path: row.get(6)?,
-                    layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
-                    line_start: row.get::<_, Option<i64>>(8)?,
-                    expires_at: row.get::<_, Option<String>>(9)?,
-                })
-            })?
+            .query_map([], guardrail_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(guardrails)
@@ -515,29 +504,12 @@ impl Store {
     /// candidate file would extract — no `JOIN files` because we already know
     /// the path the caller passed in.
     pub fn rules_for_file(&self, file_path: &str) -> rusqlite::Result<Vec<Guardrail>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at
-             FROM triples t
-             JOIN files f ON t.file_id = f.id
-             WHERE f.path = ?1
-               AND t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')
-             ORDER BY t.line_start, t.s, t.p, t.o",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "{} AND f.path = ?1 ORDER BY t.line_start, t.s, t.p, t.o",
+            GUARDRAIL_SELECT_PREDICATE_FILTERED
+        ))?;
         let guardrails = stmt
-            .query_map(params![file_path], |row| {
-                Ok(Guardrail {
-                    triple_id: row.get(0)?,
-                    subject: row.get(1)?,
-                    predicate: row.get(2)?,
-                    object: row.get(3)?,
-                    confidence: row.get(4)?,
-                    source_file: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                    file_path: row.get(6)?,
-                    layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
-                    line_start: row.get::<_, Option<i64>>(8)?,
-                    expires_at: row.get::<_, Option<String>>(9)?,
-                })
-            })?
+            .query_map(params![file_path], guardrail_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(guardrails)
     }
@@ -675,6 +647,73 @@ fn is_required(p: &str) -> bool {
     )
 }
 
+/// Shared `SELECT … FROM triples … LEFT JOIN rule_intent` preamble for
+/// callers that want a `Guardrail` with intent attached.  Ends mid-WHERE
+/// (the predicate filter is included; callers append their own
+/// `AND <extra>` and `ORDER BY`).  `LEFT JOIN` so unclassified rules still
+/// surface — `intent` will be `None` on those.
+const GUARDRAIL_SELECT_PREDICATE_FILTERED: &str =
+    "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at,
+            ri.action, ri.timing, ri.tools, ri.allow_inverse, ri.enriched_by, ri.severity, ri.severity_override
+     FROM triples t
+     JOIN files f ON t.file_id = f.id
+     LEFT JOIN rule_intent ri ON ri.triple_id = t.id
+     WHERE t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')";
+
+/// Row mapper paired with `GUARDRAIL_SELECT_PREDICATE_FILTERED`.  Pulls
+/// triple columns from indices 0..=9 and intent columns from 10..=16.
+fn guardrail_from_row(row: &rusqlite::Row) -> rusqlite::Result<Guardrail> {
+    Ok(Guardrail {
+        triple_id: row.get(0)?,
+        subject: row.get(1)?,
+        predicate: row.get(2)?,
+        object: row.get(3)?,
+        confidence: row.get(4)?,
+        source_file: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        file_path: row.get(6)?,
+        layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
+        line_start: row.get::<_, Option<i64>>(8)?,
+        expires_at: row.get::<_, Option<String>>(9)?,
+        intent: parse_intent_from_row(row, 10)?,
+    })
+}
+
+/// Parse an optional `RuleIntent` from columns starting at `start`.  Returns
+/// `None` when the LEFT JOIN missed (no `rule_intent` row for the triple) —
+/// detected via `action` being NULL because every populated intent has it.
+fn parse_intent_from_row(
+    row: &rusqlite::Row,
+    start: usize,
+) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
+    let action_str: Option<String> = row.get(start)?;
+    let Some(action_str) = action_str else { return Ok(None) };
+    let timing_str: String = row.get(start + 1)?;
+    let tools_json: String = row.get(start + 2)?;
+    let allow_inverse: i32 = row.get(start + 3)?;
+    let enriched_by: String = row.get(start + 4)?;
+    let severity_str: String = row
+        .get::<_, Option<String>>(start + 5)?
+        .unwrap_or_else(|| "warn".to_string());
+    let severity_override: Option<String> = row.get(start + 6)?;
+
+    let tools: Vec<String> =
+        serde_json::from_str(&tools_json).unwrap_or_else(|_| vec!["*".to_string()]);
+
+    let effective = severity_override
+        .as_deref()
+        .map(crate::intent::Severity::from_str)
+        .unwrap_or_else(|| crate::intent::Severity::from_str(&severity_str));
+
+    Ok(Some(crate::intent::RuleIntent {
+        action: crate::intent::Action::from_str(&action_str),
+        timing: crate::intent::Timing::from_str(&timing_str),
+        tools,
+        allow_inverse: allow_inverse != 0,
+        enriched_by,
+        severity: effective,
+    }))
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Guardrail {
     pub triple_id: i64,
@@ -700,6 +739,13 @@ pub struct Guardrail {
     /// `(expires ...)` annotation; always `None` for rules without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// Classified intent.  Populated by `load_guardrails` / `rules_for_file`
+    /// via a single LEFT JOIN against `rule_intent`, so the hot path no
+    /// longer needs an N-way `get_rule_intent` round trip per matched rule.
+    /// `None` for rules that haven't been classified yet (e.g. just added by
+    /// `arai add`, or a freshly-scanned file before `arai classify` runs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<crate::intent::RuleIntent>,
 }
 
 fn compute_checksum(content: &str) -> String {

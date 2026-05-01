@@ -29,27 +29,22 @@ fn deny_mode_enabled() -> bool {
 }
 
 /// Highest severity among the matched rules, if any.  Used to pick between
-/// advise (`allow`) and deny (`deny`) on PreToolUse.
-fn highest_severity(matched: &[(Guardrail, u8)], db: &Store) -> Severity {
+/// advise (`allow`) and deny (`deny`) on PreToolUse.  Reads intent from the
+/// guardrail itself — `load_guardrails` already LEFT JOINed it in.
+fn highest_severity(matched: &[(Guardrail, u8)]) -> Severity {
     let mut highest = Severity::Inform;
     for (g, _) in matched {
-        if let Ok(Some(intent)) = db.get_rule_intent(g.triple_id) {
-            if intent.severity == Severity::Block {
-                return Severity::Block;
-            }
-            if intent.severity == Severity::Warn && highest == Severity::Inform {
-                highest = Severity::Warn;
-            }
-        } else {
-            // No classified intent — fall back to predicate-derived severity so
-            // pre-migration stores still block on obvious `never` rules.
-            let sev = Severity::from_predicate(&g.predicate);
-            if sev == Severity::Block {
-                return Severity::Block;
-            }
-            if sev == Severity::Warn && highest == Severity::Inform {
-                highest = Severity::Warn;
-            }
+        let sev = match g.intent.as_ref() {
+            Some(intent) => intent.severity,
+            // No classified intent — fall back to predicate-derived severity
+            // so pre-migration stores still block on obvious `never` rules.
+            None => Severity::from_predicate(&g.predicate),
+        };
+        if sev == Severity::Block {
+            return Severity::Block;
+        }
+        if sev == Severity::Warn && highest == Severity::Inform {
+            highest = Severity::Warn;
         }
     }
     highest
@@ -149,11 +144,10 @@ pub fn match_hook(
         let domain_rules: Vec<Guardrail> = all_guardrails
             .iter()
             .filter(|g| {
-                if let Ok(Some(intent)) = db.get_rule_intent(g.triple_id) {
-                    intent.timing == crate::intent::Timing::ToolCall
-                } else {
-                    false
-                }
+                g.intent
+                    .as_ref()
+                    .map(|i| i.timing == crate::intent::Timing::ToolCall)
+                    .unwrap_or(false)
             })
             .cloned()
             .collect();
@@ -162,7 +156,7 @@ pub fn match_hook(
         return Ok(out);
     }
 
-    let matched = guardrails::match_guardrails(&all_guardrails, &terms, &tool_name, &event, db);
+    let matched = guardrails::match_guardrails(&all_guardrails, &terms, &tool_name, &event);
 
     // Filter out rules whose prerequisites have already been met
     let matched: Vec<_> = if !session_id.is_empty() && event == "PreToolUse" {
@@ -301,7 +295,7 @@ pub fn handle_stdin() -> Result<(), String> {
 
     // Decide whether to deny before writing the audit line so the audit log
     // reflects the actual outcome the hook emitted.
-    let top_severity = highest_severity(&result.matched, &db);
+    let top_severity = highest_severity(&result.matched);
     let is_pretooluse = result.event == "PreToolUse";
     let deny_enabled = deny_mode_enabled();
     let blocking = is_pretooluse && top_severity == Severity::Block && deny_enabled;
@@ -353,7 +347,7 @@ pub fn handle_stdin() -> Result<(), String> {
     }
     let response = match (result.event.as_str(), blocking) {
         ("PreToolUse", true) => {
-            let reason = deny_reason(&result.matched, &db);
+            let reason = deny_reason(&result.matched);
             serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -385,12 +379,11 @@ pub fn handle_stdin() -> Result<(), String> {
 /// Build a short deny reason Claude Code surfaces to the user.  Prefers the
 /// first `Block`-severity rule (or predicate-derived fallback) and quotes its
 /// source so the decision is auditable at a glance.
-fn deny_reason(matched: &[(Guardrail, u8)], db: &Store) -> String {
+fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
     for (g, _) in matched {
-        let sev = db
-            .get_rule_intent(g.triple_id)
-            .ok()
-            .flatten()
+        let sev = g
+            .intent
+            .as_ref()
             .map(|i| i.severity)
             .unwrap_or_else(|| Severity::from_predicate(&g.predicate));
         if sev == Severity::Block {
@@ -466,6 +459,7 @@ mod tests {
             layer: Some(1),
             line_start: Some(42),
             expires_at: None,
+            intent: None,
         }
     }
 
@@ -495,14 +489,14 @@ mod tests {
 
     #[test]
     fn test_highest_severity_picks_block() {
-        let (store, dir) = temp_db();
+        let (_store, dir) = temp_db();
         let matched = vec![
             (mk_guardrail(1, "alembic", "prefers", "autogenerate"), 90u8),
             (mk_guardrail(2, "git", "never", "force-push to main"), 100u8),
             (mk_guardrail(3, "cargo", "always", "test before commit"), 80u8),
         ];
         // No rule_intent rows → falls back to predicate-derived severity.
-        assert_eq!(highest_severity(&matched, &store), Severity::Block);
+        assert_eq!(highest_severity(&matched), Severity::Block);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -524,8 +518,7 @@ mod tests {
             expires_at: None,
         };
         store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
-        let guardrails = store.load_guardrails().unwrap();
-        let tid = guardrails[0].triple_id;
+        let tid = store.load_guardrails().unwrap()[0].triple_id;
 
         let intent = RuleIntent {
             action: crate::intent::Action::General,
@@ -537,17 +530,26 @@ mod tests {
         };
         store.upsert_rule_intent(tid, &intent).unwrap();
 
-        let matched = vec![(mk_guardrail(tid, "noisy", "never", "something minor"), 100u8)];
+        // Re-load via the LEFT JOIN so `g.intent` carries the just-written row;
+        // before the JOIN refactor this test pulled intent via a separate
+        // `get_rule_intent` call that's no longer on the hot path.
+        let g = store
+            .load_guardrails()
+            .unwrap()
+            .into_iter()
+            .find(|g| g.triple_id == tid)
+            .expect("rule we just inserted should reload");
+        let matched = vec![(g, 100u8)];
         // Store override demotes the Block to Inform.
-        assert_eq!(highest_severity(&matched, &store), Severity::Inform);
+        assert_eq!(highest_severity(&matched), Severity::Inform);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_deny_reason_mentions_source_and_rule() {
-        let (store, dir) = temp_db();
+        let (_store, dir) = temp_db();
         let matched = vec![(mk_guardrail(1, "git", "never", "force-push to main"), 100u8)];
-        let reason = deny_reason(&matched, &store);
+        let reason = deny_reason(&matched);
         assert!(reason.contains("never"), "reason should quote the predicate: {reason:?}");
         assert!(reason.contains("force-push"), "reason should quote the object: {reason:?}");
         assert!(reason.contains("CLAUDE.md"), "reason should cite source: {reason:?}");
@@ -556,15 +558,58 @@ mod tests {
 
     #[test]
     fn test_deny_reason_skips_non_blocking() {
-        let (store, dir) = temp_db();
+        let (_store, dir) = temp_db();
         let matched = vec![
             (mk_guardrail(1, "cargo", "prefers", "small commits"), 70u8),
             (mk_guardrail(2, "git", "never", "force-push to main"), 100u8),
         ];
-        let reason = deny_reason(&matched, &store);
+        let reason = deny_reason(&matched);
         // Should pick the `never` rule, not the `prefers` rule.
         assert!(reason.contains("force-push"), "picked wrong rule: {reason:?}");
         assert!(!reason.contains("small commits"), "non-block rule leaked: {reason:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_guardrails_attaches_intent_in_one_query() {
+        // After `upsert_rule_intent`, a subsequent `load_guardrails` should
+        // populate `Guardrail.intent` directly via the LEFT JOIN — no extra
+        // round trip needed.  This is the mechanism the hot path relies on.
+        let (store, dir) = temp_db();
+        let triple = crate::parser::Triple {
+            subject: "git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            domain: "test".to_string(),
+            source_file: "CLAUDE.md".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+        };
+        store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
+
+        // Pre-classification: intent should be None on every guardrail.
+        let pre = store.load_guardrails().unwrap();
+        assert_eq!(pre.len(), 1);
+        assert!(pre[0].intent.is_none(), "no rule_intent yet → None");
+
+        // Classify, re-load, intent should be Some.
+        let tid = pre[0].triple_id;
+        let intent = RuleIntent {
+            action: crate::intent::Action::General,
+            timing: crate::intent::Timing::ToolCall,
+            tools: vec!["Bash".to_string()],
+            allow_inverse: false,
+            enriched_by: "test".to_string(),
+            severity: Severity::Block,
+        };
+        store.upsert_rule_intent(tid, &intent).unwrap();
+        let post = store.load_guardrails().unwrap();
+        let attached = post[0].intent.as_ref().expect("intent should be attached");
+        assert_eq!(attached.severity, Severity::Block);
+        assert_eq!(attached.tools, vec!["Bash".to_string()]);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

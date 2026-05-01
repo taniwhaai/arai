@@ -867,6 +867,7 @@ mod tests {
             layer: None,
             line_start: None,
             expires_at: None,
+            intent: None,
         };
         let action = fuzzy_match_action("forbid", &g);
         // "forbid" is about predicate, not action — should fall back to taxonomy
@@ -1111,6 +1112,7 @@ mod tests {
                 layer: None,
                 line_start: None,
                 expires_at: None,
+                intent: None,
             },
         ];
         let prompt = build_enrichment_prompt(&guardrails);
@@ -1192,6 +1194,7 @@ mod tests {
             layer: None,
             line_start: None,
             expires_at: None,
+            intent: None,
         }
     }
 }
