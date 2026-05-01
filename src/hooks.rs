@@ -330,7 +330,20 @@ pub fn handle_stdin() -> Result<(), String> {
     let latency = start.elapsed().as_millis();
     crate::telemetry::track_hook_latency(&cfg.arai_base_dir, &result.event, latency, true);
     for (g, pct) in &result.matched {
-        crate::telemetry::track_rule_fired(&cfg.arai_base_dir, &g.subject, &g.predicate, &result.tool_name, &result.event, *pct);
+        let severity = g
+            .intent
+            .as_ref()
+            .map(|i| i.severity.as_str())
+            .unwrap_or_else(|| Severity::from_predicate(&g.predicate).as_str());
+        crate::telemetry::track_rule_fired(
+            &cfg.arai_base_dir,
+            &g.subject,
+            &g.predicate,
+            &result.tool_name,
+            &result.event,
+            *pct,
+            severity,
+        );
     }
 
     // Decide whether to deny before writing the audit line so the audit log

@@ -56,14 +56,49 @@ pub fn track(arai_base: &Path, event: &str, properties: serde_json::Value) {
     }
 }
 
-/// Track that a guardrail rule fired.
-pub fn track_rule_fired(arai_base: &Path, subject: &str, predicate: &str, tool_name: &str, hook_event: &str, match_pct: u8) {
+/// Stable salt for telemetry rule hashing.  Changing this breaks server-side
+/// dedup of rule firings across releases — leave it alone.  The 12-hex-char
+/// truncation already gives ~48 bits of entropy, so collision risk is
+/// negligible at the rule-firing volumes we actually see.
+const TELEMETRY_RULE_SALT: &str = "arai-telemetry-stable-2026";
+
+/// Hash a rule's subject + predicate into an opaque, anonymous identifier.
+/// Subject and predicate come straight from the user's CLAUDE.md and may
+/// include codenames, vendor names, or internal service names — sending
+/// them verbatim contradicts the README's "anonymous telemetry" claim.
+/// The salted SHA-256 prefix lets the upstream sink dedup rule firings
+/// across runs (same rule → same hash) without ever seeing the rule text.
+fn rule_hash(subject: &str, predicate: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(TELEMETRY_RULE_SALT.as_bytes());
+    h.update(b"|");
+    h.update(subject.to_lowercase().as_bytes());
+    h.update(b"|");
+    h.update(predicate.to_lowercase().as_bytes());
+    let bytes = h.finalize();
+    bytes.iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Track that a guardrail rule fired.  Reports an anonymous `rule_hash`
+/// instead of the raw subject/predicate so the rule text never leaves the
+/// machine.  `severity` is included so the upstream sink can roll up
+/// block-vs-warn-vs-inform mix without inferring it from predicate text.
+pub fn track_rule_fired(
+    arai_base: &Path,
+    subject: &str,
+    predicate: &str,
+    tool_name: &str,
+    hook_event: &str,
+    match_pct: u8,
+    severity: &str,
+) {
     track(arai_base, "rule_fired", serde_json::json!({
-        "subject": subject,
-        "predicate": predicate,
+        "rule_hash": rule_hash(subject, predicate),
         "tool_name": tool_name,
         "hook_event": hook_event,
         "match_pct": match_pct,
+        "severity": severity,
     }));
 }
 
@@ -198,4 +233,43 @@ fn chrono_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", now.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_hash_is_stable_and_case_insensitive() {
+        // Same input → same hash (deterministic, not seeded by time / pid).
+        let a = rule_hash("git", "never");
+        let b = rule_hash("git", "never");
+        assert_eq!(a, b);
+        // Hash is 12 hex chars (6 bytes truncated).
+        assert_eq!(a.len(), 12);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        // Case-insensitive on subject and predicate so case-variant rule
+        // text from CLAUDE.md collapses to one bucket upstream.
+        assert_eq!(rule_hash("Git", "Never"), rule_hash("git", "never"));
+    }
+
+    #[test]
+    fn rule_hash_differs_across_rules() {
+        let a = rule_hash("git", "never");
+        let b = rule_hash("cargo", "never");
+        let c = rule_hash("git", "always");
+        assert_ne!(a, b, "different subject → different hash");
+        assert_ne!(a, c, "different predicate → different hash");
+    }
+
+    #[test]
+    fn rule_hash_does_not_leak_input_substring() {
+        // The hash must not contain a recognisable suffix of the input —
+        // catches accidental "send the first 12 chars of the subject"
+        // regressions.  The salt makes this overwhelmingly unlikely
+        // anyway, but pin it.
+        let h = rule_hash("alembic-internal-codename", "never");
+        assert!(!h.contains("alembic"));
+        assert!(!h.contains("never"));
+    }
 }
