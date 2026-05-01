@@ -203,6 +203,41 @@ pub fn match_hook(
 }
 
 pub fn handle_stdin() -> Result<(), String> {
+    // Default to PreToolUse so a bad payload (oversize / non-UTF8 / non-JSON)
+    // — which we can't parse to know the real event — is treated as a
+    // PreToolUse failure and gets the safe-by-default deny response.
+    let mut event_hint = String::from("PreToolUse");
+
+    if let Err(e) = handle_stdin_impl(&mut event_hint) {
+        // Diagnostics on stderr.
+        eprintln!("arai hook error: {e}");
+        // Fail-closed on PreToolUse: emit a deny JSON to stdout so Claude
+        // Code blocks the tool call.  Without this, an attacker who can
+        // induce a hook error (oversize input, malformed JSON, DB lock)
+        // would slip past every Block-severity rule.  PostToolUse and
+        // UserPromptSubmit tolerate empty stdout — those events don't have
+        // a permissionDecision surface and the tool already ran (or is
+        // about to be summarized).
+        if event_hint == "PreToolUse" {
+            let response = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason":
+                        "Arai: internal error, blocking for safety",
+                }
+            });
+            println!("{}", serde_json::to_string(&response).unwrap_or_default());
+        }
+    }
+    // Always exit 0 — stderr already carries the diagnostic.  Returning Err
+    // here would surface as a non-zero exit which Claude Code treats as
+    // "hook is broken, ignore it" and the tool would proceed (the very
+    // failure mode the deny above is closing).
+    Ok(())
+}
+
+fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     let start = std::time::Instant::now();
     // Read up to MAX_HOOK_INPUT_BYTES + 1 so we can distinguish "natural EOF"
     // from "hit the cap mid-stream".  Reject overruns rather than silently
@@ -234,6 +269,10 @@ pub fn handle_stdin() -> Result<(), String> {
         .get("hook_event_name")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
+    // Tell the outer wrapper what event we're processing so a later error
+    // (DB lock, store-open failure) is fail-closed only when appropriate.
+    event_hint.clear();
+    event_hint.push_str(event);
     // Sanitize session_id (see `session::valid_session_id`).  Hostile
     // payloads with `..` or `/` bytes in the id no longer reach the
     // session-file writer.
@@ -441,8 +480,11 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
             .unwrap_or_else(|| Severity::from_predicate(&g.predicate));
         if sev == Severity::Block {
             let src = if g.file_path.is_empty() { &*g.source_file } else { &*g.file_path };
+            // Append `:N` when we know the line — saves the user a manual
+            // search to the rule that just blocked their action.
+            let line_suffix = g.line_start.map(|l| format!(":{l}")).unwrap_or_default();
             return format!(
-                "Arai: \"{subj} {pred} {obj}\" [from {src}]",
+                "Arai: \"{subj} {pred} {obj}\" [from {src}{line_suffix}]",
                 subj = g.subject,
                 pred = g.predicate,
                 obj = g.object,
@@ -606,7 +648,25 @@ mod tests {
         assert!(reason.contains("never"), "reason should quote the predicate: {reason:?}");
         assert!(reason.contains("force-push"), "reason should quote the object: {reason:?}");
         assert!(reason.contains("CLAUDE.md"), "reason should cite source: {reason:?}");
+        // Line number is included when present — `mk_guardrail` sets line 42.
+        assert!(reason.contains(":42"), "reason should include :line_number: {reason:?}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_deny_reason_omits_line_when_unknown() {
+        let mut g = mk_guardrail(1, "git", "never", "force-push");
+        g.line_start = None;
+        let matched = vec![(g, 100u8)];
+        let reason = deny_reason(&matched);
+        assert!(reason.contains("CLAUDE.md"), "still cites source: {reason:?}");
+        // No line:N suffix.  Look specifically for a colon followed by a
+        // digit inside the source citation rather than rejecting any colon
+        // (the `Arai:` prefix is fine).
+        assert!(
+            !reason.contains("CLAUDE.md:"),
+            "no colon-suffix when line is unknown: {reason:?}"
+        );
     }
 
     #[test]
