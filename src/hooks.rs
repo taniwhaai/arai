@@ -632,6 +632,26 @@ mod tests {
         assert_eq!(known_hook_event("../../../etc/passwd"), None);
     }
 
+    proptest::proptest! {
+        /// `known_hook_event` accepts EXACTLY the canonical three strings
+        /// and nothing else.  Any other input — typo, prefix, suffix, case
+        /// variant, control char, arbitrary Unicode — must return `None`.
+        /// This is the property that closes the M1 fail-closed-bypass
+        /// regression: an attacker cannot smuggle a near-miss through the
+        /// JSON `hook_event_name` field.
+        #[test]
+        fn prop_known_hook_event_only_accepts_canonical(s in ".{0,80}") {
+            let canonical = matches!(s.as_str(),
+                "PreToolUse" | "PostToolUse" | "UserPromptSubmit");
+            if canonical {
+                proptest::prop_assert!(known_hook_event(&s).is_some());
+            } else {
+                proptest::prop_assert_eq!(known_hook_event(&s), None,
+                    "non-canonical {:?} must be rejected", s);
+            }
+        }
+    }
+
     #[test]
     fn test_highest_severity_picks_block() {
         let (_store, dir) = temp_db();

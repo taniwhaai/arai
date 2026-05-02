@@ -58,6 +58,13 @@ lang-go = ["tree-sitter-go"]
 lang-ruby = ["tree-sitter-ruby"]
 lang-java = ["tree-sitter-java"]
 
+[dev-dependencies]
+# Property-based testing for input validators (session_id, event names,
+# SQL identifier safety, Aho-Corasick scanner).  Each pure-function
+# validator is hit with thousands of generated inputs to surface
+# adversarial / Unicode / boundary cases hand-picked unit tests miss.
+proptest = "1"
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **WAL mode is now enabled on the local store** (set in 0.2.12 by the
+  versioned migration framework).  SQLite in WAL mode writes to
+  `<db>-wal` and `<db>-shm` sidecar files alongside the main `.db` file.
+  If you have any backup or sync tooling that copies only the `.db` file,
+  recently-written rules and audit data may be missed.  Either include the
+  sidecar files in your backup, or run `arai status` once before the
+  copy (it triggers a checkpoint that flushes the WAL into the main
+  file).  Most users will never notice — the local store lives at
+  `~/.arai/db/<project>.db` by default.
+
+### Hooks
+
+- Validate `hook_event_name` against an allow-list before propagating to
+  the fail-closed gate; spoofed values like `"PreToolUseFOO"` no longer
+  defeat the C10 deny-on-error contract
+- Surface `Config::load()` failures from the `ARAI_DISABLED` short-circuit
+  to stderr instead of swallowing them silently
+
+### Parser
+
+- `<!-- arai:skip -->` markers now track heading depth correctly:
+  sub-headings under a marked section stay inside the skip; only same-
+  or-shallower headings clear it
+
+### Store
+
+- Defensive identifier validation in `add_column_if_missing` (closes a
+  future SQLi window if a refactor wires it to a runtime string)
+
+### Telemetry
+
+- Removed dead `track_rule_followed` function that still queued raw
+  subject text — the rule_hash anonymisation from 0.2.12 was only
+  applied to the live `track_rule_fired` path
+
+### Tests
+
+- Property and integration tests for `known_hook_event`,
+  `valid_session_id`, parser nested-heading scope, ARAI_DISABLED
+  short-circuit, fail-closed PreToolUse, and the `arai_check_action`
+  MCP probe's no-audit-write contract
+
 ## [0.2.12] - 2026-05-02
 
 ### Documentation

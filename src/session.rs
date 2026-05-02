@@ -239,6 +239,45 @@ mod tests {
         assert!(!valid_session_id(&too_long), "129 chars rejected");
     }
 
+    proptest::proptest! {
+        /// Anything matching `[A-Za-z0-9_-]{1,128}` is accepted by the validator.
+        /// Pins the positive boundary of the contract.
+        #[test]
+        fn prop_session_id_accepts_generated_valid_shapes(s in "[A-Za-z0-9_-]{1,128}") {
+            proptest::prop_assert!(valid_session_id(&s));
+        }
+
+        /// Any string that contains a char outside the allowed set MUST be
+        /// rejected — exercises the path-traversal-resistance contract for
+        /// inputs the hand-picked tests didn't enumerate.  Generated as
+        /// arbitrary printable-ASCII to keep the search space tractable.
+        #[test]
+        fn prop_session_id_rejects_strings_with_disallowed_char(s in "[\x20-\x7e]{1,128}") {
+            let has_bad = s.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+            if has_bad {
+                proptest::prop_assert!(!valid_session_id(&s),
+                    "expected rejection of {s:?} (contains a disallowed char)");
+            }
+        }
+
+        /// Anything 129+ chars wide is rejected, regardless of charset.
+        #[test]
+        fn prop_session_id_rejects_oversize(s in "[A-Za-z0-9_-]{129,256}") {
+            proptest::prop_assert!(!valid_session_id(&s));
+        }
+
+        /// Arbitrary Unicode (including non-ASCII) is rejected unless it
+        /// happens to fall in the safe ASCII subset above.  Catches surprises
+        /// like fullwidth digits or NBSP being accepted by accident.
+        #[test]
+        fn prop_session_id_arbitrary_unicode_only_safe_when_ascii(s in ".{0,200}") {
+            let in_charset = !s.is_empty()
+                && s.len() <= 128
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            proptest::prop_assert_eq!(valid_session_id(&s), in_charset);
+        }
+    }
+
     #[test]
     fn test_extract_prerequisite_without() {
         let terms = extract_prerequisite("deploy without tests");

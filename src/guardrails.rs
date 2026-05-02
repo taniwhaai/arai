@@ -566,6 +566,61 @@ mod tests {
         assert!(terms.contains(&"git".to_string()), "got: {terms:?}");
     }
 
+    proptest::proptest! {
+        /// Three properties on `sniff_content_for_tools`, each generated with
+        /// arbitrary Unicode strings:
+        ///   1. Never panics.  Aho-Corasick + the byte-level boundary check
+        ///      must handle multi-byte sequences without indexing past a
+        ///      char boundary or reading past the buffer.
+        ///   2. Every term in the output IS in `KNOWN_TOOLS` — the function
+        ///      can't invent strings that weren't in the haystack-pattern
+        ///      table.
+        ///   3. Each term appears at most once — the dedupe bitset works
+        ///      regardless of how many times the substring appears.
+        #[test]
+        fn prop_sniff_invariants(s in ".{0,300}") {
+            let mut terms = Vec::new();
+            sniff_content_for_tools(&s, &mut terms);
+
+            // 2: every produced term is a known tool.
+            for t in &terms {
+                proptest::prop_assert!(
+                    KNOWN_TOOLS.iter().any(|k| k == t),
+                    "sniff produced {t:?} which is not in KNOWN_TOOLS (input={s:?})"
+                );
+            }
+            // 3: dedup — sorting + dedup must not shrink the list.
+            let mut sorted = terms.clone();
+            sorted.sort();
+            sorted.dedup();
+            proptest::prop_assert_eq!(sorted.len(), terms.len(),
+                "duplicates leaked through dedupe bitset (input={:?}, terms={:?})",
+                s, terms);
+        }
+
+        /// Idempotence: appending the same content's matches to an already-
+        /// populated terms vec must not introduce duplicates of tools the
+        /// vec already contained from a prior sniff call.  This is the
+        /// invariant the public extract_file_terms relies on when sniffing
+        /// `content`, `new_string`, and `old_string` in sequence.
+        ///
+        /// Note: the function pushes without checking whether the term is
+        /// already in `terms` — dedup happens at the call site via
+        /// `sort` + `dedup` after all sniffs.  So the property here is
+        /// "calling sniff twice on the same input produces matched terms
+        /// from each call independently"; each individual call is dedup'd
+        /// internally.  We verify that property: 2nd call's terms are a
+        /// subset of 1st call's set.
+        #[test]
+        fn prop_sniff_repeat_call_produces_subset(s in ".{0,300}") {
+            let mut a = Vec::new();
+            sniff_content_for_tools(&s, &mut a);
+            let mut b = Vec::new();
+            sniff_content_for_tools(&s, &mut b);
+            proptest::prop_assert_eq!(&a, &b, "deterministic on same input");
+        }
+    }
+
     #[test]
     fn test_match_guardrails_with_intent() {
         use crate::store::Store;

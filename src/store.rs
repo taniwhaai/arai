@@ -1546,4 +1546,37 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    proptest::proptest! {
+        /// `is_safe_sql_identifier` matches the regex `^[A-Za-z_][A-Za-z0-9_]*$`
+        /// for any input.  Independently re-derives the predicate from the
+        /// raw chars and asserts equivalence — catches off-by-one regressions
+        /// in the implementation (e.g. allowing a leading digit, accepting
+        /// `-`, treating non-ASCII letter codepoints as alphabetic).
+        #[test]
+        fn prop_safe_sql_identifier_matches_regex(s in ".{0,40}") {
+            let mut chars = s.chars();
+            let manual = match chars.next() {
+                Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+                    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+                }
+                _ => false,
+            };
+            proptest::prop_assert_eq!(is_safe_sql_identifier(&s), manual,
+                "is_safe_sql_identifier disagreed with manual check on {:?}", s);
+        }
+
+        /// Anything with a hyphen is rejected — pinning a property the
+        /// audit agent specifically cared about (since SQL grammar would
+        /// treat `foo-bar` as `foo MINUS bar`, which is the SQLi vector).
+        #[test]
+        fn prop_safe_sql_identifier_rejects_hyphen(
+            head in "[A-Za-z_][A-Za-z0-9_]{0,10}",
+            tail in "[A-Za-z0-9_]{1,10}",
+        ) {
+            let s = format!("{head}-{tail}");
+            proptest::prop_assert!(!is_safe_sql_identifier(&s),
+                "hyphen must be rejected; checked {s:?}");
+        }
+    }
 }
