@@ -75,6 +75,44 @@ Arai doesn't just do keyword matching. It understands your rules:
 - **Timing routing** — domain rules fire on tool calls, principles stay silent (already in CLAUDE.md)
 - **Broad imperative coverage** — recognises `never/always/don't/must`, `should/shouldn't`, `cannot/refuse`, `make sure/be sure`, `consider/recommend`, bare `No X` prohibitions, conditional shapes (`When X, do Y` / `Before X: do Y` / `If X → do Y`), and the section-aware `Use X` style-guide pattern. Severity mapping mirrors grammatical weight: `should` is `Inform` (soft), `should not` is `Block` (the writer chose to call out a specific prohibition).
 
+## Compliance & audit
+
+Beyond firing rules, Arai produces a tamper-evident local record of *every*
+guardrail decision and correlates it with what the model actually did. This
+is what tech leads and compliance reviewers want to see — the trail behind
+the enforcement.
+
+- **Local JSONL audit log** — one line per firing at
+  `~/.arai/audit/<project>/<YYYYMMDD>.jsonl`. Append-only, day-bucketed,
+  queryable with `arai audit` (filters: `--since`, `--tool`, `--event`,
+  `--outcome`, `--rule`).
+- **Derivation trace per firing** — each rule entry records source file,
+  line number, and parser layer (`from CLAUDE.md:42, layer-1 imperative`).
+  Auditors can answer "why did this rule fire?" without code spelunking.
+- **Compliance verdicts** — every PostToolUse is correlated against recent
+  PreToolUse firings to produce **Obeyed / Ignored / Unclear** per rule.
+  `arai stats --by-rule` rolls these up into per-rule ratios with a ⚠ flag
+  on rules the model is routing around.
+- **Graduated enforcement** — severity tiers (Block / Warn / Inform) derive
+  from rule predicate; `arai severity` pins individual rules so you can
+  ship a rule set in advise mode and escalate one at a time.
+  `ARAI_DENY_MODE=off` is the project-wide rollback path.
+- **Regression-tested policy** — `arai test` replays scenarios through the
+  live `match_hook` pipeline; `arai record` captures real firings as
+  fixtures. Rule changes become CI assertions, not vibes.
+- **No data egress** — no network on the hook hot path. Anonymous opt-out
+  telemetry is architecturally separate from the audit log; they share no
+  code path. The audit data physically cannot leak via the telemetry
+  channel.
+- **Supply-chain hardened** — every install path verifies the binary
+  against published `checksums.txt` (SHA-256). `arai:extends` upstream
+  policy fetches refuse loopback / RFC1918 / link-local / cloud metadata
+  and disable redirects.
+
+A complete enterprise / compliance-team feature inventory — mapped to the
+controls a procurement reviewer or InfoSec team will ask about — is in
+[`docs/arai-compliance-features.docx`](docs/arai-compliance-features.docx).
+
 ## Enrichment
 
 Three tiers of rule understanding, each more accurate:

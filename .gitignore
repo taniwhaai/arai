@@ -29,3 +29,6 @@ target
 # npm downloaded binaries
 npm/bin/arai
 npm/bin/arai.exe
+
+# Word/Office lockfiles
+~$*

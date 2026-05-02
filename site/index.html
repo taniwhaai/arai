@@ -260,6 +260,22 @@
     </div>
 </section>
 
+<section class="example">
+    <div class="container">
+        <h2>And then prove it &mdash; per-rule compliance, locally</h2>
+        <div class="example-block">
+            <span class="dim">$ arai stats --by-rule --since=7d</span><br><br>
+            <span class="accent">Per-rule compliance</span><br>
+            &nbsp;&nbsp;fires&nbsp;&nbsp;obeyed&nbsp;&nbsp;ignored&nbsp;&nbsp;ratio&nbsp;&nbsp;rule<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;12&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;11&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;&nbsp;<span class="accent">92%</span>&nbsp;&nbsp;alembic must_not: hand-write migrations<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;<span class="accent">100%</span>&nbsp;&nbsp;cargo always: test before commit<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3&nbsp;&nbsp;&nbsp;&nbsp;<span class="warm">57%</span>&nbsp;&nbsp;git must_not: --no-verify&nbsp;&nbsp;<span class="warm">&#x26A0;</span><br><br>
+            <span class="dim"># PostToolUse correlation produces obeyed / ignored / unclear verdicts per rule.</span><br>
+            <span class="dim"># Tamper-evident JSONL audit log. No SIEM. No data egress. grep + jq, done.</span>
+        </div>
+    </div>
+</section>
+
 <section class="features">
     <div class="container">
         <h2>Smart, not noisy</h2>
@@ -303,6 +319,14 @@
             <div class="feature">
                 <h3>Audit log</h3>
                 <p>Every firing is appended to a local JSONL you can query. See which rules fire, on which tools, for which prompts. Nothing leaves your machine.</p>
+            </div>
+            <div class="feature">
+                <h3>Local-first, air-gap friendly</h3>
+                <p>No network on the hook hot path. Enforcement, audit, compliance verdicts, and stats all run against the local SQLite + JSONL. Works offline, in restricted environments, and during outages &mdash; nothing to monitor, nothing to vendor-onboard.</p>
+            </div>
+            <div class="feature">
+                <h3>Supply-chain hardened</h3>
+                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects. MCP-source rules capped per project to bound a malfunctioning agent.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule compliance ratios</h3>
@@ -383,7 +407,7 @@
 <section class="family">
     <div class="container">
         <h2>Part of the Taniwha family</h2>
-        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. If you want semantic enrichment, impact analysis across callers and transitive dependents, or a hosted platform with team features, start with Kete. If you just want your instruction files enforced locally &mdash; no hosted service, no telemetry server &mdash; Arai is all you need.</p>
+        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. Arai handles per-developer enforcement and audit locally; Kete adds the team layer on top &mdash; centralised rule distribution, aggregated compliance dashboards across a fleet of developers, semantic enrichment, and impact analysis across callers and transitive dependents. The local audit and verdict pipeline doesn&rsquo;t change. If your instruction files just need enforcing on one machine, Arai is all you need.</p>
         <p class="family-links"><a href="https://taniwha.ai">Taniwha.ai</a> &middot; <a href="https://taniwha.ai/kete">Kete</a> &middot; <a href="https://taniwha.ai/products">All products</a></p>
     </div>
 </section>
