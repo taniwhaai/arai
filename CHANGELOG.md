@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-05-02
+
+### Documentation
+
+- Surface compliance + audit pitch on site and README ([#54](https://github.com/taniwhaai/arai/pull/54))
+- Ship compliance inventory as PDF (renders inline in browsers) ([#57](https://github.com/taniwhaai/arai/pull/57))
+
+
 ## [0.2.13] - 2026-05-02
 
 ### Testing
