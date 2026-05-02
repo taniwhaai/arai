@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-05-02
+
+### Documentation
+
+- Replace <5ms latency claims with measured numbers
+
+### Bench
+
+- Subprocess timing harness for the hook hot path
+
+### Discovery
+
+- Walk .cursor/rules as a directory of rule files
+
+### Guardrails
+
+- Replace O(N×L) sniff with Aho-Corasick automaton
+
+### Hooks
+
+- Validate session_id + ARAI_DISABLED kill switch with bypass audit
+- Deny reason includes line number; PreToolUse errors fail-closed
+
+### Mcp
+
+- Add arai_check_action probe tool
+
+### Parser
+
+- Respect <!-- arai:skip --> markers, scoped to next heading
+
+### Store
+
+- Gate schema init behind versioned migration framework + WAL PRAGMAs
+- LEFT JOIN rule_intent into load_guardrails / rules_for_file
+
+### Store+cli
+
+- Arai disable/enable + disabled_rules table (migration v2)
+
+### Telemetry
+
+- Hash rule subject/predicate before queueing for upload
+
+
 ## [0.2.11] - 2026-04-30
 
 ### Added
