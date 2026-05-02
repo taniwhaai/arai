@@ -602,11 +602,18 @@ docker compose run --rm arai
 
 ## Performance
 
-| Operation | Time |
-|-----------|------|
-| Hook check (no match) | <5ms |
-| Hook check (with match) | <12ms |
-| Full init | <200ms |
+| Operation | Median | p95 |
+|-----------|--------|-----|
+| Hook check (skip-tool — Read/Glob/Agent) | ~22 ms | ~36 ms |
+| Hook check (full match pipeline) | ~32 ms | ~55 ms |
+| Full init | <200 ms | — |
+
+End-to-end wall clock per Claude Code tool call, measured by
+`bench/hot_path.sh`. Cost is dominated by Rust binary fork+exec
+(~20 ms floor on Linux/WSL); rule matching itself is sub-ms above 200
+rules thanks to the LEFT-JOIN'd intent and Aho-Corasick content sniffing.
+Rule count between 50 and 500 doesn't materially move the median —
+matching is no longer the bottleneck.
 
 ## Telemetry
 

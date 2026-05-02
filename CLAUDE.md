@@ -92,7 +92,7 @@ leaves the machine.
 - **Three enrichment tiers** — taxonomy (free) → ONNX model (local) → LLM (any provider)
 - **Timing-aware** — rules route to the right hook event (PreToolUse vs UserPromptSubmit)
 - **Severity-aware** — prohibitive predicates block, affirmative predicates warn, prefers informs
-- **<5ms no-match hook** — fast exit when no guardrails apply
+- **~22 ms skip-tool fast-exit, ~32 ms full match (median)** — see `bench/hot_path.sh` for the breakdown; cost is dominated by binary fork+exec, not matching
 - **Single binary** — no runtime dependencies for users
 
 ## v0.2.11 additions at a glance

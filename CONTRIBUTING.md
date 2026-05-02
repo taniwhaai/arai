@@ -83,7 +83,7 @@ src/
 
 - Run `cargo test` before submitting a PR
 - Keep the lean binary under 15MB
-- Hook responses must stay under 20ms
+- Hook responses should stay under 50 ms median end-to-end (cold-start floor is ~20 ms; matching adds 5–15 ms). Run `bench/hot_path.sh` before/after perf-sensitive changes and post the before/after table in the commit body.
 - Don't add network calls to the hook path (only at scan/enrich time)
 - Prefer expanding the verb taxonomy over adding ML complexity
 
