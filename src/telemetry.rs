@@ -102,15 +102,6 @@ pub fn track_rule_fired(
     }));
 }
 
-/// Track that a rule was followed (LLM changed behavior after seeing the guardrail).
-#[allow(dead_code)]
-pub fn track_rule_followed(arai_base: &Path, subject: &str, followed: bool) {
-    track(arai_base, "rule_outcome", serde_json::json!({
-        "subject": subject,
-        "followed": followed,
-    }));
-}
-
 /// Track an arai init event.
 pub fn track_init(arai_base: &Path, rule_count: usize, file_count: usize, tool_count: i64, enrichment: &str) {
     track(arai_base, "arai_init", serde_json::json!({

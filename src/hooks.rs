@@ -46,6 +46,22 @@ fn is_disabled_via_env() -> bool {
     }
 }
 
+/// Allow-list for hook event names that are safe to propagate from the
+/// inner JSON to the outer fail-closed gate's `event_hint`.  Any other
+/// string (typo, spoofed input, future-event-we-don't-know-yet) leaves
+/// `event_hint` at its safe `"PreToolUse"` default so a downstream error
+/// still fails closed instead of being silently treated as a non-deny
+/// event.  Returns `Some(canonical_str)` for recognised events so the
+/// caller stores the static literal rather than a heap copy of the JSON.
+fn known_hook_event(event: &str) -> Option<&'static str> {
+    match event {
+        "PreToolUse" => Some("PreToolUse"),
+        "PostToolUse" => Some("PostToolUse"),
+        "UserPromptSubmit" => Some("UserPromptSubmit"),
+        _ => None,
+    }
+}
+
 /// Highest severity among the matched rules, if any.  Used to pick between
 /// advise (`allow`) and deny (`deny`) on PreToolUse.  Reads intent from the
 /// guardrail itself — `load_guardrails` already LEFT JOINed it in.
@@ -271,8 +287,15 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         .unwrap_or("PreToolUse");
     // Tell the outer wrapper what event we're processing so a later error
     // (DB lock, store-open failure) is fail-closed only when appropriate.
-    event_hint.clear();
-    event_hint.push_str(event);
+    // Only propagate KNOWN events — a spoofed value like "PreToolUseFOO"
+    // would cause `event_hint != "PreToolUse"` later, suppressing the deny
+    // emit and letting the tool through (the very behaviour C10 fixed for
+    // the byte-flip / oversize cases).  Unknown events leave event_hint at
+    // its safe default so the wrapper still fails closed.
+    if let Some(known) = known_hook_event(event) {
+        event_hint.clear();
+        event_hint.push_str(known);
+    }
     // Sanitize session_id (see `session::valid_session_id`).  Hostile
     // payloads with `..` or `/` bytes in the id no longer reach the
     // session-file writer.
@@ -289,8 +312,15 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     // and no stdout response — the model behaves exactly as if no hook
     // were installed.
     if is_disabled_via_env() {
-        if let Ok(cfg) = config::Config::load() {
-            audit::record_bypass(&cfg, event, tool_name, session_id);
+        match config::Config::load() {
+            Ok(cfg) => audit::record_bypass(&cfg, event, tool_name, session_id),
+            // Surface the config failure to stderr so an operator can
+            // correlate "Arai was off but stats has no bypass entry".  The
+            // hook still exits 0 — the user explicitly chose `ARAI_DISABLED`
+            // so the model must proceed.
+            Err(e) => eprintln!(
+                "arai: ARAI_DISABLED set but could not load config to record bypass: {e}"
+            ),
         }
         return Ok(());
     }
@@ -580,6 +610,26 @@ mod tests {
         }
         std::env::remove_var(DENY_MODE_ENV);
         assert!(deny_mode_enabled(), "unset ARAI_DENY_MODE should enable deny mode");
+    }
+
+    #[test]
+    fn known_hook_event_accepts_canonical_three() {
+        assert_eq!(known_hook_event("PreToolUse"), Some("PreToolUse"));
+        assert_eq!(known_hook_event("PostToolUse"), Some("PostToolUse"));
+        assert_eq!(known_hook_event("UserPromptSubmit"), Some("UserPromptSubmit"));
+    }
+
+    #[test]
+    fn known_hook_event_rejects_spoofed_and_typos() {
+        // Suffix that defeats string equality — this is the actual M1 bug.
+        assert_eq!(known_hook_event("PreToolUseFOO"), None);
+        // Substring / prefix variants — none should slip through.
+        assert_eq!(known_hook_event("PreToolUse "), None);
+        assert_eq!(known_hook_event(" PreToolUse"), None);
+        assert_eq!(known_hook_event("pretooluse"), None, "case-sensitive on purpose");
+        assert_eq!(known_hook_event(""), None);
+        assert_eq!(known_hook_event("PreToolUse\nPostToolUse"), None);
+        assert_eq!(known_hook_event("../../../etc/passwd"), None);
     }
 
     #[test]

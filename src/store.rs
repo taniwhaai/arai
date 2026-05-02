@@ -50,6 +50,16 @@ impl Store {
     /// migrations indexed `[current..target)`, then bumps `user_version` to
     /// the target.  No-op when current == target — this is the cheap path on
     /// every hook invocation.
+    ///
+    /// **Crash recovery semantics.**  The migration body and the
+    /// `user_version` bump are NOT wrapped in a single transaction (PRAGMAs
+    /// can't participate in a user txn).  If the process crashes between
+    /// the migration body succeeding and the `user_version` bump, the next
+    /// open re-runs the migration.  This is safe because every migration
+    /// body is idempotent: `CREATE TABLE IF NOT EXISTS`, `add_column_if_missing`
+    /// (which checks `PRAGMA table_info` first), `CREATE INDEX IF NOT EXISTS`,
+    /// `INSERT OR IGNORE`.  Future migrations MUST preserve this — see the
+    /// existing pattern in `migrate_v1` / `migrate_v2`.
     fn run_migrations(&self) -> rusqlite::Result<()> {
         let current: i64 = self
             .conn
@@ -819,12 +829,29 @@ fn compute_checksum(content: &str) -> String {
 /// on swallowing duplicate-column errors via `let _ = ...`.  This helper
 /// keeps migrations idempotent on user databases that may already have the
 /// column from a pre-versioned-schema era.
+///
+/// Defensive identifier validation: today's callers pass const string
+/// literals from `migrate_v1`, so the `format!()` interpolation is safe.
+/// But the function is a tempting future target for refactors that pass a
+/// caller-controlled string — pinning the shape here closes that future
+/// SQLi window before it can open.  Panics on invalid identifiers because
+/// they would only ever appear in code, never in user data.
 fn add_column_if_missing(
     conn: &Connection,
     table: &str,
     column: &str,
     column_def: &str,
 ) -> rusqlite::Result<()> {
+    assert!(
+        is_safe_sql_identifier(table),
+        "add_column_if_missing: table identifier {table:?} contains characters \
+         outside [A-Za-z0-9_]; this is a programming error, not user input"
+    );
+    assert!(
+        is_safe_sql_identifier(column),
+        "add_column_if_missing: column identifier {column:?} contains characters \
+         outside [A-Za-z0-9_]; this is a programming error, not user input"
+    );
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
@@ -833,11 +860,25 @@ fn add_column_if_missing(
             return Ok(());
         }
     }
+    // `column_def` carries the full type clause — `TEXT NOT NULL DEFAULT
+    // 'foo'`.  We don't try to validate that grammar (would re-implement
+    // SQLite's parser); we trust callers, who are inside this crate.
     conn.execute(
         &format!("ALTER TABLE {table} ADD COLUMN {column} {column_def}"),
         [],
     )?;
     Ok(())
+}
+
+/// Cheap allow-list check for SQL identifiers.  Matches `^[A-Za-z_][A-Za-z0-9_]*$`
+/// without dragging in a regex.
+fn is_safe_sql_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Migration v0 -> v1: initial schema.  Includes the original CREATE TABLE

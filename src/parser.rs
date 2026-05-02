@@ -105,10 +105,18 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
     let mut in_code_block = false;
     let mut in_table = false;
     // Section-scoped skip: an `<!-- arai:skip -->` comment causes every list
-    // item from that point to the next heading to be ignored.  Used to mark
-    // CLAUDE.md sections (e.g. "Anti-patterns", "Examples") that contain
-    // imperative-looking prose the parser would otherwise pick up as rules.
-    let mut skip_section = false;
+    // item from that point until we leave its section to be ignored.  "Leave
+    // its section" = the next heading at the SAME OR SHALLOWER depth as the
+    // marker's section.  A sub-heading (deeper) does NOT clear the skip,
+    // because it's still inside the marked section conceptually.
+    //
+    // `current_section_depth` is the H-level of the heading we're currently
+    // under (0 = before any heading).  `skip_until_depth` is the depth at
+    // which the active marker sits; clear when a new heading arrives at
+    // that depth or shallower.  `Some(0)` means "marker before any heading"
+    // — clear on the first heading we see (any depth).
+    let mut current_section_depth: usize = 0;
+    let mut skip_until_depth: Option<usize> = None;
 
     for (line_idx, line) in body.lines().enumerate() {
         let line_num = line_idx + 1;
@@ -131,34 +139,50 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
             in_table = false;
         }
 
-        // Track section headers — also clears the skip flag so each new
-        // section starts fresh.
+        // Track section headers.  May or may not clear an active skip
+        // marker depending on heading depth (see comment on
+        // `skip_until_depth` above).
         if trimmed.starts_with('#') {
+            let new_depth = trimmed.chars().take_while(|c| *c == '#').count();
+            if let Some(d) = skip_until_depth {
+                // d == 0 means the marker was outside any heading → first
+                // heading of any depth clears it.  d > 0 means the marker
+                // was inside an H<d> section → only equal-or-shallower
+                // headings clear (sub-headings stay inside the skip).
+                if d == 0 || new_depth <= d {
+                    skip_until_depth = None;
+                }
+            }
+            current_section_depth = new_depth;
+
             let header = trimmed.trim_start_matches('#').trim().to_string();
             // Strip leading numbered prefix like "4. " and trailing formatting like " (§3)"
             let header = strip_list_prefix(&header);
             let header = header.split('(').next().unwrap_or(&header).trim().to_string();
             current_section = if header.is_empty() { None } else { Some(header) };
-            skip_section = false;
-            // Flush any pending item
+            // Flush any pending item — emit only if we're not inside an
+            // active skip after this heading-level adjustment.
             if let Some((text, start)) = current_item.take() {
-                items.push(ListItem {
-                    text,
-                    line_start: start,
-                    line_end: line_num - 1,
-                    section_context: current_section.clone(),
-                });
+                if skip_until_depth.is_none() {
+                    items.push(ListItem {
+                        text,
+                        line_start: start,
+                        line_end: line_num - 1,
+                        section_context: current_section.clone(),
+                    });
+                }
             }
             continue;
         }
 
         // Skip-section opt-out: case-insensitive `<!-- arai:skip -->`, with
-        // tolerant whitespace inside the comment.  Once seen, every list
-        // item until the next heading is dropped.  Drop any pending item
-        // too — it pre-dates the marker on the same line, but the user's
-        // intent is "this section is examples, ignore it".
+        // tolerant whitespace inside the comment.  Scopes to the current
+        // heading depth; deeper headings stay skipped, equal/shallower
+        // ones clear it.  Drop any pending item — it pre-dates the marker
+        // on the same line, but the user's intent is "this section is
+        // examples, ignore it".
         if line_contains_skip_marker(trimmed) {
-            skip_section = true;
+            skip_until_depth = Some(current_section_depth);
             current_item = None;
             continue;
         }
@@ -170,7 +194,7 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
             // Flush previous item (if any) — but skip emission while inside
             // a skip-marked section.
             if let Some((text, start)) = current_item.take() {
-                if !skip_section {
+                if skip_until_depth.is_none() {
                     items.push(ListItem {
                         text,
                         line_start: start,
@@ -179,7 +203,7 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
                     });
                 }
             }
-            if skip_section {
+            if skip_until_depth.is_some() {
                 continue;
             }
             let item_text = strip_list_prefix(trimmed);
@@ -215,9 +239,9 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
         }
     }
 
-    // Flush last item — unless the last section was skip-marked.
+    // Flush last item — unless we're inside an active skip.
     if let Some((text, start)) = current_item.take() {
-        if !skip_section {
+        if skip_until_depth.is_none() {
             let line_end = body.lines().count();
             items.push(ListItem {
                 text,
@@ -785,6 +809,56 @@ mod tests {
         let rules = extract_rules(md, "test", 0.9);
         assert_eq!(rules.len(), 1, "exactly one rule should remain: {rules:?}");
         assert!(rules[0].object.contains("two"));
+    }
+
+    #[test]
+    fn skip_marker_extends_into_subsections_only_clears_at_same_depth() {
+        // Sub-headings (deeper) are still inside the marked H2; only an H2
+        // or H1 should clear the skip.  Pre-fix behaviour reset on every
+        // heading regardless of depth, leaking the H2 marker as soon as an
+        // H3 appeared.
+        let md = "\
+## Anti-patterns
+<!-- arai:skip -->
+- Never one
+
+### A subsection of anti-patterns
+- Never two
+
+## Real Rules
+- Never three
+";
+        let rules = extract_rules(md, "test", 0.9);
+        let objects: Vec<&str> = rules.iter().map(|r| r.object.as_str()).collect();
+        assert!(
+            objects.iter().any(|o| o.contains("three")),
+            "real rule survives: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("one")),
+            "H2-anchored skip drops H2 bullets: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("two")),
+            "H3 sub-heading must NOT clear the H2 skip: {objects:?}"
+        );
+    }
+
+    #[test]
+    fn skip_marker_at_top_of_document_clears_on_first_heading() {
+        // Marker before any heading scopes to "until next heading at any
+        // depth".  current_section_depth is 0 there, and the clear rule
+        // for `Some(0)` is "any heading clears it".
+        let md = "\
+<!-- arai:skip -->
+- Never preamble
+
+# Real
+- Never real
+";
+        let rules = extract_rules(md, "test", 0.9);
+        assert_eq!(rules.len(), 1, "only the post-heading rule survives: {rules:?}");
+        assert!(rules[0].object.contains("real"));
     }
 
     #[test]
