@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-05-02
+
+### Testing
+
+- Proptest property tests for input validators + WAL upgrade note
+
+
 ### Upgrade notes
 
 - **WAL mode is now enabled on the local store** (set in 0.2.12 by the
