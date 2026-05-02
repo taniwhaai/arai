@@ -111,7 +111,8 @@ the enforcement.
 
 A complete enterprise / compliance-team feature inventory — mapped to the
 controls a procurement reviewer or InfoSec team will ask about — is in
-[`docs/arai-compliance-features.docx`](docs/arai-compliance-features.docx).
+[`docs/arai-compliance-features.pdf`](docs/arai-compliance-features.pdf).
+The Word source (`.docx`) is committed alongside it for editing.
 
 ## Enrichment
 
