@@ -1,6 +1,6 @@
 [package]
 name = "arai"
-version = "0.2.14"
+version = "0.2.15"
 edition = "2021"
 description = "AI coding rules that actually work. Enforce instruction files via hooks — CLAUDE.md, .cursorrules, copilot-instructions, and more."
 license = "MIT OR Apache-2.0"

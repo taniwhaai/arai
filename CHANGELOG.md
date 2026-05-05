@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-05-05
+
+### Added
+
+- *(demos)* Add example showcasing command blocking with Arai guardrails
+- *(demos)* Update blocking demo to enhance user interaction flow
+
+### Fixed
+
+- *(demos)* Trim leading typing frames so README poster shows prompt
+
+
 ## [0.2.14] - 2026-05-02
 
 ### Documentation
