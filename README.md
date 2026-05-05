@@ -4,6 +4,8 @@
 
 Arai makes your AI coding assistant instruction files structurally enforceable — not just suggestions that get forgotten as context grows.
 
+![Arai blocking a forbidden command at the PreToolUse hook](demos/block.gif)
+
 ## Quick Start
 
 ```bash
