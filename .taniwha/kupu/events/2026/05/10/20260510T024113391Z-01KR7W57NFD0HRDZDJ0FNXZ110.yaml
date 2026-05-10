@@ -1,0 +1,13 @@
+event_id: 01KR7W57NFD0HRDZDJ0FNXZ110
+kind: build_started
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-10T02:41:13.391Z
+  filename: 20260510T024113391Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  project_name: Arai
+  project_root: /home/matt/r/arai
+  kupu_version: 0.1.0

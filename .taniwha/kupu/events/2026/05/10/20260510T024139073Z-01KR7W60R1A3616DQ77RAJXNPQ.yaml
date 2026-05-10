@@ -1,0 +1,10 @@
+event_id: 01KR7W60R1A3616DQ77RAJXNPQ
+kind: open_question_surfaced
+actor:
+  kind: user
+  name: matt@mustard.co.nz
+timestamp:
+  iso: 2026-05-10T02:41:39.073Z
+  filename: 20260510T024139073Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"question": "Telemetry posture: opt-in vs opt-out", "context": "Current Arai telemetry is opt-out (ARAI_TELEMETRY=off / DO_NOT_TRACK=1). Brief flags this as a footgun for regulated-environment buyers. Worth flipping to opt-in as part of the trust-and-honesty pass.", "options": ["Keep opt-out", "Flip to opt-in"], "blocks_issues": ["#63"], "code_impact": "config.rs default + readme copy + telemetry.rs initialization path"}'

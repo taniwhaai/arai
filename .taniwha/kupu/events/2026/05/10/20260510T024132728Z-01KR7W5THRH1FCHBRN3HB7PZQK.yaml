@@ -1,0 +1,10 @@
+event_id: 01KR7W5THRH1FCHBRN3HB7PZQK
+kind: open_question_surfaced
+actor:
+  kind: user
+  name: matt@mustard.co.nz
+timestamp:
+  iso: 2026-05-10T02:41:32.728Z
+  filename: 20260510T024132728Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"question": ".kete deprecation window length", "context": "Folder restructure moves .kete to .taniwha/kete. Deprecation shim (issue #73) keeps .kete working with a warning for some transition period. Need to commit to length.", "options": ["1 minor release", "2 minor releases", "1 year"], "blocks_issues": ["#61", "#73"], "downstream_impact": "Affects when we can delete the shim code and stop honouring .kete reads."}'

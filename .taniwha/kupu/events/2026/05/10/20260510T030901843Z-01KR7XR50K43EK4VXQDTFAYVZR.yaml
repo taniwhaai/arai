@@ -1,0 +1,10 @@
+event_id: 01KR7XR50K43EK4VXQDTFAYVZR
+kind: guardrail_false_positive
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:09:01.843Z
+  filename: 20260510T030901843Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"rule": "Git never git push to main without a PR", "blocked_commands": ["gh issue create ... (with ''git'' in title or body)", "git diff src/config.rs"], "match_percentages": ["50%", "53%"], "occurrences_this_session": 2, "finding": "Substring match on ''git'' fires the rule on any command containing the token, including read-only ops (git diff, git status, git log) and tools that share the prefix (gh). The rule''s *intent* is to block mutating writes to main without review — not to block reads. Worth tuning the matcher to require an actual `git push` invocation, or scoping the rule''s tool predicate more tightly.", "candidate_fix": "Either (a) discriminate `gh` from `git` in the tokenizer, (b) require that the matched verb be a known mutating git subcommand (push, reset, force-push, rebase --onto), or (c) raise the match threshold for high-impact rules so 50% substring matches don''t deny.", "relates_to": "Could become a worked example in the rules-file schema design (#76) — exactly the kind of scope/exception the new format should let users express."}'

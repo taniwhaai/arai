@@ -1,0 +1,10 @@
+event_id: 01KR7W90Y7JV0N5XYHDPCBMVW9
+kind: scope_ambiguity_found
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T02:43:17.575Z
+  filename: 20260510T024317575Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"finding": "Brief workstream 5 says ''Arai writes to .kete'' but src/config.rs:24 shows Arai writes to ~/.arai/. The ~/.kete/ directory on disk contains different content (token.json, config.toml, separate projects tree) suggesting it belongs to a different Taniwha tool, not Arai.", "blocks_issues": ["#61", "#71", "#72", "#73", "#74"], "ambiguity": "Two unknowns: (1) Is the brief''s .kete reference a typo for .arai? (2) Should the new namespaced directory be .taniwha/arai (matching kupu''s .taniwha/kupu pattern) or .taniwha/kete (as the brief literally says)?", "evidence": ["src/config.rs:24 home_dir.join(''.arai'')", "ls ~/.arai shows audit/projects/sessions/models/telemetry_queue.jsonl/.telemetry_id (Arai shape)", "ls ~/.kete shows config.toml/projects/logs/token.json (different shape, different tool)", "kupu uses .taniwha/kupu/ — pattern is .taniwha/<product-name>/"]}'
