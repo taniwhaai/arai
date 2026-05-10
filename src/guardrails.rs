@@ -280,9 +280,8 @@ pub fn match_guardrails(
 
                 // For tool-call-timed rules, also check subject and tool scope
                 if intent.timing == crate::intent::Timing::ToolCall {
-                    let subj = g.subject.to_lowercase();
-                    let subject_matches = terms.iter().any(|t| subj.contains(t));
-                    subject_matches && crate::intent::tool_matches_intent(intent, tool_name)
+                    subject_matches_terms(&g.subject, terms)
+                        && crate::intent::tool_matches_intent(intent, tool_name)
                 } else {
                     true
                 }
@@ -290,13 +289,16 @@ pub fn match_guardrails(
                 if hook_event != "PreToolUse" {
                     return false;
                 }
-                let subj = g.subject.to_lowercase();
-                terms.iter().any(|t| subj.contains(t))
+                subject_matches_terms(&g.subject, terms)
             }
         })
-        .map(|g| {
-            let score = relevance_score(&g.object, terms);
-            (g.clone(), score)
+        .filter_map(|g| {
+            // `None` means the rule names a specific command verb the
+            // command doesn't perform — drop it rather than fire on
+            // substring overlap from the subject alone.  See `relevance_score`
+            // for the verb-mismatch contract.
+            let score = relevance_score(&g.object, terms)?;
+            Some((g.clone(), score))
         })
         .collect();
 
@@ -337,7 +339,42 @@ const COMMAND_VERBS: &[&str] = &[
     "start", "stop", "create", "delete", "remove", "add", "update", "upgrade",
 ];
 
-fn relevance_score(object: &str, terms: &[String]) -> usize {
+/// Check whether a rule's subject overlaps with any extracted command term as
+/// a *whole word*.  Replaces an earlier `subj.contains(term)` substring check
+/// which leaked across word boundaries: subject "git" matched any subject
+/// containing "git" as a substring (e.g. `github`) and any rule subject also
+/// containing "git" as a substring fired on every `git *` command.  The
+/// substring leak in the opposite direction (term-inside-subject) was the
+/// proximate cause of issue #86 — single-token subjects like "Git" matched
+/// every `git <subcommand>` regardless of whether the rule was about that
+/// subcommand.  Token-boundary matching closes the leak; the verb-mismatch
+/// contract in `relevance_score` does the rest of the disambiguation.
+fn subject_matches_terms(subject: &str, terms: &[String]) -> bool {
+    let subj_lower = subject.to_lowercase();
+    let subj_tokens: Vec<&str> = subj_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if subj_tokens.is_empty() {
+        return false;
+    }
+    subj_tokens
+        .iter()
+        .any(|st| terms.iter().any(|t| t == st))
+}
+
+/// Score a rule's object text against the extracted command terms.
+///
+/// Returns `None` when the rule names a specific command verb (push, commit,
+/// install, …) that does NOT appear in the command terms — even if the
+/// subject matched, that rule is about a different action and must not fire.
+/// This is the contract that lets a rule about `git push` not fire on
+/// `git status` / `git diff` / `git log` (issue #86).  `Some(n)` is the
+/// number of overlapping terms when no verb mismatch is present; `n` may be
+/// zero for general rules whose object names no command verbs and no
+/// command-term overlap (e.g. "hand-write migration files" firing on a
+/// Write because the *subject* matched).
+fn relevance_score(object: &str, terms: &[String]) -> Option<usize> {
     let object_words: Vec<String> = object
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -349,19 +386,20 @@ fn relevance_score(object: &str, terms: &[String]) -> usize {
         .filter(|t| object_words.iter().any(|w| w == *t))
         .count();
 
-    // Penalty: if the rule contains command verbs and NONE of them match the terms,
-    // it's probably about a different action (e.g. rule says "push" but command is "pull")
+    // Verb mismatch: rule object contains specific command verbs and NONE of
+    // them appear in the command terms.  Previously this halved the score
+    // (min 1) so the rule still fired; that let a `git push` rule block
+    // every `git status`.  Now: drop the match entirely.
     let rule_verbs: Vec<&String> = object_words.iter()
         .filter(|w| COMMAND_VERBS.contains(&w.as_str()))
         .collect();
     let has_verb_mismatch = !rule_verbs.is_empty()
         && !rule_verbs.iter().any(|v| terms.contains(v));
 
-    if has_verb_mismatch && base_score > 0 {
-        // Still matches by subject, but penalise — halve the score (minimum 1)
-        base_score.div_ceil(2).max(1)
+    if has_verb_mismatch {
+        None
     } else {
-        base_score
+        Some(base_score)
     }
 }
 
@@ -704,58 +742,71 @@ mod tests {
 
     #[test]
     fn test_relevance_score() {
-        // "push" and "main" both overlap
+        // "push" and "main" both overlap, no verb mismatch
         let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
-        let score = relevance_score("git push to main without a PR", &terms);
+        let score = relevance_score("git push to main without a PR", &terms)
+            .expect("push verb matches — should score Some");
         assert!(score >= 3, "should match git, push, main — got {score}");
 
-        // Only "git" overlaps (commit ≠ push, verb mismatch penalty applies)
+        // Only "git" overlaps (commit ≠ push, verb mismatch → dropped entirely)
         let score = relevance_score("git commit with signed commits", &terms);
-        assert!(score <= 2, "should be penalised for verb mismatch — got {score}");
-
-        // Push rule should score higher than commit rule for "git push origin main"
-        let push_score = relevance_score("git push to main without a PR", &terms);
-        let commit_score = relevance_score("git commit with signed commits", &terms);
-        assert!(push_score > commit_score, "push rule ({push_score}) should rank higher than commit rule ({commit_score})");
+        assert!(score.is_none(),
+            "commit-verb rule should be dropped for a push command — got {score:?}");
     }
 
     #[test]
-    fn test_relevance_verb_mismatch() {
-        // Rule says "push" but command is "pull" — should be penalised
+    fn test_relevance_verb_mismatch_drops_rule() {
+        // Rule says "push" but command is "pull" — different verb, drop.
         let pull_terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
-        let push_rule_score = relevance_score("git push to main without a PR", &pull_terms);
-        let commit_rule_score = relevance_score("git commit with signed commits", &pull_terms);
-        assert!(commit_rule_score >= push_rule_score,
-            "commit ({commit_rule_score}) should rank >= push ({push_rule_score}) for a pull command");
+        assert!(relevance_score("git push to main without a PR", &pull_terms).is_none());
+        assert!(relevance_score("git commit with signed commits", &pull_terms).is_none());
 
         // Rule says "install" but command is "uninstall" — different verbs
         let terms = vec!["npm".to_string(), "uninstall".to_string(), "package".to_string()];
-        let score = relevance_score("npm install with --save-exact", &terms);
-        assert!(score <= 1, "install rule should be penalised for uninstall command — got {score}");
+        assert!(relevance_score("npm install with --save-exact", &terms).is_none());
     }
 
     #[test]
     fn test_relevance_no_penalty_when_verb_matches() {
-        // Exact verb match — no penalty
+        // Exact verb match — kept and scored
         let terms = vec!["cargo".to_string(), "test".to_string()];
-        let score = relevance_score("run cargo test before pushing", &terms);
+        let score = relevance_score("run cargo test before pushing", &terms)
+            .expect("test verb matches");
         assert!(score >= 2, "exact verb match should score high — got {score}");
     }
 
     #[test]
     fn test_relevance_no_verb_in_rule() {
-        // Rule has no command verb — pure term overlap, no penalty
+        // Rule has no command verb — pure term overlap, no mismatch
         let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
-        let score = relevance_score("always use feature branches for main", &terms);
+        let score = relevance_score("always use feature branches for main", &terms)
+            .expect("no command verb in rule → no mismatch path");
         assert!(score >= 1, "should match 'main' without penalty — got {score}");
     }
 
     #[test]
     fn test_relevance_zero_overlap() {
-        // No terms match at all
+        // No terms match at all AND no command verbs in rule → Some(0)
         let terms = vec!["docker".to_string(), "compose".to_string(), "up".to_string()];
-        let score = relevance_score("git push to main without a PR", &terms);
+        let score = relevance_score("hand-write migration files", &terms)
+            .expect("no command verb in rule → keep, score 0");
         assert_eq!(score, 0, "no overlap should score 0 — got {score}");
+    }
+
+    #[test]
+    fn subject_matches_terms_uses_token_boundary() {
+        // Single-token subject only matches an exact token in the command terms,
+        // never a substring or hyphen-fragment.
+        let subj = "git";
+        assert!(subject_matches_terms(subj, &["git".to_string(), "status".to_string()]));
+        // The actual term "git-level" was produced by `gh issue create --title
+        // "...git-level..."` in issue #86; subject "git" must NOT match it.
+        assert!(!subject_matches_terms(subj, &["git-level".to_string()]));
+        // A rule subject "github" must not match a `git ...` command via substring.
+        assert!(!subject_matches_terms("github", &["git".to_string(), "status".to_string()]));
+        // Multi-word subject — any constituent word can match.
+        assert!(subject_matches_terms("force-push", &["force".to_string()]));
+        assert!(subject_matches_terms("git push", &["push".to_string()]));
     }
 
     #[test]
