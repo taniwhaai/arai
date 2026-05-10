@@ -85,7 +85,7 @@ is what tech leads and compliance reviewers want to see — the trail behind
 the enforcement.
 
 - **Local JSONL audit log** — one line per firing at
-  `~/.taniwha/arai/audit/<project>/<YYYYMMDD>.jsonl`. Append-only, day-bucketed,
+  `~/.arai/audit/<project>/<YYYYMMDD>.jsonl`. Append-only, day-bucketed,
   queryable with `arai audit` (filters: `--since`, `--tool`, `--event`,
   `--outcome`, `--rule`).
 - **Derivation trace per firing** — each rule entry records source file,
@@ -138,7 +138,7 @@ ARAI_API_KEY=sk-... arai scan --enrich-api                    # OpenAI (default)
 ARAI_API_URL=http://localhost:11434/v1 arai scan --enrich-api  # Ollama (auto-detected)
 ARAI_API_URL=https://api.groq.com/openai/v1 ARAI_API_KEY=gsk-... ARAI_API_MODEL=llama-3.3-70b-versatile arai scan --enrich-api
 
-# Or in ~/.taniwha/arai/config.toml
+# Or in ~/.arai/config.toml
 [enrich]
 llm_command = "llm -m gpt-4o-mini"       # for --enrich-llm
 api_url = "https://api.openai.com/v1"     # for --enrich-api
@@ -261,7 +261,7 @@ windows, and "temporarily forbid X until we finish the refactor" rules.
 ## Audit log
 
 Every time a rule fires, Arai appends one line to a local JSONL log at
-`~/.taniwha/arai/audit/<project-slug>/<YYYYMMDD>.jsonl`. The log captures the
+`~/.arai/audit/<project-slug>/<YYYYMMDD>.jsonl`. The log captures the
 hook event, the tool that was called, a truncated prompt preview, the
 decision (`inject`, `deny`, `review`), and every rule that matched —
 with source file, line number, parser layer, severity, and confidence.
@@ -636,7 +636,7 @@ brew install taniwhaai/tap/arai
 
 # Docker (sandboxed install or CI-side enforcement)
 docker build -t arai .
-docker run --rm -i -v "$(pwd)/.taniwha/arai:/home/arai/.taniwha/arai" arai
+docker run --rm -i -v "$(pwd)/.arai:/home/arai/.arai" arai
 # Or via compose with a persistent named volume:
 docker compose run --rm arai
 ```

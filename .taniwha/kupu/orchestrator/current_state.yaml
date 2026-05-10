@@ -1,47 +1,37 @@
 schema_version: 1
 as_of: "2026-05-10"
-invocation_count: 5
+invocation_count: 4  # fourth orchestrator invocation in this build cycle (brief v3)
 
 build_phase: complete
 tier: single_module
-brief_version: 2
-brief_scope: "GitHub issue #73 — deprecation shim in src/config.rs"
+brief_version: 3
+brief_scope: "GitHub issue #74 — docs sweep of README.md, llms-install.md, CHANGELOG.md"
 
 artefact_status:
-  brief: "v2 — current"
+  brief: "v3 — current (issue #74 docs sweep)"
   project_context: "v1 — current (Rust/cargo/single_package)"
-  design_doc: "v1 — current"
-  contracts: "base-directory-resolution/v1 — current"
-  implementation: "base-directory-resolution — verified pass (287 tests passing)"
+  design_doc: "none — user approved skipping design-doc phase (decision 01KR8QVKDZPJHZ1VNJ5JYJ7ZQ7)"
+  contracts: "none — user approved skipping contract-derivation phase; brief v3 acts as contract"
+  implementation: "complete and verified — leaf handoff 01KR8QGC0HZ3TNMQET4PVT0HP3; verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass"
+  verification: "pass — all 8 ACs satisfied, 287/287 tests pass"
   tree: "none — single-module tier, no tree needed"
   open_re_raises: 0
 
 last_action: |
-  Verifier (handoff 01KR8598KXT557344N231648RT) returned overall: pass.
-  All 8 ACs satisfied. 287 tests passing.
-
-  Structural finding (non-blocking): binary-only crate architecture means
-  closure-injection tests must live in #[cfg(test)] mod tests inside
-  src/config.rs rather than in tests/ directory. Implementor placed them
-  correctly. Future contracts should account for this.
-
-  Build is complete. next_action.yaml emits `complete` action.
-  The PR is open on branch paths/73-deprecation-shim.
+  Emitted action: complete.
+  Verifier 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
+  All 8 ACs satisfied. 287/287 tests pass.
+  Only README.md, llms-install.md, CHANGELOG.md were touched (confirmed via git status).
+  Two minor brief-labeling inaccuracies noted (5 vs 4 README refs; v0.2.14 vs v0.2.13
+  historical section) — neither affected outcomes.
 
 next_expected_event: |
-  Dispatcher surfaces completion to the user with PR reference.
-  No further orchestrator invocations expected for this build.
+  Dispatcher surfaces build completion to the user.
+  User decides whether to open a PR for the docs sweep changes on branch paths/73-deprecation-shim.
 
 notes: |
-  Build complete. Single_module tier. One module, one contract, one implementation,
-  one verifier pass. No compositions. No re-raises. No contract amendments.
-
-  Implementation: src/config.rs
-  - resolve_base_dir pure function with injected callables
-  - ResolvedBaseDir { path: String, notice: Option<DeprecationNotice> }
-  - DeprecationNotice enum: DeprecatedEnvVar(String) | DeprecatedDefaultPath(String)
-  - Config::load() rewired; TTY-gated eprintln! for deprecation notices
-  - AC4 mandatory wording ("arai migrate") confirmed in notice message
-  - 8 new unit tests in src/config.rs; 287 total tests passing
-
-  PR already open on branch paths/73-deprecation-shim.
+  This build cycle covered brief v3 / GitHub issue #74 (docs sweep).
+  The branch paths/73-deprecation-shim contains both:
+    - The deprecation shim (issue #73, brief v2 build cycle, already complete)
+    - The docs sweep (issue #74, brief v3 build cycle, now complete)
+  Both are ready for PR.

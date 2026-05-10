@@ -1,9 +1,8 @@
 schema_version: 1
 decided_at: "2026-05-10"
-invocation_reason: "subagent_returned:verifier:01KR8598KXT557344N231648RT"
+invocation_reason: "subagent_returned:verifier:01KR8R6DG5FY12C9PA32ZRFD8M"
 
 actions:
-
   - action: complete
     summary:
       modules_implemented: 1
@@ -12,20 +11,9 @@ actions:
       re_raises_resolved: 0
       re_raises_user_escalated: 0
     notes: |
-      Verifier handoff 01KR8598KXT557344N231648RT returned overall: pass.
-      All 8 ACs satisfied. 287 tests passing (277 prior + 10 new: 8 from the
-      implementor covering AC1-AC6 plus notice-mutual-exclusivity and
-      determinism, plus 2 smoke tests from the verifier).
-
-      Single_module tier — no composition phase. Build is complete.
-
-      The implementation lives in src/config.rs only. The PR is already open
-      on branch paths/73-deprecation-shim. The dispatcher should surface a
-      completion message to the user referencing the open PR.
-
-      One structural finding logged (not a bug, not blocking): the binary-only
-      crate architecture means closure-injection tests cannot compile as external
-      tests/*.rs files. The implementor correctly placed them in
-      #[cfg(test)] mod tests inside src/config.rs. Future contracts on this
-      codebase should account for this — the verifier's finding is preserved in
-      handoff/01KR8598KXT557344N231648RT/outputs/verifier_report.md.
+      Build cycle for brief v3 (GitHub issue #74 — docs sweep) is complete.
+      Verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
+      All 8 ACs satisfied. 287/287 tests pass.
+      Files touched: README.md, llms-install.md, CHANGELOG.md (only).
+      Git branch: paths/73-deprecation-shim.
+      Ready for PR open or user-initiated commit/push.
