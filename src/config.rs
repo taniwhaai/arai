@@ -19,9 +19,9 @@ impl Config {
         let project_root = find_project_root()?;
         let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
 
-        let arai_base_dir = std::env::var("ARAI_DB_DIR")
+        let arai_base_dir = std::env::var("ARAI_BASE_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| home_dir.join(".arai"));
+            .unwrap_or_else(|_| home_dir.join(".taniwha").join("arai"));
 
         let llm_command = std::env::var("ARAI_LLM_CMD").ok();
         let api_url = std::env::var("ARAI_API_URL").ok();
@@ -115,7 +115,7 @@ impl Config {
         format!("{dir_name}-{short_hash}")
     }
 
-    /// DB path: ~/.arai/projects/<dirname>-<8char-sha256>/arai.db
+    /// DB path: ~/.taniwha/arai/projects/<dirname>-<8char-sha256>/arai.db
     pub fn db_path(&self) -> PathBuf {
         self.arai_base_dir
             .join("projects")
@@ -174,7 +174,7 @@ mod tests {
         let cfg = Config {
             project_root: PathBuf::from("/usr/src/myproject"),
             home_dir: PathBuf::from("/usr/src"),
-            arai_base_dir: PathBuf::from("/usr/src/.arai"),
+            arai_base_dir: PathBuf::from("/usr/src/.taniwha/arai"),
             extra_sources: Vec::new(),
             guardrails_mode: "advise".to_string(),
             llm_command: None,
@@ -190,7 +190,7 @@ mod tests {
         let cfg = Config {
             project_root: PathBuf::from("/usr/src/myproject"),
             home_dir: PathBuf::from("/usr/src"),
-            arai_base_dir: PathBuf::from("/usr/src/.arai"),
+            arai_base_dir: PathBuf::from("/usr/src/.taniwha/arai"),
             extra_sources: Vec::new(),
             guardrails_mode: "advise".to_string(),
             llm_command: None,
@@ -200,7 +200,7 @@ mod tests {
         };
         let db = cfg.db_path();
         let db_str = db.to_string_lossy();
-        assert!(db_str.starts_with("/usr/src/.arai/projects/myproject-"));
+        assert!(db_str.starts_with("/usr/src/.taniwha/arai/projects/myproject-"));
         assert!(db_str.ends_with("/arai.db"));
     }
 }

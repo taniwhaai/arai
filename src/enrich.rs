@@ -168,7 +168,7 @@ pub fn enrich_guardrails(_store: &Store, _arai_base_dir: &Path) -> Result<usize,
     }
 }
 
-/// Ensure the model is downloaded to ~/.arai/models/all-MiniLM-L6-v2/
+/// Ensure the model is downloaded to ~/.taniwha/arai/models/all-MiniLM-L6-v2/
 #[cfg(feature = "enrich")]
 fn ensure_model_downloaded(arai_base_dir: &Path) -> Result<PathBuf, String> {
     let model_dir = arai_base_dir.join(MODEL_DIR_NAME).join(MODEL_NAME);
@@ -401,7 +401,7 @@ pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &
              \n  ARAI_LLM_CMD=\"claude -p\"                # Claude Code\
              \n  ARAI_LLM_CMD=\"ollama run llama3\"         # Ollama\
              \n  ARAI_LLM_CMD=\"llm -m gpt-4o\"             # Simon Willison's llm\
-             \n\nOr add to ~/.arai/config.toml:\n\
+             \n\nOr add to ~/.taniwha/arai/config.toml:\n\
              \n  [enrich]\
              \n  llm_command = \"claude -p\""
         )?;
@@ -498,7 +498,7 @@ fn resolve_api_config(
     Err("No API endpoint configured. Set one of:\n\
          \n  ARAI_API_KEY=sk-...                        # Uses OpenAI by default\
          \n  ARAI_API_URL=http://localhost:11434/v1      # Ollama (no key needed)\
-         \n\nOr add to ~/.arai/config.toml:\n\
+         \n\nOr add to ~/.taniwha/arai/config.toml:\n\
          \n  [enrich]\
          \n  api_url = \"https://api.openai.com/v1\"\
          \n  api_key_env = \"OPENAI_API_KEY\"\
