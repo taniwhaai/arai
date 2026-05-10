@@ -4,23 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-
-- **Default state path**: moved from `~/.arai/` to `~/.taniwha/arai/`
-  ([#87](https://github.com/taniwhaai/arai/pull/87)). Audit logs, config,
-  and the local SQLite store now live under
-  `~/.taniwha/arai/{audit,config.toml,db}` by default. The old `~/.arai/`
-  path is still honoured by the deprecation shim
-  ([#89](https://github.com/taniwhaai/arai/pull/89)) — when detected, Arai
-  reads from the legacy location and emits a one-time stderr warning so
-  existing installs keep working until users migrate.
-- **Env var rename**: `ARAI_DB_DIR` → `ARAI_BASE_DIR`
-  ([#87](https://github.com/taniwhaai/arai/pull/87)). The new name reflects
-  that the variable now overrides the entire state directory (audit + config
-  + db), not just the database. The old `ARAI_DB_DIR` is still honoured by
-  the deprecation shim ([#89](https://github.com/taniwhaai/arai/pull/89))
-  with a stderr warning prompting users to switch.
-
 ## [0.2.14] - 2026-05-02
 
 ### Documentation

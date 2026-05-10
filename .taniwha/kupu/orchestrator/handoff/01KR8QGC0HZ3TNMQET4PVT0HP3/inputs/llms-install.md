@@ -14,7 +14,7 @@ verification.
   decisions (deny/inject/review) from the local audit log.
 
 It is local-only. No network calls. No credentials required. State lives
-under `~/.taniwha/arai/`.
+under `~/.arai/`.
 
 ## Step 1 — Install the binary
 

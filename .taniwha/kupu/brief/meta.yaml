@@ -1,6 +1,6 @@
 schema_version: 1
 family: brief
-current_version: 2
+current_version: 3
 versions:
 - version: 1
   recorded_at:
@@ -12,5 +12,11 @@ versions:
   recorded_at:
     iso: 2026-05-10T04:55:19.820Z
     filename: 20260510T045519820Z
+  source: user_amendment
+  schema_version: 1
+- version: 3
+  recorded_at:
+    iso: 2026-05-10T10:39:00.823Z
+    filename: 20260510T103900823Z
   source: user_amendment
   schema_version: 1

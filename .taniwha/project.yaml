@@ -10,7 +10,7 @@ tools_registered:
 - kupu
 current_phase: phase-1
 brief:
-  current_version: 2
+  current_version: 3
 design:
   current_version: 1
 contracts:
