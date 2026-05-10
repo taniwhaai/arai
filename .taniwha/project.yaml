@@ -9,3 +9,10 @@ tooling_versions:
 tools_registered:
 - kupu
 current_phase: phase-1
+brief:
+  current_version: 2
+design:
+  current_version: 1
+contracts:
+  base-directory-resolution:
+    current_version: 1

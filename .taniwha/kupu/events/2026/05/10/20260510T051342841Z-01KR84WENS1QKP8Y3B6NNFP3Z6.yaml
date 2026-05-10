@@ -1,0 +1,15 @@
+event_id: 01KR84WENS1QKP8Y3B6NNFP3Z6
+kind: contract_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-10T05:13:42.841Z
+  filename: 20260510T051342841Z
+payload:
+  schema_version: 1
+  family: contract
+  module: base-directory-resolution
+  version: 1
+  parent_design_version: 1
+  parent_omitted: false

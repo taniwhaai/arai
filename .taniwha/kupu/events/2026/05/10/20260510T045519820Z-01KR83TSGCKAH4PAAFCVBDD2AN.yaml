@@ -1,0 +1,12 @@
+event_id: 01KR83TSGCKAH4PAAFCVBDD2AN
+kind: brief_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-10T04:55:19.820Z
+  filename: 20260510T045519820Z
+payload:
+  schema_version: 1
+  family: brief
+  version: 2
