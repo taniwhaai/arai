@@ -1,5 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Triple {
@@ -77,10 +78,11 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
 /// Accepts case-insensitive `expires` / `expire` / `until`.  If nothing is
 /// found, the object is returned unchanged with `None`.
 pub fn extract_expiry(object: &str) -> (String, Option<String>) {
-    let re = match Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$") {
-        Ok(r) => r,
-        Err(_) => return (object.to_string(), None),
-    };
+    static EXPIRY_RE: OnceLock<Regex> = OnceLock::new();
+    let re = EXPIRY_RE.get_or_init(|| {
+        Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$")
+            .expect("valid regex")
+    });
     if let Some(caps) = re.captures(object) {
         let date = caps.get(1).map(|m| m.as_str().to_string());
         let cleaned = re.replace(object, "").trim().to_string();
@@ -273,7 +275,10 @@ fn is_list_start(trimmed: &str) -> bool {
         return true;
     }
     // Numbered list: "1. ", "2. ", etc.
-    let re = Regex::new(r"^\d+\.\s").unwrap();
+    static NUMBERED_LIST_RE: OnceLock<Regex> = OnceLock::new();
+    let re = NUMBERED_LIST_RE.get_or_init(|| {
+        Regex::new(r"^\d+\.\s").expect("valid regex")
+    });
     re.is_match(trimmed)
 }
 
@@ -281,21 +286,32 @@ fn strip_list_prefix(trimmed: &str) -> String {
     if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
         return trimmed[2..].to_string();
     }
-    let re = Regex::new(r"^\d+\.\s+").unwrap();
+    static NUMBERED_PREFIX_RE: OnceLock<Regex> = OnceLock::new();
+    let re = NUMBERED_PREFIX_RE.get_or_init(|| {
+        Regex::new(r"^\d+\.\s+").expect("valid regex")
+    });
     re.replace(trimmed, "").to_string()
 }
 
 /// Strip markdown formatting: bold, italic, backticks, links.
 fn strip_markdown(text: &str) -> String {
-    let s = text.to_string();
+    static BOLD_RE: OnceLock<Regex> = OnceLock::new();
+    static CODE_RE: OnceLock<Regex> = OnceLock::new();
+    static LINK_RE: OnceLock<Regex> = OnceLock::new();
+    let re_bold = BOLD_RE.get_or_init(|| {
+        Regex::new(r"\*\*(.+?)\*\*|__(.+?)__").expect("valid regex")
+    });
+    let re_code = CODE_RE.get_or_init(|| {
+        Regex::new(r"`([^`]+)`").expect("valid regex")
+    });
+    let re_link = LINK_RE.get_or_init(|| {
+        Regex::new(r"\[([^]]+)]\([^)]+\)").expect("valid regex")
+    });
     // Strip bold **text** and __text__
-    let re_bold = Regex::new(r"\*\*(.+?)\*\*|__(.+?)__").unwrap();
-    let s = re_bold.replace_all(&s, "$1$2").to_string();
+    let s = re_bold.replace_all(text, "$1$2").to_string();
     // Strip inline code `text`
-    let re_code = Regex::new(r"`([^`]+)`").unwrap();
     let s = re_code.replace_all(&s, "$1").to_string();
     // Strip markdown links [text](url) → text
-    let re_link = Regex::new(r"\[([^]]+)]\([^)]+\)").unwrap();
     let s = re_link.replace_all(&s, "$1").to_string();
     // Strip em-dash separators for cleaner matching
     s.replace(" — ", " - ")
@@ -323,7 +339,10 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     //   `**Always** run tests before push`                         (emphasis — keep)
     // Catches the colon-inside-bold case the previous trailing-separator
     // regex missed.
-    let bold_label_re = Regex::new(r"^\*\*[^*]+\s[^*]*\*\*").ok()?;
+    static BOLD_LABEL_RE: OnceLock<Regex> = OnceLock::new();
+    let bold_label_re = BOLD_LABEL_RE.get_or_init(|| {
+        Regex::new(r"^\*\*[^*]+\s[^*]*\*\*").expect("valid regex")
+    });
     let is_bold_label = bold_label_re.is_match(text.trim_start());
 
     // Strip markdown formatting before matching
@@ -351,39 +370,49 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     //                                        preference
     //   enforce                            → enforces (Warn)  — verb form
     //                                        of the predicate
-    let start_patterns: Vec<(&str, &str)> = vec![
-        (r"(?i)^never\s+(.+)", "never"),
-        (r"(?i)^always\s+(.+)", "always"),
-        (r"(?i)^don'?t\s+(.+)", "forbids"),
-        (r"(?i)^do\s+not\s+(.+)", "forbids"),
-        (r"(?i)^must\s+not\s+(.+)", "must_not"),
-        (r"(?i)^must\s+(.+)", "requires"),
-        (r"(?i)^should\s+not\s+(.+)", "must_not"),
-        (r"(?i)^shouldn'?t\s+(.+)", "must_not"),
-        (r"(?i)^should\s+(.+)", "prefers"),
-        (r"(?i)^cannot\s+(.+)", "must_not"),
-        (r"(?i)^refuse\s+to\s+(.+)", "forbids"),
-        (r"(?i)^avoid\s+(.+)", "forbids"),
-        (r"(?i)^ensure\s+(.+)", "enforces"),
-        (r"(?i)^enforce\s+(.+)", "enforces"),
-        (r"(?i)^make\s+sure\s+(?:that\s+)?(.+)", "enforces"),
-        (r"(?i)^be\s+sure\s+(?:to\s+)?(.+)", "enforces"),
-        (r"(?i)^requires?\s+(.+)", "requires"),
-        (r"(?i)^prefer\s+(.+?)(?:\s+over\s+.+)?$", "prefers"),
-        (r"(?i)^consider\s+(.+)", "prefers"),
-        (r"(?i)^recommend(?:ed)?\s+(.+)", "prefers"),
-        (r"(?i)^stop\s+(.+)", "forbids"),
-        (r"(?i)^skip\s+(.+)", "forbids"),
-        (r"(?i)^only\s+(.+)", "requires"),
-    ];
+    static START_PATTERNS: OnceLock<Vec<(Regex, &'static str, bool)>> = OnceLock::new();
+    let start_patterns = START_PATTERNS.get_or_init(|| {
+        // (regex, predicate, is_consider) — `is_consider` flags the
+        // `^consider` rule so the bold-label gate below can short-circuit
+        // without a substring search on the pattern string.
+        let raw: &[(&str, &str)] = &[
+            (r"(?i)^never\s+(.+)", "never"),
+            (r"(?i)^always\s+(.+)", "always"),
+            (r"(?i)^don'?t\s+(.+)", "forbids"),
+            (r"(?i)^do\s+not\s+(.+)", "forbids"),
+            (r"(?i)^must\s+not\s+(.+)", "must_not"),
+            (r"(?i)^must\s+(.+)", "requires"),
+            (r"(?i)^should\s+not\s+(.+)", "must_not"),
+            (r"(?i)^shouldn'?t\s+(.+)", "must_not"),
+            (r"(?i)^should\s+(.+)", "prefers"),
+            (r"(?i)^cannot\s+(.+)", "must_not"),
+            (r"(?i)^refuse\s+to\s+(.+)", "forbids"),
+            (r"(?i)^avoid\s+(.+)", "forbids"),
+            (r"(?i)^ensure\s+(.+)", "enforces"),
+            (r"(?i)^enforce\s+(.+)", "enforces"),
+            (r"(?i)^make\s+sure\s+(?:that\s+)?(.+)", "enforces"),
+            (r"(?i)^be\s+sure\s+(?:to\s+)?(.+)", "enforces"),
+            (r"(?i)^requires?\s+(.+)", "requires"),
+            (r"(?i)^prefer\s+(.+?)(?:\s+over\s+.+)?$", "prefers"),
+            (r"(?i)^consider\s+(.+)", "prefers"),
+            (r"(?i)^recommend(?:ed)?\s+(.+)", "prefers"),
+            (r"(?i)^stop\s+(.+)", "forbids"),
+            (r"(?i)^skip\s+(.+)", "forbids"),
+            (r"(?i)^only\s+(.+)", "requires"),
+        ];
+        raw.iter()
+            .map(|(p, pred)| {
+                (Regex::new(p).expect("valid regex"), *pred, p.contains("consider"))
+            })
+            .collect()
+    });
 
-    for (pattern, predicate) in &start_patterns {
-        let re = Regex::new(pattern).ok()?;
+    for (re, predicate, is_consider) in start_patterns {
         if let Some(caps) = re.captures(&cleaned) {
             // Skip `consider` when the bullet is a labelled description
             // (e.g. `**Consider constraints:** What are the goals?` is a
             // section heading inside a list, not a soft preference rule).
-            if is_bold_label && pattern.contains("consider") {
+            if is_bold_label && *is_consider {
                 continue;
             }
             if let Some(obj_match) = caps.get(1) {
@@ -399,7 +428,10 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // form (`**No build process** - this is a zero-build extension.`) which
     // is feature-absence description, not a rule.
     if !is_bold_label {
-        let no_re = Regex::new(r"(?i)^no\s+(.+)").ok()?;
+        static NO_RE: OnceLock<Regex> = OnceLock::new();
+        let no_re = NO_RE.get_or_init(|| {
+            Regex::new(r"(?i)^no\s+(.+)").expect("valid regex")
+        });
         if let Some(caps) = no_re.captures(&cleaned) {
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
@@ -410,14 +442,19 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     }
 
     // Layer 2: "X is forbidden/required" patterns
-    let passive_patterns: Vec<(&str, &str)> = vec![
-        (r"(?i)(.+?)\s+is\s+forbidden", "forbids"),
-        (r"(?i)(.+?)\s+is\s+required", "requires"),
-        (r"(?i)(.+?)\s+is\s+not\s+allowed", "forbids"),
-    ];
+    static PASSIVE_PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    let passive_patterns = PASSIVE_PATTERNS.get_or_init(|| {
+        let raw: &[(&str, &str)] = &[
+            (r"(?i)(.+?)\s+is\s+forbidden", "forbids"),
+            (r"(?i)(.+?)\s+is\s+required", "requires"),
+            (r"(?i)(.+?)\s+is\s+not\s+allowed", "forbids"),
+        ];
+        raw.iter()
+            .map(|(p, pred)| (Regex::new(p).expect("valid regex"), *pred))
+            .collect()
+    });
 
-    for (pattern, predicate) in &passive_patterns {
-        let re = Regex::new(pattern).ok()?;
+    for (re, predicate) in passive_patterns {
         if let Some(caps) = re.captures(&cleaned) {
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
@@ -470,16 +507,19 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // Shape: ^(Before|After|When|Whenever|If|For)\s+<condition>(,|:|→|—)\s+<verb>\s+<rest>
     // The verb must be in the union of recognised imperatives so we don't
     // accidentally extract a rule from "When X, see Y" prose continuations.
-    let conditional_re = Regex::new(
-        r"(?ix)
-        ^\s*(?:before|after|when|whenever|if|for)\s+   # trigger word
-        (.+?)                                          # condition phrase
-        \s*[,:\u{2192}\u{2014}]\s+                     # `,`, `:`, `→`, or `—`
-        (\w+)                                          # imperative verb
-        \s+(.+)                                        # rule body
-        ",
-    )
-    .ok()?;
+    static CONDITIONAL_RE: OnceLock<Regex> = OnceLock::new();
+    let conditional_re = CONDITIONAL_RE.get_or_init(|| {
+        Regex::new(
+            r"(?ix)
+            ^\s*(?:before|after|when|whenever|if|for)\s+   # trigger word
+            (.+?)                                          # condition phrase
+            \s*[,:\u{2192}\u{2014}]\s+                     # `,`, `:`, `→`, or `—`
+            (\w+)                                          # imperative verb
+            \s+(.+)                                        # rule body
+            ",
+        )
+        .expect("valid regex")
+    });
     if let Some(caps) = conditional_re.captures(&cleaned) {
         let verb = caps.get(2)?.as_str().to_lowercase();
         let body = caps.get(3)?.as_str().trim();
@@ -528,18 +568,23 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // Layer 4: Mid-sentence imperatives — "If X, STOP/never/don't Y" without
     // the trigger-word prefix Layer 7 expects (covers ", never X" and
     // "-- don't X" cases that don't lead with Before/After/When/If/For).
-    let mid_patterns: Vec<(&str, &str)> = vec![
-        (r"(?i),\s*never\s+(.+)", "never"),
-        (r"(?i),\s*always\s+(.+)", "always"),
-        (r"(?i),\s*don'?t\s+(.+)", "forbids"),
-        (r"(?i),\s*do\s+not\s+(.+)", "forbids"),
-        (r"(?i),\s*stop\s+(.+)", "forbids"),
-        (r"(?i)--\s*don'?t\s+(.+)", "forbids"),
-        (r"(?i)—\s*don'?t\s+(.+)", "forbids"),
-    ];
+    static MID_PATTERNS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    let mid_patterns = MID_PATTERNS.get_or_init(|| {
+        let raw: &[(&str, &str)] = &[
+            (r"(?i),\s*never\s+(.+)", "never"),
+            (r"(?i),\s*always\s+(.+)", "always"),
+            (r"(?i),\s*don'?t\s+(.+)", "forbids"),
+            (r"(?i),\s*do\s+not\s+(.+)", "forbids"),
+            (r"(?i),\s*stop\s+(.+)", "forbids"),
+            (r"(?i)--\s*don'?t\s+(.+)", "forbids"),
+            (r"(?i)—\s*don'?t\s+(.+)", "forbids"),
+        ];
+        raw.iter()
+            .map(|(p, pred)| (Regex::new(p).expect("valid regex"), *pred))
+            .collect()
+    });
 
-    for (pattern, predicate) in &mid_patterns {
-        let re = Regex::new(pattern).ok()?;
+    for (re, predicate) in mid_patterns {
         if let Some(caps) = re.captures(&cleaned) {
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
@@ -556,7 +601,10 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // inside a `## Conventions` / `## Style` / `## Best Practices` section
     // where the writer means the section's framing, not a generic verb
     // call-out.
-    let use_re = Regex::new(r"(?i)^use\s+(.+)").ok()?;
+    static USE_RE: OnceLock<Regex> = OnceLock::new();
+    let use_re = USE_RE.get_or_init(|| {
+        Regex::new(r"(?i)^use\s+(.+)").expect("valid regex")
+    });
     if let Some(caps) = use_re.captures(&cleaned) {
         let object = caps.get(1)?.as_str().trim();
         let has_known_tool = contains_known_tool(&lower);
@@ -629,7 +677,10 @@ fn is_code_reference(text: &str) -> bool {
         return true;
     }
     // file:line reference
-    let re = Regex::new(r"^[\w./\\-]+:\d+$").unwrap();
+    static FILE_LINE_RE: OnceLock<Regex> = OnceLock::new();
+    let re = FILE_LINE_RE.get_or_init(|| {
+        Regex::new(r"^[\w./\\-]+:\d+$").expect("valid regex")
+    });
     if re.is_match(trimmed) {
         return true;
     }
