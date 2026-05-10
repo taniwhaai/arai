@@ -47,3 +47,7 @@ events:
   kind: pr_opened
   timestamp_iso: 2026-05-10T03:47:51.883Z
   relative_path: 2026/05/10/20260510T034751883Z-01KR7ZZ8EBFCD8YKCPGQKC2R2B.yaml
+- event_id: 01KR80F1632Y75XE3023JQN98Z
+  kind: pr_opened
+  timestamp_iso: 2026-05-10T03:56:28.739Z
+  relative_path: 2026/05/10/20260510T035628739Z-01KR80F1632Y75XE3023JQN98Z.yaml

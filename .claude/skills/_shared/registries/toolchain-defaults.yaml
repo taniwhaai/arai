@@ -1,0 +1,92 @@
+# Toolchain defaults registry
+#
+# Used by the orchestrator's project-context capture flow to suggest sensible
+# default commands per language. The registry is purely declarative — adding
+# a language means adding an entry below, not writing a script.
+#
+# How this is consumed:
+#   1. After the user picks a language during project context capture, the
+#      orchestrator looks up that language's entry here.
+#   2. It runs the binary_probes (best-effort; failures are not fatal — they
+#      just mean defaults will be empty for the user to fill in manually).
+#   3. It surfaces a structured user-input round with the recommended_commands
+#      pre-filled. Any value in recommended_commands may be empty if a probe
+#      did not find the relevant tool, or if the language genuinely has no
+#      conventional command in that role.
+#   4. The user confirms or overrides each command. The result is written to
+#      project_context.toolchain.commands and used by every subsequent
+#      dispatch (verifier, leaf, composition).
+#
+# After this single capture moment, no further detection is needed. Skills
+# read the captured commands by name from project_context.yaml. Adding a
+# language doesn't require a code change to any skill — only a row here.
+#
+# Format per language:
+#   <language_key>:
+#     display_name: <human-readable name shown in user prompts>
+#     binary_probes: [<list of shell command strings to run as detection>]
+#     recommended_commands:
+#       test: <default test command, or empty string if N/A>
+#       build: <default build command, or empty string if N/A>
+#       format: <default format command, or empty string if N/A>
+#       lint: <default lint command, or empty string if N/A>
+#
+# Probes are advisory only. Their output is not parsed; their exit code is
+# checked. Probes are NOT trusted to drive command selection — the user
+# always confirms.
+
+rust:
+  display_name: Rust
+  binary_probes:
+    - command -v cargo
+    - command -v rustc
+  recommended_commands:
+    test: cargo test
+    build: cargo build --release
+    format: cargo fmt --all
+    lint: cargo clippy --all-targets
+
+python:
+  display_name: Python
+  binary_probes:
+    - command -v python3
+    - command -v pytest
+  recommended_commands:
+    test: pytest
+    build: ""
+    format: ruff format .
+    lint: ruff check .
+
+go:
+  display_name: Go
+  binary_probes:
+    - command -v go
+  recommended_commands:
+    test: go test ./...
+    build: go build ./...
+    format: gofmt -w .
+    lint: go vet ./...
+
+typescript:
+  display_name: TypeScript
+  binary_probes:
+    - command -v node
+    - command -v npm
+  recommended_commands:
+    test: npm test
+    build: npm run build
+    format: npx prettier --write .
+    lint: npx eslint .
+
+javascript:
+  display_name: JavaScript
+  binary_probes:
+    - command -v node
+    - command -v npm
+  recommended_commands:
+    test: npm test
+    build: npm run build
+    format: npx prettier --write .
+    lint: npx eslint .
+
+# Add new languages by appending entries. No skill code changes required.

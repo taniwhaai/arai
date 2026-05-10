@@ -1,0 +1,10 @@
+event_id: 01KR80F1632Y75XE3023JQN98Z
+kind: pr_opened
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:56:28.739Z
+  filename: 20260510T035628739Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"pr": "#88", "branch": "chore/track-team-tooling", "scope": "Reverses gitignore reflex; tracks .taniwha/ + .claude/settings.json + .mcp.json. Hides only .claude/settings.local.json (per-user). Includes 21 files: kupu bootstrap state from this session.", "no_issue_link": "Not closing a specific issue — this is plumbing the user requested mid-session after seeing what was untracked.", "follow_up_note": "This event itself will create a new .taniwha/kupu/events/ file that''s now untracked again — incremental commits of new kupu state will become a recurring pattern (probably worth a future `kupu commit` or auto-commit affordance)."}'

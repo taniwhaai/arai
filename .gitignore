@@ -32,3 +32,6 @@ npm/bin/arai.exe
 
 # Word/Office lockfiles
 ~$*
+
+# Windows NTFS alternate-data-stream metadata (appears on WSL when files cross from Windows)
+*:Zone.Identifier
