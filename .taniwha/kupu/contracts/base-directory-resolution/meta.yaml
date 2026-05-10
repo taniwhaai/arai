@@ -1,0 +1,12 @@
+schema_version: 1
+family: contract
+module: base-directory-resolution
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-10T05:13:42.841Z
+    filename: 20260510T051342841Z
+  parent_design_version: 1
+  parent_omitted: false
+  schema_version: 1

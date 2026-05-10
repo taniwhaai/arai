@@ -1,0 +1,11 @@
+schema_version: 1
+family: design
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-10T05:07:13.053Z
+    filename: 20260510T050713053Z
+  parent_brief_version: 2
+  parent_omitted: false
+  schema_version: 1

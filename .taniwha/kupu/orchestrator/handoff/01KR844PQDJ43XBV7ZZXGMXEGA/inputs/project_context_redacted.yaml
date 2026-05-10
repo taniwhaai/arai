@@ -1,0 +1,17 @@
+# Redacted project_context for the design-doc subagent.
+#
+# Per per-role input whitelist: only {language.name, repo_style.kind} are
+# exposed to design-doc. The full project_context.yaml lives at
+# .taniwha/kupu/project_context.yaml and is consumed by contract-derivation
+# and code-producing roles, not by design-doc.
+#
+# Design-doc reads this to phrase scope correctly (e.g. knowing single_package
+# affects "out of scope" wording) but must remain language-neutral in the
+# document it produces — toolchain, idioms, error-handling style, file layout
+# are NOT design-doc concerns.
+
+project_context:
+  language:
+    name: rust
+  repo_style:
+    kind: single_package

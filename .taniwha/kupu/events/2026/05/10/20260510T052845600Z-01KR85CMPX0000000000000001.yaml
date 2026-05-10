@@ -1,0 +1,24 @@
+schema_version: 1
+event_id: 01KR85CMPX0000000000000001
+kind: build_complete
+timestamp_iso: 2026-05-10T05:28:45.600Z
+
+payload:
+  tier: single_module
+  modules_implemented: 1
+  compositions_built: 0
+  contract_amendments: 0
+  re_raises_resolved: 0
+  re_raises_user_escalated: 0
+  verifier_handoff: 01KR8598KXT557344N231648RT
+  verifier_overall: pass
+  test_count_before: 277
+  test_count_after: 287
+  branch: paths/73-deprecation-shim
+  notes: |
+    All 8 ACs of base-directory-resolution/v1 satisfied.
+    Implementation in src/config.rs only.
+    287 tests passing (10 new: 8 from implementor, 2 from verifier).
+    Structural finding: binary-only crate architecture prevents
+    closure-injection tests in tests/ directory — non-blocking,
+    recorded in verifier report for future contract guidance.
