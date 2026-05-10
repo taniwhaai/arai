@@ -1,0 +1,10 @@
+event_id: 01KR7Z5XX5N66BYFR2HJ5N88NN
+kind: guardrail_self_blocking
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:34:01.893Z
+  filename: 20260510T033401893Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"finding": "`arai why \"git status\"` is itself blocked by the rule it''s trying to diagnose. The PreToolUse hook fires on the bash command containing the substring ''git'' in the argument to `arai why`, before arai''s own dry-run can execute. This means arai''s diagnostic explainer cannot be used on commands that trip the rule — the very class of commands you most want to explain.", "rule_id": "manual://arai-add/c16936ed", "match_percentage": "50%", "version_checked": "arai 0.2.14 (latest released, source matches)", "candidate_fixes": ["arai why should be exempt from the PreToolUse evaluation against its OWN argument (it''s a dry-run, not an execution)", "or: arai why should always run advisory regardless of ARAI_DENY_MODE", "or: the matcher should distinguish ''this command will run X'' from ''this command mentions X as data''"], "severity": "high — blocks self-diagnosis of false positives, the exact UX the maintainer most needs"}'

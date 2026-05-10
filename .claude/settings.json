@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "arai guardrails --match-stdin",
+            "timeout": 3,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "arai guardrails --match-stdin",
+            "timeout": 3,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "Stop": [],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "arai guardrails --match-stdin",
+            "timeout": 3,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}

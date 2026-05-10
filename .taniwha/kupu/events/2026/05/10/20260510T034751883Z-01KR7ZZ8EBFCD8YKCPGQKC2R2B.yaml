@@ -1,0 +1,10 @@
+event_id: 01KR7ZZ8EBFCD8YKCPGQKC2R2B
+kind: pr_opened
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:47:51.883Z
+  filename: 20260510T034751883Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"pr": "#87", "branch": "paths/71-default-paths", "closes": "#71", "files": ["src/config.rs", "src/enrich.rs"], "test_status": "277 passed, 0 failed", "uncommitted_intentional": [".gitignore (added .taniwha/) and .mcp.json (kupu registration) — separate scope from #71, not landed in this PR"], "release_blocker": "Don''t ship v0.2.15 until #73 (deprecation shim) is in — without it, ARAI_DB_DIR users and ~/.arai installs lose access on upgrade", "matcher_followup_issue": "#86 — opened for the false-positive analysis"}'

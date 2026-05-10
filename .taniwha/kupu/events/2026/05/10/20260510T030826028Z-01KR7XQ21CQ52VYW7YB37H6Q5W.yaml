@@ -1,0 +1,10 @@
+event_id: 01KR7XQ21CQ52VYW7YB37H6Q5W
+kind: issue_completed
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:08:26.028Z
+  filename: 20260510T030826028Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"issue": "#71", "summary": "Default paths moved from ~/.arai to ~/.taniwha/arai. ARAI_DB_DIR env var renamed to ARAI_BASE_DIR. enrich.rs user-facing strings updated to point at new path. test_db_path_format and test_claude_memory_slug fixtures updated to match.", "files_changed": ["src/config.rs", "src/enrich.rs"], "test_status": "all 277 tests pass", "follow_ups": ["#73 deprecation shim still owes ARAI_DB_DIR fallback + ~/.arai fallback", "#72 still owes the migration prompt", "#74 still owes README/CHANGELOG/llms-install.md sweep"], "not_committed": "Diff sitting in working tree; user decides whether to commit/PR."}'

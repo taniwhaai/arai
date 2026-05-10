@@ -1,0 +1,11 @@
+schema_version: 1
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+name: Arai
+created_at:
+  iso: 2026-05-10T02:41:13.391Z
+  filename: 20260510T024113391Z
+tooling_versions:
+  kupu: 0.1.0
+tools_registered:
+- kupu
+current_phase: phase-1

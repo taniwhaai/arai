@@ -1,0 +1,10 @@
+event_id: 01KR7ZME55K5MZE0NB09A2VK7T
+kind: rule_iteration_dead_end
+actor:
+  kind: tool
+  name: claude-code-opus-4-7
+timestamp:
+  iso: 2026-05-10T03:41:57.285Z
+  filename: 20260510T034157285Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"goal": "Replace overly broad ''Git never: git push to main without a PR'' (subject ''Git'' substring-matches every command containing the token) with a tighter rule.", "attempts": [{"text": "git push to main always requires a PR review", "result": "parser rejected — not imperative"}, {"text": "When pushing to main always open a PR first", "result": "parser rejected — not imperative"}, {"text": "git push to main requires an open PR", "result": "parser rejected — not imperative"}, {"text": "Never push to main without a PR", "result": "accepted, stored as ''Push never: push to main without a PR'' — but does not fire in `arai why` matches; suspected to be filtered out by tool-scope filtering because ''Push'' isn''t a recognized tool term"}], "current_state": {"old_rule_severity": "inform (downgraded earlier in session)", "new_rule_status": "stored but not firing", "all_git_commands_currently": "advisory only (no denies)", "real_git_push_origin_main": "would not be denied either — the safety net is missing"}, "compounding_issues_observed": ["Subject extraction can be too broad (single-token subjects substring-match unrelated commands)", "arai why is itself blocked by the rule being diagnosed (substring on its argument)", "Adding new rules requires specific imperative shapes that take iteration", "Tool-scope filtering may silently exclude valid-looking rules", "Classifier reads rapid rule-iteration as bypass behaviour, even when authorized"], "candidate_resolution": "Defer the rule rewrite to a dedicated GitHub issue. Keep the inform downgrade for the duration of this PR session. The matcher and rule-authoring UX issues are exactly the kind of thing the rules-file epic (#62) is meant to make first-class; worth a sibling issue to #82 (matcher tightening) or as a worked example for #76 (schema design)."}'

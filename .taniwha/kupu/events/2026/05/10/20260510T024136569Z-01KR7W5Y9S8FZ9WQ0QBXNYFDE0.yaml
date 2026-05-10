@@ -1,0 +1,10 @@
+event_id: 01KR7W5Y9S8FZ9WQ0QBXNYFDE0
+kind: open_question_surfaced
+actor:
+  kind: user
+  name: matt@mustard.co.nz
+timestamp:
+  iso: 2026-05-10T02:41:36.569Z
+  filename: 20260510T024136569Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"question": "TOML vs YAML for canonical rules file", "context": "Committable rules file (epic #62) needs a format. Brief recommends TOML. Issue #75 is a 1-2hr authoring spike to validate the choice — write the alembic rule + 2-3 others in both formats and judge ergonomics, especially for non-developers.", "options": ["TOML (recommended)", "YAML", "Other"], "blocks_issues": ["#62", "#75", "#76", "#77", "#78"], "spike_first": true}'

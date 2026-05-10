@@ -1,0 +1,10 @@
+event_id: 01KR7W5PNT8RCM63CG1GRKN31V
+kind: open_question_surfaced
+actor:
+  kind: user
+  name: matt@mustard.co.nz
+timestamp:
+  iso: 2026-05-10T02:41:28.762Z
+  filename: 20260510T024128762Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"question": "Cultural review owner for brand work", "context": "Te reo / whakapapa consultation required before any external launch of brand mark, wordmark, or NZ-context copy. Non-negotiable, not a polish pass. Need to name a person.", "blocks_issues": ["#60", "#70"], "decision_required_before": "any external brand launch (website, GitHub social card, package registry, marketing)"}'
