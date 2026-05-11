@@ -156,6 +156,19 @@ pub fn match_hook(
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
 
+    // Self-exemption: `arai` CLI commands (`arai why`, `arai severity`, `arai
+    // add`, `arai status`, …) are diagnostic / rule-management.  They read or
+    // mutate the rule set itself and shouldn't be blocked by it.  Issue #86:
+    // `arai why "git status"` was being denied by the very rule it was being
+    // asked to explain, and `arai severity "git push" block` was being denied
+    // when the user tried to pin a rule's severity.  Treat any Bash command
+    // whose first non-flag argument is the `arai` binary as a skip — same
+    // bypass channel as Read/Glob, no terms extracted, no rules consulted.
+    if tool_name == "Bash" && is_arai_self_command(&tool_input) {
+        out.skipped = true;
+        return Ok(out);
+    }
+
     let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
 
     // PostToolUse: sniff results but don't mutate session state here (that's a
@@ -195,7 +208,14 @@ pub fn match_hook(
         return Ok(out);
     }
 
-    let matched = guardrails::match_guardrails(&all_guardrails, &terms, &tool_name, &event);
+    let command_phrases = guardrails::extract_command_phrases(&tool_name, &tool_input);
+    let matched = guardrails::match_guardrails(
+        &all_guardrails,
+        &terms,
+        &command_phrases,
+        &tool_name,
+        &event,
+    );
 
     // Filter out rules whose prerequisites have already been met
     let matched: Vec<_> = if !session_id.is_empty() && event == "PreToolUse" {
@@ -526,6 +546,36 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
     "Arai: blocking rule matched".to_string()
 }
 
+/// True when a Bash `tool_input` invokes the `arai` CLI itself.  Matches the
+/// first token of the command (path-stripped) against the literal `arai` — so
+/// `arai why "git push"`, `./arai status`, `/usr/local/bin/arai add ...`, and
+/// `arai severity foo block` are all recognised.  Pipelines / chains: we look
+/// only at the first token of the first segment.  That is intentional — a
+/// user running `something && arai why ...` is composing arai with something
+/// else, and we only want to exempt the standalone case.
+fn is_arai_self_command(tool_input: &Value) -> bool {
+    let cmd = match tool_input.get("command").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return false,
+    };
+    // First segment up to a pipe / chain operator; first token within that.
+    let first_segment = cmd
+        .split(['|', ';'])
+        .next()
+        .unwrap_or(cmd)
+        .split("&&")
+        .next()
+        .unwrap_or(cmd)
+        .trim();
+    let first_token = first_segment.split_whitespace().next().unwrap_or("");
+    let basename = first_token.rsplit(['/', '\\']).next().unwrap_or(first_token);
+    // Strip an optional Windows `.exe` so cross-platform invocations match.
+    let stripped = basename
+        .strip_suffix(".exe")
+        .unwrap_or(basename);
+    stripped.eq_ignore_ascii_case("arai")
+}
+
 /// Produce a short human-readable preview of tool input for the audit log.
 /// Prefers the most-informative field per tool; truncates + strips newlines.
 fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
@@ -796,6 +846,108 @@ mod tests {
         let attached = post[0].intent.as_ref().expect("intent should be attached");
         assert_eq!(attached.severity, Severity::Block);
         assert_eq!(attached.tools, vec!["Bash".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Issue #86: `arai why "git push --force origin main"` was denied by the
+    /// very rule it was being asked to explain.  `arai severity "git push"
+    /// block` (rule management) was denied the same way.  Both should now
+    /// be exempted at the hook gate — they are diagnostic / configuration
+    /// commands operating on the rule set, not actions the rule set governs.
+    #[test]
+    fn arai_self_command_recognised_by_first_token() {
+        // Bare invocations
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai why \"git push\"" })));
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai severity \"git push\" block" })));
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai status" })));
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai" })));
+
+        // Path-prefixed invocations
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "/usr/local/bin/arai why x" })));
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "./arai add 'Never X'" })));
+        // Windows-style separator + .exe suffix
+        assert!(is_arai_self_command(&serde_json::json!({ "command": "C:\\bin\\arai.exe status" })));
+
+        // Negatives
+        assert!(!is_arai_self_command(&serde_json::json!({ "command": "git push --force origin main" })));
+        assert!(!is_arai_self_command(&serde_json::json!({ "command": "echo arai" })));
+        // Compose with arai in the middle of a pipeline — only the first
+        // segment counts.  `git status && arai why` is still a `git`
+        // command from the rule-engine's point of view.
+        assert!(!is_arai_self_command(&serde_json::json!({ "command": "git status && arai why x" })));
+        assert!(!is_arai_self_command(&serde_json::json!({ "command": "" })));
+        assert!(!is_arai_self_command(&serde_json::json!({})));
+    }
+
+    /// End-to-end regression for issue #86: a rule with single-token subject
+    /// `Git` extracted from "Git never: git push to main without a PR" must
+    /// NOT fire on read-only `git` subcommands.  The fix has two layers:
+    /// token-boundary subject matching closes the substring leak, and
+    /// dropping verb-mismatched rules closes the "git push rule blocks git
+    /// status" failure.
+    #[test]
+    fn issue_86_git_push_rule_does_not_fire_on_read_only_subcommands() {
+        let (store, dir) = temp_db();
+        let triple = crate::parser::Triple {
+            subject: "Git".to_string(),
+            predicate: "never".to_string(),
+            object: "git push to main without a PR".to_string(),
+            confidence: 0.95,
+            domain: "test".to_string(),
+            source_file: "manual".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+            noenrich: false,
+        };
+        store.upsert_file("manual", "x", &[triple], "manual").unwrap();
+        store.classify_all_guardrails().unwrap();
+        let rules = store.load_guardrails().unwrap();
+
+        // The push rule SHOULD still fire on `git push --force origin main`.
+        let push_terms = vec![
+            "git".to_string(),
+            "push".to_string(),
+            "force".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ];
+        let push_phrases = vec!["git push".to_string()];
+        let matched = guardrails::match_guardrails(&rules, &push_terms, &push_phrases, "Bash", "PreToolUse");
+        assert_eq!(matched.len(), 1, "push rule must fire on the push command");
+
+        // Read-only subcommands MUST NOT fire it.
+        for (read_only, phrase) in [
+            (vec!["git".to_string(), "status".to_string()], "git status"),
+            (vec!["git".to_string(), "diff".to_string()], "git diff"),
+            (vec!["git".to_string(), "log".to_string()], "git log"),
+        ] {
+            let phrases = vec![phrase.to_string()];
+            let matched = guardrails::match_guardrails(&rules, &read_only, &phrases, "Bash", "PreToolUse");
+            assert!(
+                matched.is_empty(),
+                "git push rule must not fire on read-only `{read_only:?}` (issue #86)"
+            );
+        }
+
+        // `gh issue create --title "...git-level..."` extracts `git-level` as
+        // a single token.  Subject "Git" must not match it via substring.
+        let gh_terms = vec![
+            "gh".to_string(),
+            "issue".to_string(),
+            "create".to_string(),
+            "title".to_string(),
+            "git-level".to_string(),
+            "scope".to_string(),
+        ];
+        let gh_phrases = vec!["gh issue".to_string()];
+        let matched = guardrails::match_guardrails(&rules, &gh_terms, &gh_phrases, "Bash", "PreToolUse");
+        assert!(
+            matched.is_empty(),
+            "git push rule must not fire on a `gh issue create` whose title contains `git-level` (issue #86)"
+        );
+
         std::fs::remove_dir_all(&dir).ok();
     }
 }

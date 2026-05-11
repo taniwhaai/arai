@@ -18,6 +18,21 @@ const NOISE_WORDS: &[&str] = &[
 /// Short tokens that are valid tool names (allowlisted despite < 3 chars).
 const SHORT_TOOL_ALLOWLIST: &[&str] = &["go", "gh", "uv", "mv", "rm", "ls", "cd", "nix"];
 
+/// Tokens that disqualify a `<tool> <next>` adjacency from forming a
+/// `tool subcommand` phrase.  These are the prepositions / articles /
+/// connectors that show up between a tool name and its real context in
+/// English rule prose ("never use docker **for** production",
+/// "always use cargo **with** --release").  When we see one of these
+/// immediately after a tool, the rule is talking about the tool generically
+/// — there is no subcommand to gate on, so the phrase isn't extracted and
+/// the rule falls through to bag-of-words scoring.  Kept short and
+/// preposition-only on purpose: short verbs like `run`, `test`, `build`
+/// MUST remain extractable as subcommands.
+const PHRASE_STOPWORDS: &[&str] = &[
+    "for", "in", "with", "to", "the", "a", "an", "as", "from", "into",
+    "on", "of", "by", "at", "is", "are", "or", "and", "via",
+];
+
 /// Check if a tool should skip guardrail matching entirely.
 pub fn should_skip_tool(tool_name: &str) -> bool {
     SKIP_TOOLS.contains(&tool_name)
@@ -257,12 +272,129 @@ fn extract_generic_terms(tool_input: &Value) -> Vec<String> {
     terms
 }
 
+/// Extract `<tool> <subcommand>` adjacency phrases from a tool call.  Each
+/// phrase is the lowercase string `"<tool> <subcommand>"` where `tool` is a
+/// member of `KNOWN_TOOLS` and `subcommand` is the next non-flag,
+/// non-empty token.  Used together with `extract_terms` to gate rules that
+/// name a specific tool subcommand: a rule whose object mentions
+/// `docker run` should fire on `docker run -it ubuntu` but NOT on
+/// `docker compose up`.  See `relevance_score`'s phrase-gate for the
+/// matching contract.
+///
+/// Returns an empty vec for non-Bash tools (file operations have no
+/// subcommand structure).  Empty result also means "no informative phrases
+/// available" — the gate inside `relevance_score` does the right thing
+/// either way: a rule with phrases against a phrase-less command drops,
+/// which mirrors the existing verb-mismatch behaviour for rules that
+/// name a specific action.
+pub fn extract_command_phrases(tool_name: &str, tool_input: &Value) -> Vec<String> {
+    if tool_name != "Bash" {
+        return Vec::new();
+    }
+    let command = match tool_input.get("command").and_then(|v| v.as_str()) {
+        Some(cmd) => cmd,
+        None => return Vec::new(),
+    };
+
+    let mut phrases = Vec::new();
+    for segment in command.split(['|', ';']) {
+        for sub in segment.split("&&") {
+            extract_phrases_from_segment(sub.trim(), &mut phrases);
+        }
+    }
+    phrases.sort();
+    phrases.dedup();
+    phrases
+}
+
+/// Walk one shell segment and emit a phrase whenever a `KNOWN_TOOLS` token
+/// is followed by a non-flag, non-empty subcommand token.  Skips intervening
+/// flags so that `git -c user.name=foo push origin` still produces the
+/// `git push` phrase.
+fn extract_phrases_from_segment(segment: &str, phrases: &mut Vec<String>) {
+    let raw_tokens: Vec<String> = shell_tokenize(segment)
+        .into_iter()
+        .flat_map(|t| {
+            t.split_whitespace()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mut i = 0;
+    while i + 1 < raw_tokens.len() {
+        let tool = raw_tokens[i]
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&raw_tokens[i])
+            .to_lowercase();
+        if KNOWN_TOOLS.contains(&tool.as_str()) {
+            let mut j = i + 1;
+            while j < raw_tokens.len() && raw_tokens[j].starts_with('-') {
+                j += 1;
+                // Defensively skip the flag's value too only if the flag was
+                // a single dash with a single letter (e.g. `-c value`).  The
+                // alternative — guessing arity per binary — is more wrong
+                // than missing the occasional `git -c user.name=foo push`
+                // phrase, and `=`-style flags don't burn a token anyway.
+                if j < raw_tokens.len()
+                    && !raw_tokens[j - 1].contains('=')
+                    && raw_tokens[j - 1].len() == 2
+                {
+                    j += 1;
+                }
+            }
+            if j < raw_tokens.len() {
+                let sub = raw_tokens[j].to_lowercase();
+                let clean: String = sub
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_string();
+                if !clean.is_empty() {
+                    phrases.push(format!("{tool} {clean}"));
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Extract `<tool> <subcommand>` phrases from a rule's object text.  Same
+/// shape as `extract_command_phrases` but operates on English prose: there
+/// are no flags to skip, and the next-token check filters preposition /
+/// article stopwords (`for`, `with`, `to`, …) so a generic rule like
+/// "never use docker for production" produces NO phrase and therefore
+/// falls through to bag-of-words scoring.  A rule that mentions an
+/// explicit subcommand — "never use docker run for local dev" — produces
+/// `"docker run"` and gets gated against the command's phrases.
+fn extract_rule_phrases(object: &str) -> Vec<String> {
+    let lower = object.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut phrases = Vec::new();
+    for i in 0..words.len().saturating_sub(1) {
+        let tool = words[i];
+        if !KNOWN_TOOLS.contains(&tool) {
+            continue;
+        }
+        let next = words[i + 1];
+        if next.len() < 2 || PHRASE_STOPWORDS.contains(&next) {
+            continue;
+        }
+        phrases.push(format!("{tool} {next}"));
+    }
+    phrases.sort();
+    phrases.dedup();
+    phrases
+}
+
 /// Match guardrails against extracted terms, filtering by classified intent and timing.
 /// Results are ranked by relevance — rules whose object text overlaps with the
 /// command terms are ranked higher.
 pub fn match_guardrails(
     guardrails: &[Guardrail],
     terms: &[String],
+    command_phrases: &[String],
     tool_name: &str,
     hook_event: &str,
 ) -> Vec<(Guardrail, u8)> {
@@ -280,9 +412,8 @@ pub fn match_guardrails(
 
                 // For tool-call-timed rules, also check subject and tool scope
                 if intent.timing == crate::intent::Timing::ToolCall {
-                    let subj = g.subject.to_lowercase();
-                    let subject_matches = terms.iter().any(|t| subj.contains(t));
-                    subject_matches && crate::intent::tool_matches_intent(intent, tool_name)
+                    subject_matches_terms(&g.subject, terms)
+                        && crate::intent::tool_matches_intent(intent, tool_name)
                 } else {
                     true
                 }
@@ -290,13 +421,16 @@ pub fn match_guardrails(
                 if hook_event != "PreToolUse" {
                     return false;
                 }
-                let subj = g.subject.to_lowercase();
-                terms.iter().any(|t| subj.contains(t))
+                subject_matches_terms(&g.subject, terms)
             }
         })
-        .map(|g| {
-            let score = relevance_score(&g.object, terms);
-            (g.clone(), score)
+        .filter_map(|g| {
+            // `None` means the rule names a specific command verb the
+            // command doesn't perform — drop it rather than fire on
+            // substring overlap from the subject alone.  See `relevance_score`
+            // for the verb-mismatch and phrase-gate contracts.
+            let score = relevance_score(&g.object, terms, command_phrases)?;
+            Some((g.clone(), score))
         })
         .collect();
 
@@ -330,14 +464,82 @@ fn relevance_percentage(score: usize, total_terms: usize, base_confidence: f64) 
 /// Higher score = more term overlap = more relevant.
 /// Command verbs that are semantically distinct — if a rule mentions one,
 /// the command should contain that same verb for a high relevance score.
+/// Command verbs that, when present in a rule's object, gate the rule by
+/// requiring at least one of them to also appear in the extracted command
+/// terms.  See `relevance_score` for the contract.
+///
+/// **Why `"run"` is intentionally absent.**  `run` is also in `NOISE_WORDS`
+/// (filtered from extracted command terms — `cargo run`, `docker run`,
+/// `npm run` all share the wrapper word, which carries no signal on its
+/// own).  If `run` lived in both lists the verb-mismatch check would
+/// permanently drop any rule whose only command-verb is `run`, because
+/// the term is structurally absent from every command.  That broke
+/// rules of the shape `Never use docker run for X` against the matching
+/// `docker run …` command.  The trade-off: a rule whose only verb is
+/// `run` no longer gets verb-mismatch protection against sibling
+/// subcommands of the same tool — `Never use docker run for X` will
+/// fire on `docker compose up` too.  The proper fix is adjacency-aware
+/// multi-word verb matching (treat `docker run` as a phrase); tracked
+/// separately.
 const COMMAND_VERBS: &[&str] = &[
     "push", "pull", "commit", "merge", "rebase", "checkout", "clone", "fetch",
     "stash", "reset", "revert", "cherry", "bisect", "tag", "branch",
-    "install", "uninstall", "build", "test", "run", "deploy", "publish",
+    "install", "uninstall", "build", "test", "deploy", "publish",
     "start", "stop", "create", "delete", "remove", "add", "update", "upgrade",
 ];
 
-fn relevance_score(object: &str, terms: &[String]) -> usize {
+/// Check whether a rule's subject overlaps with any extracted command term as
+/// a *whole word*.  Replaces an earlier `subj.contains(term)` substring check
+/// which leaked across word boundaries: subject "git" matched any subject
+/// containing "git" as a substring (e.g. `github`) and any rule subject also
+/// containing "git" as a substring fired on every `git *` command.  The
+/// substring leak in the opposite direction (term-inside-subject) was the
+/// proximate cause of issue #86 — single-token subjects like "Git" matched
+/// every `git <subcommand>` regardless of whether the rule was about that
+/// subcommand.  Token-boundary matching closes the leak; the verb-mismatch
+/// contract in `relevance_score` does the rest of the disambiguation.
+fn subject_matches_terms(subject: &str, terms: &[String]) -> bool {
+    let subj_lower = subject.to_lowercase();
+    let subj_tokens: Vec<&str> = subj_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if subj_tokens.is_empty() {
+        return false;
+    }
+    subj_tokens
+        .iter()
+        .any(|st| terms.iter().any(|t| t == st))
+}
+
+/// Score a rule's object text against the extracted command terms and
+/// `<tool> <subcommand>` adjacency phrases.
+///
+/// Returns `None` in two cases:
+///
+/// 1. **Phrase mismatch (#98)** — the rule names a tool-subcommand
+///    adjacency (`docker run`, `git push`, `cargo test`) and the command
+///    contains no matching phrase.  This catches the case the
+///    word-overlap matcher cannot: `docker run` and `docker compose`
+///    share the same single-word terms (`docker`), so word overlap
+///    alone can't tell the two subcommands apart.  Checked first
+///    because it is the most specific.
+/// 2. **Verb mismatch (#86)** — the rule names a `COMMAND_VERB`
+///    (push, commit, install, …) that does NOT appear in the command
+///    terms.  This lets a rule about `git push` not fire on
+///    `git status` / `git diff` / `git log`.  Runs second so a rule
+///    that survives the phrase gate isn't double-jeopardied by the
+///    coarser verb check.
+///
+/// `Some(n)` is the count of overlapping words when neither gate
+/// fires; `n` may be zero for general rules whose object names no
+/// command verbs and no command-term overlap (e.g. "hand-write
+/// migration files" firing on a Write because the *subject* matched).
+fn relevance_score(
+    object: &str,
+    terms: &[String],
+    command_phrases: &[String],
+) -> Option<usize> {
     let object_words: Vec<String> = object
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -345,23 +547,39 @@ fn relevance_score(object: &str, terms: &[String]) -> usize {
         .map(String::from)
         .collect();
 
+    // Phrase gate (#98): if the rule's object names a `<tool> <subcommand>`
+    // adjacency, the command must contain that same phrase.  Skip the gate
+    // when the rule has no phrase (generic rule, falls through to bag-of-
+    // words) — `extract_rule_phrases` already filters preposition stopwords
+    // so "never use docker for production" produces no phrase.
+    let rule_phrases = extract_rule_phrases(object);
+    if !rule_phrases.is_empty() {
+        let phrase_match = rule_phrases
+            .iter()
+            .any(|p| command_phrases.iter().any(|c| c == p));
+        if !phrase_match {
+            return None;
+        }
+    }
+
     let base_score: usize = terms.iter()
         .filter(|t| object_words.iter().any(|w| w == *t))
         .count();
 
-    // Penalty: if the rule contains command verbs and NONE of them match the terms,
-    // it's probably about a different action (e.g. rule says "push" but command is "pull")
+    // Verb mismatch: rule object contains specific command verbs and NONE of
+    // them appear in the command terms.  Previously this halved the score
+    // (min 1) so the rule still fired; that let a `git push` rule block
+    // every `git status`.  Now: drop the match entirely.
     let rule_verbs: Vec<&String> = object_words.iter()
         .filter(|w| COMMAND_VERBS.contains(&w.as_str()))
         .collect();
     let has_verb_mismatch = !rule_verbs.is_empty()
         && !rule_verbs.iter().any(|v| terms.contains(v));
 
-    if has_verb_mismatch && base_score > 0 {
-        // Still matches by subject, but penalise — halve the score (minimum 1)
-        base_score.div_ceil(2).max(1)
+    if has_verb_mismatch {
+        None
     } else {
-        base_score
+        Some(base_score)
     }
 }
 
@@ -668,24 +886,26 @@ mod tests {
 
         let guardrails = store.load_guardrails().unwrap();
 
-        // Alembic "hand-write" rule: ToolCall timing, create scope
+        // Alembic "hand-write" rule: ToolCall timing, create scope.  Rule
+        // object has no `<tool> <subcommand>` adjacency so command_phrases
+        // is irrelevant — pass &[] across the board.
         let terms = vec!["alembic".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Write", "PreToolUse");
+        let matched = match_guardrails(&guardrails, &terms, &[], "Write", "PreToolUse");
         assert_eq!(matched.len(), 1, "hand-write rule should fire on Write/PreToolUse");
 
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
+        let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "PreToolUse");
         assert_eq!(matched.len(), 0, "hand-write rule should not fire on Bash");
 
-        let matched = match_guardrails(&guardrails, &terms, "Edit", "PreToolUse");
+        let matched = match_guardrails(&guardrails, &terms, &[], "Edit", "PreToolUse");
         assert_eq!(matched.len(), 0, "hand-write rule should not fire on Edit (allow_inverse)");
 
         // Git "force-push" rule: principle timing → doesn't fire on any hook
         // (principles are already in CLAUDE.md, Arai doesn't repeat them)
         let terms = vec!["git".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
+        let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "PreToolUse");
         assert_eq!(matched.len(), 0, "principle rule should not fire on PreToolUse");
 
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "UserPromptSubmit");
+        let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "UserPromptSubmit");
         assert_eq!(matched.len(), 0, "principle rule should not fire on UserPromptSubmit either");
 
         std::fs::remove_dir_all(&dir).ok();
@@ -706,58 +926,261 @@ mod tests {
 
     #[test]
     fn test_relevance_score() {
-        // "push" and "main" both overlap
+        // "push" and "main" both overlap, phrase matches, no verb mismatch
         let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
-        let score = relevance_score("git push to main without a PR", &terms);
+        let phrases = vec!["git push".to_string()];
+        let score = relevance_score("git push to main without a PR", &terms, &phrases)
+            .expect("push verb matches — should score Some");
         assert!(score >= 3, "should match git, push, main — got {score}");
 
-        // Only "git" overlaps (commit ≠ push, verb mismatch penalty applies)
-        let score = relevance_score("git commit with signed commits", &terms);
-        assert!(score <= 2, "should be penalised for verb mismatch — got {score}");
-
-        // Push rule should score higher than commit rule for "git push origin main"
-        let push_score = relevance_score("git push to main without a PR", &terms);
-        let commit_score = relevance_score("git commit with signed commits", &terms);
-        assert!(push_score > commit_score, "push rule ({push_score}) should rank higher than commit rule ({commit_score})");
+        // commit ≠ push: phrase mismatch (#98) drops first; even without
+        // phrases the verb-mismatch fallback would also drop.
+        let score = relevance_score("git commit with signed commits", &terms, &phrases);
+        assert!(score.is_none(),
+            "commit-verb rule should be dropped for a push command — got {score:?}");
     }
 
     #[test]
-    fn test_relevance_verb_mismatch() {
-        // Rule says "push" but command is "pull" — should be penalised
+    fn test_relevance_verb_mismatch_drops_rule() {
+        // Rule says "push" but command is "pull" — phrase mismatch drops.
         let pull_terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
-        let push_rule_score = relevance_score("git push to main without a PR", &pull_terms);
-        let commit_rule_score = relevance_score("git commit with signed commits", &pull_terms);
-        assert!(commit_rule_score >= push_rule_score,
-            "commit ({commit_rule_score}) should rank >= push ({push_rule_score}) for a pull command");
+        let pull_phrases = vec!["git pull".to_string()];
+        assert!(relevance_score("git push to main without a PR", &pull_terms, &pull_phrases).is_none());
+        assert!(relevance_score("git commit with signed commits", &pull_terms, &pull_phrases).is_none());
 
-        // Rule says "install" but command is "uninstall" — different verbs
+        // Rule says "install" but command is "uninstall" — phrase mismatch.
         let terms = vec!["npm".to_string(), "uninstall".to_string(), "package".to_string()];
-        let score = relevance_score("npm install with --save-exact", &terms);
-        assert!(score <= 1, "install rule should be penalised for uninstall command — got {score}");
+        let phrases = vec!["npm uninstall".to_string()];
+        assert!(relevance_score("npm install with --save-exact", &terms, &phrases).is_none());
     }
 
     #[test]
     fn test_relevance_no_penalty_when_verb_matches() {
-        // Exact verb match — no penalty
+        // Exact phrase match — kept and scored
         let terms = vec!["cargo".to_string(), "test".to_string()];
-        let score = relevance_score("run cargo test before pushing", &terms);
+        let phrases = vec!["cargo test".to_string()];
+        let score = relevance_score("run cargo test before pushing", &terms, &phrases)
+            .expect("test verb matches");
         assert!(score >= 2, "exact verb match should score high — got {score}");
     }
 
     #[test]
     fn test_relevance_no_verb_in_rule() {
-        // Rule has no command verb — pure term overlap, no penalty
+        // Rule has no command verb AND no tool-subcommand phrase — pure term
+        // overlap, no gating.  Pass &[] for phrases since the rule has none
+        // and the gate is therefore inert.
         let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
-        let score = relevance_score("always use feature branches for main", &terms);
+        let score = relevance_score("always use feature branches for main", &terms, &[])
+            .expect("no command verb in rule → no mismatch path");
         assert!(score >= 1, "should match 'main' without penalty — got {score}");
     }
 
     #[test]
     fn test_relevance_zero_overlap() {
-        // No terms match at all
+        // No terms match at all AND no command verbs in rule → Some(0)
         let terms = vec!["docker".to_string(), "compose".to_string(), "up".to_string()];
-        let score = relevance_score("git push to main without a PR", &terms);
+        let score = relevance_score("hand-write migration files", &terms, &[])
+            .expect("no command verb in rule → keep, score 0");
         assert_eq!(score, 0, "no overlap should score 0 — got {score}");
+    }
+
+    /// `run` is a `NOISE_WORD` (filtered from extracted command terms) so it
+    /// can't be a `COMMAND_VERB` for the verb-mismatch check — the term
+    /// would be structurally absent from every command and the gate would
+    /// permanently fire.  `run` was removed from `COMMAND_VERBS` to fix
+    /// that.  Disambiguation between `docker run` and `docker compose` is
+    /// instead provided by the adjacency-aware phrase gate (#98) inside
+    /// `relevance_score`: the rule's `<tool> <subcommand>` phrase must
+    /// match a phrase in the command.
+    #[test]
+    fn test_relevance_run_no_longer_blocks_docker_run_rule() {
+        // Real `docker run` command — phrase matches, rule keeps.
+        let docker_run_terms = vec!["docker".to_string(), "ubuntu".to_string()];
+        let docker_run_phrases = vec!["docker run".to_string()];
+        let score = relevance_score(
+            "use docker run for local dev",
+            &docker_run_terms,
+            &docker_run_phrases,
+        )
+        .expect("phrase docker run matches the command — rule must keep");
+        assert!(score >= 1, "docker term should overlap — got {score}");
+
+        // Sibling subcommand — phrase mismatch (#98) drops the rule.  This
+        // is the assertion that flipped from `Some(>=1)` to `is_none()`
+        // when adjacency matching landed; the issue's acceptance criteria
+        // call this out explicitly.
+        let docker_compose_terms = vec!["docker".to_string(), "compose".to_string()];
+        let docker_compose_phrases = vec!["docker compose".to_string()];
+        let result = relevance_score(
+            "use docker run for local dev",
+            &docker_compose_terms,
+            &docker_compose_phrases,
+        );
+        assert!(
+            result.is_none(),
+            "docker run rule must NOT fire on docker compose — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn extract_rule_phrases_basic() {
+        assert_eq!(
+            extract_rule_phrases("use docker run for local dev"),
+            vec!["docker run".to_string()]
+        );
+        assert_eq!(
+            extract_rule_phrases("Always run cargo test before pushing"),
+            vec!["cargo test".to_string()]
+        );
+        // Multiple phrases in one rule are deduplicated and sorted.
+        let phrases = extract_rule_phrases("prefer cargo test over cargo run");
+        assert_eq!(phrases, vec!["cargo run".to_string(), "cargo test".to_string()]);
+    }
+
+    #[test]
+    fn extract_rule_phrases_skips_preposition_stopwords() {
+        // "for", "with", "as", "in", "to", "from" are preposition stopwords —
+        // a rule that mentions a tool followed by one of these is generic
+        // and should NOT produce a phrase, so the rule falls through to
+        // bag-of-words instead of being phrase-gated.
+        assert!(extract_rule_phrases("never use docker for production").is_empty());
+        assert!(extract_rule_phrases("always use cargo with --release").is_empty());
+        assert!(extract_rule_phrases("never run docker as root").is_empty());
+    }
+
+    #[test]
+    fn extract_rule_phrases_no_tool_no_phrase() {
+        assert!(extract_rule_phrases("hand-write migration files").is_empty());
+        assert!(extract_rule_phrases("always use feature branches for main").is_empty());
+    }
+
+    #[test]
+    fn extract_command_phrases_bash_basic() {
+        let input = serde_json::json!({"command": "docker run -it ubuntu"});
+        assert_eq!(
+            extract_command_phrases("Bash", &input),
+            vec!["docker run".to_string()]
+        );
+        let input = serde_json::json!({"command": "git push --force origin main"});
+        assert_eq!(
+            extract_command_phrases("Bash", &input),
+            vec!["git push".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_command_phrases_skips_flag_clusters() {
+        // `git -c user.name=foo push origin` — the `-c` flag and its `=`-style
+        // value should not break the `git push` phrase.
+        let input = serde_json::json!({"command": "git -c user.name=foo push origin main"});
+        let phrases = extract_command_phrases("Bash", &input);
+        assert!(
+            phrases.contains(&"git push".to_string()),
+            "expected git push in {phrases:?}"
+        );
+    }
+
+    #[test]
+    fn extract_command_phrases_pipeline_segments() {
+        // Pipelines, semicolons, and `&&` all produce independent segments;
+        // each can contribute its own phrase.
+        let input = serde_json::json!({"command": "git status && docker run -it ubuntu"});
+        let phrases = extract_command_phrases("Bash", &input);
+        assert!(phrases.contains(&"git status".to_string()), "got {phrases:?}");
+        assert!(phrases.contains(&"docker run".to_string()), "got {phrases:?}");
+    }
+
+    #[test]
+    fn extract_command_phrases_non_bash_is_empty() {
+        // File operations have no `<tool> <subcommand>` structure — phrase
+        // gating is intentionally Bash-only.
+        let input = serde_json::json!({"file_path": "/tmp/docker-compose.yml"});
+        assert!(extract_command_phrases("Write", &input).is_empty());
+        assert!(extract_command_phrases("Edit", &input).is_empty());
+    }
+
+    #[test]
+    fn extract_command_phrases_path_prefixed_tool() {
+        // Absolute path to the binary is still recognised as the tool.
+        let input = serde_json::json!({"command": "/usr/local/bin/docker run -it ubuntu"});
+        assert_eq!(
+            extract_command_phrases("Bash", &input),
+            vec!["docker run".to_string()]
+        );
+    }
+
+    /// Phrase-gate locks the sibling-subcommand case for *every* tool we
+    /// extract phrases for, not just docker.  `npm install` rule must not
+    /// fire on `npm test`; `cargo test` rule must not fire on `cargo build`.
+    #[test]
+    fn phrase_gate_blocks_sibling_subcommands_across_tools() {
+        // npm install rule vs npm test command
+        let result = relevance_score(
+            "always pin npm install with --save-exact",
+            &["npm".to_string(), "test".to_string()],
+            &["npm test".to_string()],
+        );
+        assert!(result.is_none(), "npm install rule must drop on npm test — got {result:?}");
+
+        // cargo test rule vs cargo build command
+        let result = relevance_score(
+            "always run cargo test in release mode",
+            &["cargo".to_string(), "build".to_string()],
+            &["cargo build".to_string()],
+        );
+        assert!(result.is_none(), "cargo test rule must drop on cargo build — got {result:?}");
+
+        // Same rules survive against the matching command.
+        assert!(
+            relevance_score(
+                "always pin npm install with --save-exact",
+                &["npm".to_string(), "install".to_string()],
+                &["npm install".to_string()],
+            )
+            .is_some(),
+            "npm install rule must keep on npm install"
+        );
+        assert!(
+            relevance_score(
+                "always run cargo test in release mode",
+                &["cargo".to_string(), "test".to_string()],
+                &["cargo test".to_string()],
+            )
+            .is_some(),
+            "cargo test rule must keep on cargo test"
+        );
+    }
+
+    /// A generic rule (no tool-subcommand phrase) is unaffected by the
+    /// phrase gate — falls through to bag-of-words scoring.  This is what
+    /// keeps rules like "Always use feature branches for main" working
+    /// against any command whose subject matches.
+    #[test]
+    fn phrase_gate_is_inert_for_phraseless_rules() {
+        // Rule has no tool-subcommand phrase; phrase gate skipped entirely.
+        let score = relevance_score(
+            "always use feature branches for main",
+            &["git".to_string(), "push".to_string(), "main".to_string()],
+            &["git push".to_string()],
+        )
+        .expect("phraseless rule should not be gated");
+        assert!(score >= 1);
+    }
+
+    #[test]
+    fn subject_matches_terms_uses_token_boundary() {
+        // Single-token subject only matches an exact token in the command terms,
+        // never a substring or hyphen-fragment.
+        let subj = "git";
+        assert!(subject_matches_terms(subj, &["git".to_string(), "status".to_string()]));
+        // The actual term "git-level" was produced by `gh issue create --title
+        // "...git-level..."` in issue #86; subject "git" must NOT match it.
+        assert!(!subject_matches_terms(subj, &["git-level".to_string()]));
+        // A rule subject "github" must not match a `git ...` command via substring.
+        assert!(!subject_matches_terms("github", &["git".to_string(), "status".to_string()]));
+        // Multi-word subject — any constituent word can match.
+        assert!(subject_matches_terms("force-push", &["force".to_string()]));
+        assert!(subject_matches_terms("git push", &["push".to_string()]));
     }
 
     #[test]
@@ -828,21 +1251,24 @@ mod tests {
 
         // "git push origin main" should ONLY fire the push rule
         let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
+        let phrases = vec!["git push".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
         assert!(matched[0].0.object.contains("push"), "push rule should fire, got: {}", matched[0].0.object);
 
         // "git commit -m test" should ONLY fire the commit rule
         let terms = vec!["git".to_string(), "commit".to_string(), "test".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
+        let phrases = vec!["git commit".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
         assert!(matched[0].0.object.contains("commit"), "commit rule should fire, got: {}", matched[0].0.object);
 
-        // "git pull origin main" — push rule should be suppressed (pull ≠ push)
+        // "git pull origin main" — both rules should be suppressed (pull ≠ push, pull ≠ commit)
         let terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
-        let matched = match_guardrails(&guardrails, &terms, "Bash", "PreToolUse");
-        assert!(matched.is_empty() || matched[0].0.object.contains("commit"),
-            "push rule should not fire for pull command");
+        let phrases = vec!["git pull".to_string()];
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+        assert!(matched.is_empty(),
+            "neither push nor commit rule should fire for pull command — got {matched:?}");
 
         std::fs::remove_dir_all(&dir).ok();
     }
