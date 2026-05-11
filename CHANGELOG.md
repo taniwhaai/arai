@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-05-10
+
+### Added
+
+- *(demos)* Add example showcasing command blocking with Arai guardrails
+- *(demos)* Update blocking demo to enhance user interaction flow
+- *(paths)* Move default state dir to .taniwha/arai, rename ARAI_DB_DIR ([#71](https://github.com/taniwhaai/arai/pull/71))
+- *(paths)* Deprecation shim for ARAI_DB_DIR + ~/.arai ([#73](https://github.com/taniwhaai/arai/pull/73))
+
+### Documentation
+
+- *(paths)* Sweep README/llms-install/CHANGELOG for v0.2.15 rename ([#74](https://github.com/taniwhaai/arai/pull/74))
+
+### Fixed
+
+- *(demos)* Trim leading typing frames so README poster shows prompt
+
+### Miscellaneous
+
+- *(deps)* Bump openssl in the cargo group across 1 directory ([#59](https://github.com/taniwhaai/arai/pull/59))
+- Track Taniwha + Claude tooling state in repo
+- Add Taniwha agents + skills, ignore WSL Zone.Identifier noise
+
+### Performance
+
+- *(parser)* Hoist regex compilations into OnceLock statics ([#92](https://github.com/taniwhaai/arai/pull/92)) ([#93](https://github.com/taniwhaai/arai/pull/93))
+
+
 ### Changed
 
 - **Default state path**: moved from `~/.arai/` to `~/.taniwha/arai/`
