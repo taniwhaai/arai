@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-05-11
+
+### Performance
+
+- *(release)* Panic=abort + codegen-units=1 — 4.3% smaller binary ([#101](https://github.com/taniwhaai/arai/pull/101))
+
+### Style+ci
+
+- Cargo fmt sweep + CI gate ([#102](https://github.com/taniwhaai/arai/pull/102))
+
+
 ## [0.2.16] - 2026-05-11
 
 ### Added
