@@ -69,3 +69,16 @@ proptest = "1"
 opt-level = "z"
 lto = true
 strip = true
+# `panic = "abort"` removes Rust's unwinding tables and the cleanup glue
+# associated with them.  Arai is a CLI that exits-on-error — there is no
+# code that catches a panic, so unwinding has no observable benefit and
+# only costs binary size and cold-start work.  Each hook invocation pays
+# the binary-load cost (~22 ms median per CLAUDE.md hot-path note);
+# shrinking the binary directly shrinks that.
+panic = "abort"
+# `codegen-units = 1` lets the compiler do whole-crate inlining + better
+# dead-code elimination at the cost of a slower clean release build.
+# Pairs naturally with `lto = true` for the same reason.  CI release
+# builds happen rarely; user-facing binary load happens on every Claude
+# Code tool call, so the trade favours the runtime.
+codegen-units = 1
