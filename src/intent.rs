@@ -391,7 +391,11 @@ pub fn classify_rule(predicate: &str, object: &str) -> RuleIntent {
     classify_rule_with_subject(predicate, object, None)
 }
 
-pub fn classify_rule_with_subject(predicate: &str, object: &str, subject: Option<&str>) -> RuleIntent {
+pub fn classify_rule_with_subject(
+    predicate: &str,
+    object: &str,
+    subject: Option<&str>,
+) -> RuleIntent {
     let lower = object.to_lowercase();
     let full_text = if let Some(s) = subject {
         format!("{} {}", s.to_lowercase(), lower)
@@ -488,11 +492,10 @@ fn contains_phrase_bounded(text: &str, phrase: &str) -> bool {
 
     // For single words, check word boundaries
     for (idx, _) in text.match_indices(phrase) {
-        let before_ok = idx == 0
-            || !text.as_bytes()[idx - 1].is_ascii_alphanumeric();
+        let before_ok = idx == 0 || !text.as_bytes()[idx - 1].is_ascii_alphanumeric();
         let after_idx = idx + phrase.len();
-        let after_ok = after_idx >= text.len()
-            || !text.as_bytes()[after_idx].is_ascii_alphanumeric();
+        let after_ok =
+            after_idx >= text.len() || !text.as_bytes()[after_idx].is_ascii_alphanumeric();
         if before_ok && after_ok {
             return true;
         }

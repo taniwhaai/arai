@@ -23,8 +23,8 @@ impl Store {
                 .map_err(|e| format!("Failed to create DB directory: {e}"))?;
         }
 
-        let conn = Connection::open(db_path)
-            .map_err(|e| format!("Failed to open database: {e}"))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| format!("Failed to open database: {e}"))?;
 
         // Connection PRAGMAs.  journal_mode=WAL and synchronous=NORMAL are
         // persistent (set on the database file once); temp_store=MEMORY and
@@ -204,9 +204,9 @@ impl Store {
     /// List currently disabled rules `(s, p, o, disabled_at)` — surfaced by
     /// `arai disable` (no args) so users can audit what's been silenced.
     pub fn list_disabled_rules(&self) -> rusqlite::Result<Vec<(String, String, String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT s, p, o, disabled_at FROM disabled_rules ORDER BY disabled_at DESC",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT s, p, o, disabled_at FROM disabled_rules ORDER BY disabled_at DESC")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -219,7 +219,10 @@ impl Store {
     /// resolve a stable display id to the (s,p,o) tuple that
     /// `disable_rule` stores.  Includes disabled rules so `arai enable <id>`
     /// can find them.
-    pub fn rule_by_triple_id(&self, triple_id: i64) -> rusqlite::Result<Option<(String, String, String)>> {
+    pub fn rule_by_triple_id(
+        &self,
+        triple_id: i64,
+    ) -> rusqlite::Result<Option<(String, String, String)>> {
         match self.conn.query_row(
             "SELECT s, p, o FROM triples WHERE id = ?1",
             params![triple_id],
@@ -308,9 +311,9 @@ impl Store {
 
     /// Query what tools are imported by files in a given directory.
     pub fn query_tools_for_directory(&self, directory: &str) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT tool_name FROM code_graph WHERE directory = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT tool_name FROM code_graph WHERE directory = ?1")?;
         let tools = stmt
             .query_map(params![directory], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
@@ -367,7 +370,8 @@ impl Store {
         triple_id: i64,
         intent: &crate::intent::RuleIntent,
     ) -> rusqlite::Result<()> {
-        let tools_json = serde_json::to_string(&intent.tools).unwrap_or_else(|_| "[\"*\"]".to_string());
+        let tools_json =
+            serde_json::to_string(&intent.tools).unwrap_or_else(|_| "[\"*\"]".to_string());
         self.conn.execute(
             "INSERT INTO rule_intent (triple_id, action, timing, tools, allow_inverse, enriched_by, enriched_at, severity)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7)
@@ -391,7 +395,10 @@ impl Store {
     /// If a `severity_override` row is present, it takes precedence over the
     /// classified severity — that's the surface `arai severity` writes to so
     /// re-running `arai scan` doesn't stomp a manual rollout decision.
-    pub fn get_rule_intent(&self, triple_id: i64) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
+    pub fn get_rule_intent(
+        &self,
+        triple_id: i64,
+    ) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
         match self.conn.query_row(
             "SELECT action, timing, tools, allow_inverse, enriched_by, severity, severity_override FROM rule_intent WHERE triple_id = ?1",
             params![triple_id],
@@ -652,7 +659,10 @@ impl Store {
             }
         }
 
-        Ok(RuleIssues { duplicates, opposing })
+        Ok(RuleIssues {
+            duplicates,
+            opposing,
+        })
     }
 
     /// Classify all existing guardrails using the taxonomy.
@@ -660,7 +670,11 @@ impl Store {
         let guardrails = self.load_guardrails()?;
         let mut count = 0;
         for g in &guardrails {
-            let intent = crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject));
+            let intent = crate::intent::classify_rule_with_subject(
+                &g.predicate,
+                &g.object,
+                Some(&g.subject),
+            );
             self.upsert_rule_intent(g.triple_id, &intent)?;
             count += 1;
         }
@@ -757,7 +771,9 @@ fn parse_intent_from_row(
     start: usize,
 ) -> rusqlite::Result<Option<crate::intent::RuleIntent>> {
     let action_str: Option<String> = row.get(start)?;
-    let Some(action_str) = action_str else { return Ok(None) };
+    let Some(action_str) = action_str else {
+        return Ok(None);
+    };
     let timing_str: String = row.get(start + 1)?;
     let tools_json: String = row.get(start + 2)?;
     let allow_inverse: i32 = row.get(start + 3)?;
@@ -977,7 +993,12 @@ fn migrate_v1(conn: &Connection) -> rusqlite::Result<()> {
     // statements above, so on a fresh DB the helper is a no-op.  On an
     // upgrading DB whose tables predate one or more of these columns, the
     // helper backfills them once.
-    add_column_if_missing(conn, "rule_intent", "severity", "TEXT NOT NULL DEFAULT 'warn'")?;
+    add_column_if_missing(
+        conn,
+        "rule_intent",
+        "severity",
+        "TEXT NOT NULL DEFAULT 'warn'",
+    )?;
     add_column_if_missing(conn, "rule_intent", "severity_override", "TEXT")?;
     add_column_if_missing(conn, "triples", "layer", "INTEGER")?;
     add_column_if_missing(conn, "triples", "expires_at", "TEXT")?;
@@ -1047,7 +1068,14 @@ mod tests {
             noenrich: false,
         }];
 
-        let changed = store.upsert_file("CLAUDE.md", "- Never force-push to main", &triples, "claude_md_project").unwrap();
+        let changed = store
+            .upsert_file(
+                "CLAUDE.md",
+                "- Never force-push to main",
+                &triples,
+                "claude_md_project",
+            )
+            .unwrap();
         assert!(changed);
 
         let guardrails = store.load_guardrails().unwrap();
@@ -1056,7 +1084,14 @@ mod tests {
         assert_eq!(guardrails[0].predicate, "never");
 
         // Upsert again with same content — should skip
-        let changed = store.upsert_file("CLAUDE.md", "- Never force-push to main", &triples, "claude_md_project").unwrap();
+        let changed = store
+            .upsert_file(
+                "CLAUDE.md",
+                "- Never force-push to main",
+                &triples,
+                "claude_md_project",
+            )
+            .unwrap();
         assert!(!changed);
 
         std::fs::remove_dir_all(&dir).ok();
@@ -1079,13 +1114,20 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project").unwrap();
-        store.upsert_file(
-            "global.md",
-            "- a",
-            &[Triple { source_file: "global.md".to_string(), ..t.clone() }],
-            "claude_md_global",
-        ).unwrap();
+        store
+            .upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project")
+            .unwrap();
+        store
+            .upsert_file(
+                "global.md",
+                "- a",
+                &[Triple {
+                    source_file: "global.md".to_string(),
+                    ..t.clone()
+                }],
+                "claude_md_global",
+            )
+            .unwrap();
 
         let issues = store.find_rule_issues().unwrap();
         assert_eq!(issues.duplicates.len(), 1);
@@ -1126,13 +1168,22 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "- a\n- b", &[never, always], "claude_md_project").unwrap();
+        store
+            .upsert_file(
+                "CLAUDE.md",
+                "- a\n- b",
+                &[never, always],
+                "claude_md_project",
+            )
+            .unwrap();
 
         let issues = store.find_rule_issues().unwrap();
         assert_eq!(issues.opposing.len(), 1);
         assert_eq!(issues.opposing[0].subject, "alembic");
         assert!(issues.opposing[0].predicates.contains(&"never".to_string()));
-        assert!(issues.opposing[0].predicates.contains(&"always".to_string()));
+        assert!(issues.opposing[0]
+            .predicates
+            .contains(&"always".to_string()));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1167,7 +1218,9 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project")
+            .unwrap();
 
         let issues = store.find_rule_issues().unwrap();
         assert!(issues.duplicates.is_empty());
@@ -1182,7 +1235,10 @@ mod tests {
 
         assert_eq!(store.get_meta("last_scan").unwrap(), None);
         store.set_meta("last_scan", "12345").unwrap();
-        assert_eq!(store.get_meta("last_scan").unwrap(), Some("12345".to_string()));
+        assert_eq!(
+            store.get_meta("last_scan").unwrap(),
+            Some("12345".to_string())
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1203,13 +1259,19 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "x", &[t], "claude_md_project").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &[t], "claude_md_project")
+            .unwrap();
         store.classify_all_guardrails().unwrap();
 
         // Predicate-derived: prefers → Inform.
         let g = &store.load_guardrails().unwrap()[0];
         assert_eq!(
-            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            store
+                .get_rule_intent(g.triple_id)
+                .unwrap()
+                .unwrap()
+                .severity,
             crate::intent::Severity::Inform
         );
 
@@ -1221,7 +1283,11 @@ mod tests {
         assert_eq!(changed[0].from, crate::intent::Severity::Inform);
         assert_eq!(changed[0].to, crate::intent::Severity::Block);
         assert_eq!(
-            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            store
+                .get_rule_intent(g.triple_id)
+                .unwrap()
+                .unwrap()
+                .severity,
             crate::intent::Severity::Block,
             "override should win over classified severity"
         );
@@ -1229,7 +1295,11 @@ mod tests {
         // Re-classify: must NOT stomp the override.
         store.classify_all_guardrails().unwrap();
         assert_eq!(
-            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            store
+                .get_rule_intent(g.triple_id)
+                .unwrap()
+                .unwrap()
+                .severity,
             crate::intent::Severity::Block,
             "classify_all_guardrails should preserve manual overrides"
         );
@@ -1245,7 +1315,11 @@ mod tests {
         assert_eq!(cleared.len(), 1);
         assert!(store.list_severity_overrides().unwrap().is_empty());
         assert_eq!(
-            store.get_rule_intent(g.triple_id).unwrap().unwrap().severity,
+            store
+                .get_rule_intent(g.triple_id)
+                .unwrap()
+                .unwrap()
+                .severity,
             crate::intent::Severity::Inform,
             "after clear, severity should fall back to classification"
         );
@@ -1270,7 +1344,12 @@ mod tests {
             noenrich: false,
         };
         store
-            .upsert_file("CLAUDE.md", "x", &[mk("alembic", 1), mk("git", 2), mk("cargo", 3)], "claude_md_project")
+            .upsert_file(
+                "CLAUDE.md",
+                "x",
+                &[mk("alembic", 1), mk("git", 2), mk("cargo", 3)],
+                "claude_md_project",
+            )
             .unwrap();
         store.classify_all_guardrails().unwrap();
 
@@ -1306,10 +1385,20 @@ mod tests {
             noenrich: false,
         };
         store
-            .upsert_file("CLAUDE.md", "a", &[mk_in("CLAUDE.md", 1)], "claude_md_project")
+            .upsert_file(
+                "CLAUDE.md",
+                "a",
+                &[mk_in("CLAUDE.md", 1)],
+                "claude_md_project",
+            )
             .unwrap();
         store
-            .upsert_file("memory/feedback.md", "b", &[mk_in("memory/feedback.md", 1)], "memory")
+            .upsert_file(
+                "memory/feedback.md",
+                "b",
+                &[mk_in("memory/feedback.md", 1)],
+                "memory",
+            )
             .unwrap();
 
         let claude_rules = store.rules_for_file("CLAUDE.md").unwrap();
@@ -1355,12 +1444,20 @@ mod tests {
             expires_at: Some("2000-01-01".to_string()), // long past
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "x", &[alive, dead], "claude_md_project").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &[alive, dead], "claude_md_project")
+            .unwrap();
 
         let rails = store.load_guardrails().unwrap();
         let subjects: Vec<_> = rails.iter().map(|g| g.subject.clone()).collect();
-        assert!(subjects.iter().any(|s| s == "git"), "unexpired rule should load");
-        assert!(!subjects.iter().any(|s| s == "legacy"), "expired rule should NOT load");
+        assert!(
+            subjects.iter().any(|s| s == "git"),
+            "unexpired rule should load"
+        );
+        assert!(
+            !subjects.iter().any(|s| s == "legacy"),
+            "expired rule should NOT load"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1393,7 +1490,8 @@ mod tests {
     fn test_reopen_skips_migrations_when_at_target() {
         // First open runs migration v1 and bumps user_version.
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("arai_test_reopen_{}_{}", std::process::id(), id));
+        let dir =
+            std::env::temp_dir().join(format!("arai_test_reopen_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("test.db");
 
@@ -1441,13 +1539,17 @@ mod tests {
                 noenrich: false,
             },
         ];
-        store.upsert_file("CLAUDE.md", "x", &triples, "test").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &triples, "test")
+            .unwrap();
 
         // Both rules visible initially.
         assert_eq!(store.load_guardrails().unwrap().len(), 2);
 
         // Disable one — load_guardrails drops it; rules_for_file keeps it.
-        let inserted = store.disable_rule("git", "never", "force-push to main").unwrap();
+        let inserted = store
+            .disable_rule("git", "never", "force-push to main")
+            .unwrap();
         assert!(inserted, "disable should insert a new row");
         let rails = store.load_guardrails().unwrap();
         assert_eq!(rails.len(), 1);
@@ -1462,12 +1564,16 @@ mod tests {
         assert!(!inserted_again);
 
         // Enable restores.
-        let removed = store.enable_rule("git", "never", "force-push to main").unwrap();
+        let removed = store
+            .enable_rule("git", "never", "force-push to main")
+            .unwrap();
         assert!(removed);
         assert_eq!(store.load_guardrails().unwrap().len(), 2);
 
         // Listing reports disabled rows in newest-first order.
-        store.disable_rule("cargo", "always", "run tests before commit").unwrap();
+        store
+            .disable_rule("cargo", "always", "run tests before commit")
+            .unwrap();
         let listed = store.list_disabled_rules().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].0, "cargo");
@@ -1494,13 +1600,19 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "x", &[t.clone()], "test").unwrap();
-        store.disable_rule("git", "never", "force-push to main").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &[t.clone()], "test")
+            .unwrap();
+        store
+            .disable_rule("git", "never", "force-push to main")
+            .unwrap();
         assert_eq!(store.load_guardrails().unwrap().len(), 0);
 
         // Simulate a re-scan: same content → upsert short-circuits, but force
         // a re-insert by changing the file content checksum.
-        store.upsert_file("CLAUDE.md", "x changed", &[t], "test").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x changed", &[t], "test")
+            .unwrap();
         assert_eq!(
             store.load_guardrails().unwrap().len(),
             0,
@@ -1517,7 +1629,8 @@ mod tests {
         // user_version=0.  Open via Store and verify migration v1 backfills
         // the missing columns idempotently.
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("arai_test_bridge_{}_{}", std::process::id(), id));
+        let dir =
+            std::env::temp_dir().join(format!("arai_test_bridge_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("test.db");
 
@@ -1563,7 +1676,11 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, MIGRATIONS.len() as i64, "user_version should advance to target");
+        assert_eq!(
+            v,
+            MIGRATIONS.len() as i64,
+            "user_version should advance to target"
+        );
 
         let columns_for = |table: &str| -> Vec<String> {
             let mut stmt = conn
@@ -1577,11 +1694,17 @@ mod tests {
 
         let ri = columns_for("rule_intent");
         assert!(ri.contains(&"severity".to_string()), "severity backfilled");
-        assert!(ri.contains(&"severity_override".to_string()), "severity_override backfilled");
+        assert!(
+            ri.contains(&"severity_override".to_string()),
+            "severity_override backfilled"
+        );
 
         let tr = columns_for("triples");
         assert!(tr.contains(&"layer".to_string()), "layer backfilled");
-        assert!(tr.contains(&"expires_at".to_string()), "expires_at backfilled");
+        assert!(
+            tr.contains(&"expires_at".to_string()),
+            "expires_at backfilled"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

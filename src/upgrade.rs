@@ -9,7 +9,11 @@ pub fn is_full_binary() -> bool {
 
 /// Get the current binary's variant name.
 pub fn current_variant() -> &'static str {
-    if is_full_binary() { "full" } else { "lean" }
+    if is_full_binary() {
+        "full"
+    } else {
+        "lean"
+    }
 }
 
 /// Run the upgrade flow.
@@ -37,9 +41,7 @@ pub fn run(full: bool, lean: bool) -> Result<(), String> {
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Could not determine current binary path: {e}"))?;
 
-    let url = format!(
-        "https://github.com/{REPO}/releases/download/{version}/{binary_name}"
-    );
+    let url = format!("https://github.com/{REPO}/releases/download/{version}/{binary_name}");
 
     let tmp_path = current_exe.with_extension("tmp");
 
@@ -135,7 +137,10 @@ fn detect_platform() -> Result<String, String> {
 
 fn fetch_latest_version() -> Result<String, String> {
     let output = std::process::Command::new("curl")
-        .args(["-sSf", &format!("https://api.github.com/repos/{REPO}/releases/latest")])
+        .args([
+            "-sSf",
+            &format!("https://api.github.com/repos/{REPO}/releases/latest"),
+        ])
         .output()
         .map_err(|e| format!("Failed to fetch version: {e}"))?;
 
@@ -166,8 +171,7 @@ fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
         return Err(format!("Download failed: {stderr}"));
     }
 
-    let meta = std::fs::metadata(dest)
-        .map_err(|e| format!("Downloaded file not found: {e}"))?;
+    let meta = std::fs::metadata(dest).map_err(|e| format!("Downloaded file not found: {e}"))?;
 
     if meta.len() < 10000 {
         return Err(format!(

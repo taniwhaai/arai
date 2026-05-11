@@ -83,7 +83,11 @@ pub fn run() -> Result<(), String> {
                 let _ = other;
                 None
             }
-            other => Some(error_response(id, -32601, &format!("Method not found: {other}"))),
+            other => Some(error_response(
+                id,
+                -32601,
+                &format!("Method not found: {other}"),
+            )),
         };
 
         if let Some(r) = resp {
@@ -447,7 +451,10 @@ fn tool_check_action(args: &Value) -> Result<Value, String> {
 /// see what Arai has just denied / injected / reviewed.  Pure read — no
 /// audit write, no telemetry.
 fn tool_recent_decisions(args: &Value) -> Result<Value, String> {
-    let session_id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())
@@ -508,7 +515,10 @@ fn tool_recent_decisions(args: &Value) -> Result<Value, String> {
         let ts = entry.get("ts").and_then(|v| v.as_str()).unwrap_or("?");
         let event = entry.get("event").and_then(|v| v.as_str()).unwrap_or("?");
         let tool = entry.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
-        let decision = entry.get("decision").and_then(|v| v.as_str()).unwrap_or("?");
+        let decision = entry
+            .get("decision")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let preview = entry
             .get("prompt_preview")
             .and_then(|v| v.as_str())
@@ -636,8 +646,8 @@ mod tests {
 
     #[test]
     fn check_action_rejects_non_object_tool_input() {
-        let err = tool_check_action(&json!({"tool": "Bash", "tool_input": "not an obj"}))
-            .unwrap_err();
+        let err =
+            tool_check_action(&json!({"tool": "Bash", "tool_input": "not an obj"})).unwrap_err();
         assert!(err.contains("must be an object"), "got: {err}");
     }
 

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 /// Verifier tests for the `base-directory-resolution` module.
 ///
 /// Contract: .taniwha/kupu/orchestrator/handoff/01KR8598KXT557344N231648RT/inputs/contract.md
@@ -21,9 +22,7 @@
 /// mutual exclusivity) are in `src/config.rs` and are run as part of `cargo test`.
 /// The verifier has independently reviewed those tests against the contract and
 /// confirmed their correctness; findings are in the verifier report.
-
 use std::process::Command;
-use std::path::PathBuf;
 
 /// Helper: find the arai binary (prefer debug build).
 fn arai_bin() -> PathBuf {
@@ -49,7 +48,8 @@ fn smoke_binary_handles_arai_base_dir_env_var() {
 
     // Use a temporary directory as ARAI_BASE_DIR to avoid touching the real home.
     let tmp = std::env::temp_dir().join(format!(
-        "arai_verifier_{}_{}", std::process::id(),
+        "arai_verifier_{}_{}",
+        std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

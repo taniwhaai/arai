@@ -52,8 +52,9 @@ fn run_lint() -> Vec<Value> {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("arai lint --json output not valid JSON: {e}\n--- stdout ---\n{stdout}\n"));
+    let parsed: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!("arai lint --json output not valid JSON: {e}\n--- stdout ---\n{stdout}\n")
+    });
     parsed
         .as_array()
         .expect("expected top-level JSON array")

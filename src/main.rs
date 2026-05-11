@@ -268,21 +268,50 @@ fn main() {
                 cmd_guardrails(json)
             }
         }
-        Commands::Scan { code, enrich, enrich_llm, enrich_api, enrich_file } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
+        Commands::Scan {
+            code,
+            enrich,
+            enrich_llm,
+            enrich_api,
+            enrich_file,
+        } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
         Commands::Add { rule } => cmd_add(&rule),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
-        Commands::Audit { since, tool, event, outcome, rule, limit, json } => cmd_audit(since, tool, event, outcome, rule, limit, json),
+        Commands::Audit {
+            since,
+            tool,
+            event,
+            outcome,
+            rule,
+            limit,
+            json,
+        } => cmd_audit(since, tool, event, outcome, rule, limit, json),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
         Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
-        Commands::Stats { since, top, by_rule, json } => cmd_stats(since, top, by_rule, json),
-        Commands::Severity { pattern, level, reset, json } => cmd_severity(pattern, level, reset, json),
+        Commands::Stats {
+            since,
+            top,
+            by_rule,
+            json,
+        } => cmd_stats(since, top, by_rule, json),
+        Commands::Severity {
+            pattern,
+            level,
+            reset,
+            json,
+        } => cmd_severity(pattern, level, reset, json),
         Commands::Diff { file, json } => cmd_diff(&file, json),
         Commands::Disable { triple_id } => cmd_disable(triple_id),
         Commands::Enable { triple_id } => cmd_enable(triple_id),
-        Commands::Why { input, tool, event, json } => cmd_why(input, tool, event, json),
+        Commands::Why {
+            input,
+            tool,
+            event,
+            json,
+        } => cmd_why(input, tool, event, json),
     };
 
     if let Err(e) = result {
@@ -324,10 +353,7 @@ fn cmd_status() -> Result<(), String> {
         if !issues.duplicates.is_empty() {
             println!("  Duplicate rules ({}):", issues.duplicates.len());
             for d in issues.duplicates.iter().take(10) {
-                println!(
-                    "    - {} {}: {}",
-                    d.subject, d.predicate, d.object,
-                );
+                println!("    - {} {}: {}", d.subject, d.predicate, d.object,);
                 for src in &d.sources {
                     println!("        from {src}");
                 }
@@ -373,7 +399,13 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_api: bool, enrich_file: Option<String>) -> Result<(), String> {
+fn cmd_scan(
+    code: bool,
+    do_enrich: bool,
+    enrich_llm: bool,
+    enrich_api: bool,
+    enrich_file: Option<String>,
+) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
@@ -391,7 +423,8 @@ fn cmd_scan(code: bool, do_enrich: bool, enrich_llm: bool, enrich_api: bool, enr
     }
 
     db.classify_all_guardrails().map_err(|e| e.to_string())?;
-    db.set_meta("last_scan", &chrono_now()).map_err(|e| e.to_string())?;
+    db.set_meta("last_scan", &chrono_now())
+        .map_err(|e| e.to_string())?;
     println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
 
     if code {
@@ -444,7 +477,9 @@ fn scan_code_graph(cfg: &config::Config, db: &store::Store) -> Result<(), String
 
     let tool_count = db.code_graph_tool_count().map_err(|e| e.to_string())?;
     let file_count = db.code_graph_file_count().map_err(|e| e.to_string())?;
-    println!("    \u{2713} {import_count} imports from {file_count} files, {tool_count} unique tools");
+    println!(
+        "    \u{2713} {import_count} imports from {file_count} files, {tool_count} unique tools"
+    );
     Ok(())
 }
 
@@ -452,11 +487,7 @@ fn cmd_add(rule: &str) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let db = store::Store::open(&cfg.db_path())?;
 
-    let triples = parser::extract_rules(
-        &format!("- {rule}"),
-        "manual",
-        0.95,
-    );
+    let triples = parser::extract_rules(&format!("- {rule}"), "manual", 0.95);
 
     if triples.is_empty() {
         return Err(format!(
@@ -470,7 +501,11 @@ fn cmd_add(rule: &str) -> Result<(), String> {
         let mut h = Sha256::new();
         h.update(rule.as_bytes());
         let hash_bytes = h.finalize();
-        let short: String = hash_bytes.iter().take(4).map(|b| format!("{b:02x}")).collect();
+        let short: String = hash_bytes
+            .iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         format!("manual://arai-add/{short}")
     };
     db.upsert_file(&manual_path, rule, &triples, "manual")
@@ -526,7 +561,11 @@ fn cmd_audit(
         since_epoch,
         tool.as_deref(),
         effective_event.as_deref(),
-        if needs_post_filter { limit.saturating_mul(4) } else { limit },
+        if needs_post_filter {
+            limit.saturating_mul(4)
+        } else {
+            limit
+        },
     )?;
 
     // Apply outcome filter in-process: an entry passes if any item in
@@ -538,7 +577,10 @@ fn cmd_audit(
                 e.get("payload")
                     .and_then(|p| p.get("rules"))
                     .and_then(|r| r.as_array())
-                    .map(|rs| rs.iter().any(|r| r.get("outcome").and_then(|o| o.as_str()) == Some(target)))
+                    .map(|rs| {
+                        rs.iter()
+                            .any(|r| r.get("outcome").and_then(|o| o.as_str()) == Some(target))
+                    })
                     .unwrap_or(false)
             })
             .collect()
@@ -579,41 +621,56 @@ fn cmd_audit(
     }
 
     // Table view: one line per firing, rule names condensed.
-    println!("{:<20} {:<13} {:<8} {:<7} summary", "time", "event", "tool", "rules");
+    println!(
+        "{:<20} {:<13} {:<8} {:<7} summary",
+        "time", "event", "tool", "rules"
+    );
     println!("{}", "─".repeat(80));
     for e in &entries {
         let ts = e.get("ts").and_then(|v| v.as_str()).unwrap_or("");
         let ev = e.get("event").and_then(|v| v.as_str()).unwrap_or("");
         let tool = e.get("tool").and_then(|v| v.as_str()).unwrap_or("");
-        let rule_count = e.get("rules").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-        let preview = e.get("prompt_preview").and_then(|v| v.as_str()).unwrap_or("");
+        let rule_count = e
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let preview = e
+            .get("prompt_preview")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let preview_short: String = preview.chars().take(50).collect();
-        println!("{:<20} {:<13} {:<8} {:<7} {}", ts, ev, tool, rule_count, preview_short);
+        println!(
+            "{:<20} {:<13} {:<8} {:<7} {}",
+            ts, ev, tool, rule_count, preview_short
+        );
     }
-    println!("\n  {} firing(s) shown.  Log at {}/audit/{}/", entries.len(), cfg.arai_base_dir.display(), cfg.project_slug());
+    println!(
+        "\n  {} firing(s) shown.  Log at {}/audit/{}/",
+        entries.len(),
+        cfg.arai_base_dir.display(),
+        cfg.project_slug()
+    );
     Ok(())
 }
 
-fn cmd_record(
-    since: Option<String>,
-    tool: Option<String>,
-    limit: usize,
-) -> Result<(), String> {
+fn cmd_record(since: Option<String>, tool: Option<String>, limit: usize) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
     scenarios::record(&cfg, since_epoch, tool, limit)
 }
 
 fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
     let triples = parser::extract_rules(&content, "lint", 0.90);
 
     if json {
         let out: Vec<serde_json::Value> = triples
             .iter()
             .map(|t| {
-                let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+                let intent =
+                    intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
                 serde_json::json!({
                     "subject": t.subject,
                     "predicate": t.predicate,
@@ -626,7 +683,10 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
@@ -641,10 +701,7 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
     for t in &triples {
         let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
         let timing = format!("{:?}", intent.timing);
-        let line_info = t
-            .line_start
-            .map(|l| format!(" L{l}"))
-            .unwrap_or_default();
+        let line_info = t.line_start.map(|l| format!(" L{l}")).unwrap_or_default();
         println!(
             "  [{:<7}] {}{}\n    subject:   {}\n    predicate: {}\n    object:    {}\n    action:    {}  timing: {}  tools: {}\n",
             intent.action.as_str(),
@@ -702,12 +759,7 @@ fn cmd_trust(add: Option<String>, remove: Option<String>) -> Result<(), String> 
     Ok(())
 }
 
-fn cmd_stats(
-    since: Option<String>,
-    top: usize,
-    by_rule: bool,
-    json: bool,
-) -> Result<(), String> {
+fn cmd_stats(since: Option<String>, top: usize, by_rule: bool, json: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
     stats::run(&cfg, since_epoch, top, by_rule, json)
@@ -762,7 +814,10 @@ fn cmd_severity(
     if pattern.is_none() && level.is_none() && !reset {
         let overrides = db.list_severity_overrides().map_err(|e| e.to_string())?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&overrides).map_err(|e| e.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&overrides).map_err(|e| e.to_string())?
+            );
             return Ok(());
         }
         if overrides.is_empty() {
@@ -793,9 +848,14 @@ fn cmd_severity(
     }
 
     if reset {
-        let cleared = db.clear_severity_override(&pattern).map_err(|e| e.to_string())?;
+        let cleared = db
+            .clear_severity_override(&pattern)
+            .map_err(|e| e.to_string())?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?
+            );
             return Ok(());
         }
         if cleared.is_empty() {
@@ -823,7 +883,11 @@ fn cmd_severity(
         "block" => intent::Severity::Block,
         "warn" => intent::Severity::Warn,
         "inform" => intent::Severity::Inform,
-        other => return Err(format!("invalid severity `{other}` (expected block/warn/inform)")),
+        other => {
+            return Err(format!(
+                "invalid severity `{other}` (expected block/warn/inform)"
+            ))
+        }
     };
 
     let changed = db
@@ -831,14 +895,21 @@ fn cmd_severity(
         .map_err(|e| e.to_string())?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&changed).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&changed).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
     if changed.is_empty() {
         println!("No rules matched `{pattern}`.  Run `arai guardrails` to see active rules.");
         return Ok(());
     }
-    println!("Pinned severity \u{2192} {} on {} rule(s):", severity.as_str(), changed.len());
+    println!(
+        "Pinned severity \u{2192} {} on {} rule(s):",
+        severity.as_str(),
+        changed.len()
+    );
     for c in &changed {
         println!(
             "  [{:>6} \u{2192} {:<6}] {} {}: {}",
@@ -863,8 +934,8 @@ fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
     }
     let db = store::Store::open(&db_path)?;
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
 
     // Extract from the candidate content.  Use the same "lint" source-type
     // tag the lint command does so domain bookkeeping stays consistent.
@@ -921,32 +992,38 @@ fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
     if json {
         let added_json: Vec<serde_json::Value> = added
             .iter()
-            .map(|t| serde_json::json!({
-                "subject": t.subject,
-                "predicate": t.predicate,
-                "object": t.object,
-                "line": t.line_start,
-                "layer": t.layer,
-            }))
+            .map(|t| {
+                serde_json::json!({
+                    "subject": t.subject,
+                    "predicate": t.predicate,
+                    "object": t.object,
+                    "line": t.line_start,
+                    "layer": t.layer,
+                })
+            })
             .collect();
         let removed_json: Vec<serde_json::Value> = removed
             .iter()
-            .map(|g| serde_json::json!({
-                "subject": g.subject,
-                "predicate": g.predicate,
-                "object": g.object,
-                "line": g.line_start,
-            }))
+            .map(|g| {
+                serde_json::json!({
+                    "subject": g.subject,
+                    "predicate": g.predicate,
+                    "object": g.object,
+                    "line": g.line_start,
+                })
+            })
             .collect();
         let moved_json: Vec<serde_json::Value> = moved
             .iter()
-            .map(|(g, t)| serde_json::json!({
-                "subject": g.subject,
-                "predicate": g.predicate,
-                "object": g.object,
-                "from_line": g.line_start,
-                "to_line": t.line_start,
-            }))
+            .map(|(g, t)| {
+                serde_json::json!({
+                    "subject": g.subject,
+                    "predicate": g.predicate,
+                    "object": g.object,
+                    "from_line": g.line_start,
+                    "to_line": t.line_start,
+                })
+            })
             .collect();
         let out = serde_json::json!({
             "file": path,
@@ -959,13 +1036,18 @@ fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
                 "moved": moved.len(),
             },
         });
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
     if added.is_empty() && removed.is_empty() && moved.is_empty() {
         println!("Diff: {path}");
-        println!("  No rule changes — file content differs only outside rule lines (or not at all).");
+        println!(
+            "  No rule changes — file content differs only outside rule lines (or not at all)."
+        );
         return Ok(());
     }
 
@@ -1066,18 +1148,11 @@ fn cmd_enable(triple_id: i64) -> Result<(), String> {
 
 /// Explain which guardrails would fire on a hypothetical tool call — same
 /// matching pipeline the live hook uses, but read-only and no audit write.
-fn cmd_why(
-    input: Vec<String>,
-    tool: String,
-    event: String,
-    json: bool,
-) -> Result<(), String> {
+fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Err(
-            "No guardrail database found.  Run `arai init` first.".to_string(),
-        );
+        return Err("No guardrail database found.  Run `arai init` first.".to_string());
     }
     let db = store::Store::open(&db_path)?;
 
@@ -1108,7 +1183,11 @@ fn cmd_why(
                 let severity = intent
                     .as_ref()
                     .map(|i| i.severity.as_str().to_string())
-                    .unwrap_or_else(|| intent::Severity::from_predicate(&g.predicate).as_str().to_string());
+                    .unwrap_or_else(|| {
+                        intent::Severity::from_predicate(&g.predicate)
+                            .as_str()
+                            .to_string()
+                    });
                 serde_json::json!({
                     "triple_id": g.triple_id,
                     "subject": g.subject,
@@ -1129,7 +1208,10 @@ fn cmd_why(
             "terms": result.terms,
             "matched": entries,
         });
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
@@ -1164,10 +1246,7 @@ fn cmd_why(
         } else {
             &g.file_path
         };
-        let line_suffix = g
-            .line_start
-            .map(|l| format!(":{l}"))
-            .unwrap_or_default();
+        let line_suffix = g.line_start.map(|l| format!(":{l}")).unwrap_or_default();
         let layer_suffix = g
             .layer
             .map(|l| format!("  [{}]", audit::layer_label(l)))
@@ -1277,4 +1356,3 @@ mod tests {
         assert!(!rule_matches_pattern(&r, "git"));
     }
 }
-

@@ -18,10 +18,10 @@ pub fn scan_project(project_root: &Path) -> Vec<ImportInfo> {
 
     // Use the `ignore` crate which respects .gitignore, .git/info/exclude, etc.
     let walker = ignore::WalkBuilder::new(project_root)
-        .hidden(true)      // skip hidden files/dirs
-        .git_ignore(true)   // respect .gitignore
-        .git_global(true)   // respect global gitignore
-        .git_exclude(true)  // respect .git/info/exclude
+        .hidden(true) // skip hidden files/dirs
+        .git_ignore(true) // respect .gitignore
+        .git_global(true) // respect global gitignore
+        .git_exclude(true) // respect .git/info/exclude
         .build();
 
     for entry in walker.filter_map(|e| e.ok()) {
@@ -189,7 +189,9 @@ fn extract_python_import(node: Node, source: &[u8], kind: &str) -> Option<String
 }
 
 #[cfg(not(feature = "lang-python"))]
-fn extract_python_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_python_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 #[cfg(feature = "lang-javascript")]
 fn extract_js_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
@@ -215,7 +217,9 @@ fn extract_js_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
 }
 
 #[cfg(not(feature = "lang-javascript"))]
-fn extract_js_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_js_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 #[cfg(feature = "lang-rust")]
 fn extract_rust_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
@@ -225,9 +229,7 @@ fn extract_rust_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
             let arg = node.child_by_field_name("argument")?;
             extract_rust_use_path(arg, source)
         }
-        "extern_crate_declaration" => {
-            child_by_field(node, "name", source)
-        }
+        "extern_crate_declaration" => child_by_field(node, "name", source),
         _ => None,
     }
 }
@@ -237,14 +239,13 @@ fn extract_rust_use_path(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
         "scoped_identifier" | "scoped_use_list" => {
             // Get the leftmost path segment
-            node.child_by_field_name("path")
-                .and_then(|n| {
-                    if n.kind() == "identifier" || n.kind() == "crate" {
-                        node_text(n, source)
-                    } else {
-                        extract_rust_use_path(n, source)
-                    }
-                })
+            node.child_by_field_name("path").and_then(|n| {
+                if n.kind() == "identifier" || n.kind() == "crate" {
+                    node_text(n, source)
+                } else {
+                    extract_rust_use_path(n, source)
+                }
+            })
         }
         "identifier" => node_text(node, source),
         _ => node_text(node, source),
@@ -252,7 +253,9 @@ fn extract_rust_use_path(node: Node, source: &[u8]) -> Option<String> {
 }
 
 #[cfg(not(feature = "lang-rust"))]
-fn extract_rust_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_rust_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 #[cfg(feature = "lang-go")]
 fn extract_go_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
@@ -264,7 +267,9 @@ fn extract_go_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
 }
 
 #[cfg(not(feature = "lang-go"))]
-fn extract_go_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_go_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 #[cfg(feature = "lang-ruby")]
 fn extract_ruby_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
@@ -292,7 +297,9 @@ fn extract_ruby_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
 }
 
 #[cfg(not(feature = "lang-ruby"))]
-fn extract_ruby_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_ruby_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 #[cfg(feature = "lang-java")]
 fn extract_java_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
@@ -309,14 +316,13 @@ fn extract_java_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
 }
 
 #[cfg(not(feature = "lang-java"))]
-fn extract_java_import(_: Node, _: &[u8], _: &str) -> Option<String> { None }
+fn extract_java_import(_: Node, _: &[u8], _: &str) -> Option<String> {
+    None
+}
 
 /// Normalize an import path to a top-level tool/library name.
 fn normalize_import(import_text: &str, ext: &str) -> Option<String> {
-    let text = import_text
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'');
+    let text = import_text.trim().trim_matches('"').trim_matches('\'');
 
     if text.is_empty() {
         return None;
@@ -387,24 +393,78 @@ fn is_stdlib(name: &str, ext: &str) -> bool {
     match ext {
         "py" => matches!(
             name,
-            "os" | "sys" | "re" | "io" | "json" | "math" | "time" | "datetime"
-            | "collections" | "functools" | "itertools" | "typing" | "pathlib"
-            | "subprocess" | "logging" | "unittest" | "hashlib" | "abc"
-            | "dataclasses" | "enum" | "copy" | "string" | "textwrap"
-            | "struct" | "csv" | "argparse" | "shutil" | "tempfile"
-            | "glob" | "fnmatch" | "stat" | "contextlib" | "warnings"
+            "os" | "sys"
+                | "re"
+                | "io"
+                | "json"
+                | "math"
+                | "time"
+                | "datetime"
+                | "collections"
+                | "functools"
+                | "itertools"
+                | "typing"
+                | "pathlib"
+                | "subprocess"
+                | "logging"
+                | "unittest"
+                | "hashlib"
+                | "abc"
+                | "dataclasses"
+                | "enum"
+                | "copy"
+                | "string"
+                | "textwrap"
+                | "struct"
+                | "csv"
+                | "argparse"
+                | "shutil"
+                | "tempfile"
+                | "glob"
+                | "fnmatch"
+                | "stat"
+                | "contextlib"
+                | "warnings"
         ),
         "go" => matches!(
             name,
-            "fmt" | "os" | "io" | "log" | "net" | "http" | "strings" | "strconv"
-            | "sync" | "time" | "errors" | "context" | "testing" | "bytes"
-            | "encoding" | "path" | "filepath" | "regexp" | "sort" | "math"
+            "fmt"
+                | "os"
+                | "io"
+                | "log"
+                | "net"
+                | "http"
+                | "strings"
+                | "strconv"
+                | "sync"
+                | "time"
+                | "errors"
+                | "context"
+                | "testing"
+                | "bytes"
+                | "encoding"
+                | "path"
+                | "filepath"
+                | "regexp"
+                | "sort"
+                | "math"
         ),
         "rs" => matches!(name, "std" | "core" | "alloc"),
         "rb" => matches!(
             name,
-            "json" | "yaml" | "csv" | "net" | "uri" | "open-uri" | "fileutils"
-            | "set" | "date" | "time" | "logger" | "pathname" | "stringio"
+            "json"
+                | "yaml"
+                | "csv"
+                | "net"
+                | "uri"
+                | "open-uri"
+                | "fileutils"
+                | "set"
+                | "date"
+                | "time"
+                | "logger"
+                | "pathname"
+                | "stringio"
         ),
         _ => false,
     }
@@ -416,17 +476,32 @@ mod tests {
 
     #[test]
     fn test_normalize_python_import() {
-        assert_eq!(normalize_import("alembic", "py"), Some("alembic".to_string()));
-        assert_eq!(normalize_import("alembic.op", "py"), Some("alembic".to_string()));
+        assert_eq!(
+            normalize_import("alembic", "py"),
+            Some("alembic".to_string())
+        );
+        assert_eq!(
+            normalize_import("alembic.op", "py"),
+            Some("alembic".to_string())
+        );
         assert_eq!(normalize_import("os", "py"), None); // stdlib
-        assert_eq!(normalize_import("sqlalchemy", "py"), Some("sqlalchemy".to_string()));
+        assert_eq!(
+            normalize_import("sqlalchemy", "py"),
+            Some("sqlalchemy".to_string())
+        );
     }
 
     #[test]
     fn test_normalize_js_import() {
-        assert_eq!(normalize_import("express", "js"), Some("express".to_string()));
+        assert_eq!(
+            normalize_import("express", "js"),
+            Some("express".to_string())
+        );
         assert_eq!(normalize_import("./utils", "js"), None); // relative
-        assert_eq!(normalize_import("@scope/package", "js"), Some("package".to_string()));
+        assert_eq!(
+            normalize_import("@scope/package", "js"),
+            Some("package".to_string())
+        );
     }
 
     #[test]
@@ -437,13 +512,19 @@ mod tests {
 
     #[test]
     fn test_normalize_go_import() {
-        assert_eq!(normalize_import("github.com/user/pkg", "go"), Some("pkg".to_string()));
+        assert_eq!(
+            normalize_import("github.com/user/pkg", "go"),
+            Some("pkg".to_string())
+        );
         assert_eq!(normalize_import("fmt", "go"), None); // stdlib
     }
 
     #[test]
     fn test_normalize_java_import() {
-        assert_eq!(normalize_import("org.apache.kafka.clients", "java"), Some("kafka".to_string()));
+        assert_eq!(
+            normalize_import("org.apache.kafka.clients", "java"),
+            Some("kafka".to_string())
+        );
         assert_eq!(normalize_import("java.util.List", "java"), None); // stdlib
     }
 

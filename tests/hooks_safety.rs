@@ -62,9 +62,13 @@ fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
 /// the bypass we explicitly closed in commit 15dcb96.
 #[test]
 fn pretooluse_malformed_json_produces_deny() {
-    let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"x"#; // truncated
+    let payload =
+        r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"x"#; // truncated
     let (stdout, _stderr, code) = run_hook(payload, &[]);
-    assert_eq!(code, 0, "hook must exit 0 even on error so Claude Code reads stdout");
+    assert_eq!(
+        code, 0,
+        "hook must exit 0 even on error so Claude Code reads stdout"
+    );
     assert!(
         stdout.contains("\"permissionDecision\":\"deny\""),
         "expected deny in stdout, got: {stdout:?}"
@@ -85,7 +89,9 @@ fn spoofed_event_name_does_not_defeat_fail_closed() {
     // 1 MiB + 1 byte = oversize per MAX_HOOK_INPUT_BYTES; the hook errors
     // before it ever decides what to do.  The "event" claim in the JSON
     // is bogus on purpose.
-    let mut payload = String::from(r#"{"hook_event_name":"PreToolUseFOO","tool_name":"Bash","tool_input":{"command":""#);
+    let mut payload = String::from(
+        r#"{"hook_event_name":"PreToolUseFOO","tool_name":"Bash","tool_input":{"command":""#,
+    );
     payload.push_str(&"A".repeat(1024 * 1024));
     payload.push_str(r#""}}"#);
     let (stdout, _stderr, code) = run_hook(&payload, &[]);

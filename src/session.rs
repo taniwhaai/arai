@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 pub fn valid_session_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// A record of a tool call within a session.
@@ -42,7 +43,9 @@ struct SessionState {
 /// sessions directory regardless, but this is enforced one layer up at the
 /// hook entry point so callers don't have to redo the check on every read.
 fn session_path(arai_base: &Path, session_id: &str) -> PathBuf {
-    arai_base.join("sessions").join(format!("{session_id}.json"))
+    arai_base
+        .join("sessions")
+        .join(format!("{session_id}.json"))
 }
 
 /// Load session state from disk.
@@ -67,12 +70,7 @@ fn save_session(arai_base: &Path, session_id: &str, state: &SessionState) {
 }
 
 /// Record a tool call in the session state (called from PostToolUse).
-pub fn record_tool_call(
-    arai_base: &Path,
-    session_id: &str,
-    tool_name: &str,
-    terms: &[String],
-) {
+pub fn record_tool_call(arai_base: &Path, session_id: &str, tool_name: &str, terms: &[String]) {
     let mut state = load_session(arai_base, session_id);
     state.tool_calls.push(ToolCallRecord {
         tool_name: tool_name.to_string(),
@@ -89,11 +87,7 @@ pub fn record_tool_call(
 
 /// Check if prerequisite terms have been satisfied in the session.
 /// Returns true if ALL prerequisite terms appear in at least one past tool call.
-pub fn prerequisite_met(
-    arai_base: &Path,
-    session_id: &str,
-    prerequisite_terms: &[String],
-) -> bool {
+pub fn prerequisite_met(arai_base: &Path, session_id: &str, prerequisite_terms: &[String]) -> bool {
     if prerequisite_terms.is_empty() {
         return false; // No prerequisite → not met (fire the rule)
     }
@@ -102,9 +96,9 @@ pub fn prerequisite_met(
 
     // Check if any past tool call contains ALL prerequisite terms
     state.tool_calls.iter().any(|record| {
-        prerequisite_terms.iter().all(|req| {
-            record.terms.iter().any(|t| t == req)
-        })
+        prerequisite_terms
+            .iter()
+            .all(|req| record.terms.iter().any(|t| t == req))
     })
 }
 
@@ -190,7 +184,8 @@ pub fn extract_prerequisite(object: &str) -> Vec<String> {
                 .split_whitespace()
                 .filter(|w| {
                     let w = w.trim_matches(|c: char| !c.is_alphanumeric());
-                    w.len() >= 2 && !matches!(w, "the" | "a" | "an" | "all" | "and" | "or" | "to" | "in")
+                    w.len() >= 2
+                        && !matches!(w, "the" | "a" | "an" | "all" | "and" | "or" | "to" | "in")
                 })
                 .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
                 .collect();
@@ -219,9 +214,7 @@ mod tests {
     fn valid_session_id_accepts_uuid_shapes_and_short_tokens() {
         assert!(valid_session_id("abc123"));
         assert!(valid_session_id("01HXYZ_AB-CD"));
-        assert!(valid_session_id(
-            "550e8400-e29b-41d4-a716-446655440000"
-        ));
+        assert!(valid_session_id("550e8400-e29b-41d4-a716-446655440000"));
         // Boundary: exactly 128 chars allowed.
         let max = "a".repeat(128);
         assert!(valid_session_id(&max));
@@ -371,7 +364,12 @@ mod tests {
         std::fs::create_dir_all(&dir).ok();
 
         // Record cargo test
-        record_tool_call(&dir, "sess1", "Bash", &["cargo".to_string(), "test".to_string()]);
+        record_tool_call(
+            &dir,
+            "sess1",
+            "Bash",
+            &["cargo".to_string(), "test".to_string()],
+        );
 
         // Check if prerequisite is met
         let prereqs = vec!["cargo".to_string(), "test".to_string()];

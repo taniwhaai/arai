@@ -169,10 +169,7 @@ pub fn evaluate(
 
     let matches = evidence
         .iter()
-        .filter(|w| {
-            post_terms_lower.iter().any(|t| t.contains(*w))
-                || lower_preview.contains(*w)
-        })
+        .filter(|w| post_terms_lower.iter().any(|t| t.contains(*w)) || lower_preview.contains(*w))
         .count();
 
     let prohibitive = matches!(predicate, "never" | "forbids" | "must_not");
