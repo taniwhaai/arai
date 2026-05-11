@@ -406,14 +406,21 @@ pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &
              \n  llm_command = \"claude -p\""
         )?;
 
-    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    let all = store.load_guardrails().map_err(|e| e.to_string())?;
+    let total = all.len();
+    if total == 0 {
+        return Ok(0);
+    }
+    let guardrails: Vec<_> = all.into_iter().filter(|g| !g.noenrich).collect();
+    let excluded = total - guardrails.len();
     if guardrails.is_empty() {
+        println!("    Skipping LLM enrichment: all {total} rule(s) carry (noenrich).");
         return Ok(0);
     }
 
-    let prompt = build_enrichment_prompt(&guardrails);
-    println!("    Sending {} rules to LLM ({})...", guardrails.len(), cmd);
+    print_destination_notice("LLM CLI", &cmd, classify_cli_locality(&cmd), guardrails.len(), excluded);
 
+    let prompt = build_enrichment_prompt(&guardrails);
     let response = run_llm_command(&cmd, &prompt)?;
     parse_and_apply(store, &guardrails, &response, arai_base_dir)
 }
@@ -446,16 +453,108 @@ pub fn enrich_via_api(
 ) -> Result<usize, String> {
     let config = resolve_api_config(api_url, api_key_env, api_model)?;
 
-    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    let all = store.load_guardrails().map_err(|e| e.to_string())?;
+    let total = all.len();
+    if total == 0 {
+        return Ok(0);
+    }
+    let guardrails: Vec<_> = all.into_iter().filter(|g| !g.noenrich).collect();
+    let excluded = total - guardrails.len();
     if guardrails.is_empty() {
+        println!("    Skipping API enrichment: all {total} rule(s) carry (noenrich).");
         return Ok(0);
     }
 
-    let prompt = build_enrichment_prompt(&guardrails);
-    println!("    Sending {} rules to {} (model: {})...", guardrails.len(), config.url, config.model);
+    let label = format!("HTTP API (model: {})", config.model);
+    print_destination_notice(&label, &config.url, classify_url_locality(&config.url), guardrails.len(), excluded);
 
+    let prompt = build_enrichment_prompt(&guardrails);
     let response = call_chat_completions(&config, &prompt)?;
     parse_and_apply(store, &guardrails, &response, arai_base_dir)
+}
+
+/// Locality verdict for an enrichment destination.  `Some(true)` = stays on
+/// the host (loopback, Unix socket, local Ollama binary).  `Some(false)` =
+/// definitely leaves the host (clearly remote URL or known hosted-LLM CLI).
+/// `None` = unable to tell — show the user the raw destination and let them
+/// judge.  Deliberately conservative: a wrong "local" claim is worse than
+/// no claim, because it gives false reassurance.
+type Locality = Option<bool>;
+
+/// Print the pre-send disclosure: destination, locality verdict, rule count,
+/// and how many rules were excluded by `(noenrich)`.  Shared by the LLM
+/// shell-out and HTTP API paths so the wording stays consistent.
+///
+/// Goes to stderr-equivalent (`println!` stays with the existing `cmd_scan`
+/// progress lines) but uses an explicit `[notice]` prefix so a user scanning
+/// the output sees that rule text is about to leave the local process.
+fn print_destination_notice(channel: &str, dest: &str, locality: Locality, rules: usize, excluded: usize) {
+    let locality_str = match locality {
+        Some(true) => "local",
+        Some(false) => "REMOTE",
+        None => "unknown locality",
+    };
+    let mut line = format!(
+        "    [notice] Sending {rules} rule(s) to {channel}: {dest} ({locality_str})"
+    );
+    if excluded > 0 {
+        line.push_str(&format!(" — {excluded} rule(s) skipped via (noenrich)"));
+    }
+    println!("{line}");
+}
+
+/// Classify a configured LLM CLI command as local or remote.  We only
+/// commit to a verdict when the binary's network behaviour is unambiguous:
+/// `ollama` ships with a local model runner, `claude`/`llm`/`gpt`/`openai`
+/// shell out to hosted APIs.  Everything else is `None` so the user sees
+/// the raw command and can decide.
+pub(crate) fn classify_cli_locality(cmd: &str) -> Locality {
+    let binary = cmd.split_whitespace().next().unwrap_or("");
+    let bin_lower = binary
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(binary)
+        .to_ascii_lowercase();
+    match bin_lower.as_str() {
+        "ollama" => Some(true),
+        "claude" | "llm" | "openai" | "gpt" | "anthropic" => Some(false),
+        _ => None,
+    }
+}
+
+/// Classify an HTTP endpoint as local or remote based on the host portion
+/// of the URL.  Loopback addresses and `unix:` schemes are local; anything
+/// with a public-looking host is remote.  Falls back to `None` when the
+/// URL can't be parsed cheaply (e.g. malformed) so we never assert
+/// "local" without evidence.
+pub(crate) fn classify_url_locality(url: &str) -> Locality {
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("unix:") || lower.starts_with("file:") {
+        return Some(true);
+    }
+    let after_scheme = lower.split("://").nth(1)?;
+    let authority = after_scheme
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split('@')
+        .next_back()
+        .unwrap_or("");
+    // Strip the optional port without mangling bracketed IPv6 literals.
+    let host = if let Some(stripped) = authority.strip_prefix('[') {
+        // `[::1]:8080` → take through the closing bracket and reinsert it
+        stripped.split(']').next().map(|s| format!("[{s}]"))
+            .unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or("").to_string()
+    };
+    if host.is_empty() {
+        return None;
+    }
+    if host == "localhost" || host == "127.0.0.1" || host == "[::1]" {
+        return Some(true);
+    }
+    Some(false)
 }
 
 /// Resolve API configuration from env vars, config, and auto-detection.
@@ -867,6 +966,7 @@ mod tests {
             layer: None,
             line_start: None,
             expires_at: None,
+            noenrich: false,
             intent: None,
         };
         let action = fuzzy_match_action("forbid", &g);
@@ -1025,6 +1125,7 @@ mod tests {
                 line_end: Some(1),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
             crate::parser::Triple {
                 subject: "Alembic".to_string(),
@@ -1037,6 +1138,7 @@ mod tests {
                 line_end: Some(2),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
         ];
 
@@ -1112,6 +1214,7 @@ mod tests {
                 layer: None,
                 line_start: None,
                 expires_at: None,
+                noenrich: false,
                 intent: None,
             },
         ];
@@ -1167,6 +1270,7 @@ mod tests {
             line_end: Some(1),
             layer: None,
             expires_at: None,
+            noenrich: false,
         }];
         store.upsert_file("test", "test", &triples, "test").unwrap();
         let guardrails = store.load_guardrails().unwrap();
@@ -1194,7 +1298,106 @@ mod tests {
             layer: None,
             line_start: None,
             expires_at: None,
+            noenrich: false,
             intent: None,
         }
+    }
+
+    #[test]
+    fn classify_cli_locality_known_local() {
+        assert_eq!(classify_cli_locality("ollama run llama3.1"), Some(true));
+        assert_eq!(classify_cli_locality("/usr/local/bin/ollama serve"), Some(true));
+    }
+
+    #[test]
+    fn classify_cli_locality_known_remote() {
+        assert_eq!(classify_cli_locality("claude -p"), Some(false));
+        assert_eq!(classify_cli_locality("llm -m gpt-4o-mini"), Some(false));
+    }
+
+    #[test]
+    fn classify_cli_locality_unknown_is_none() {
+        assert_eq!(classify_cli_locality("custom-llm --flag"), None);
+        assert_eq!(classify_cli_locality(""), None);
+    }
+
+    #[test]
+    fn classify_url_locality_loopback() {
+        assert_eq!(classify_url_locality("http://localhost:11434/v1/chat/completions"), Some(true));
+        assert_eq!(classify_url_locality("http://127.0.0.1:11434"), Some(true));
+        assert_eq!(classify_url_locality("http://[::1]:8080/v1"), Some(true));
+        assert_eq!(classify_url_locality("unix:/var/run/llm.sock"), Some(true));
+    }
+
+    #[test]
+    fn classify_url_locality_remote() {
+        assert_eq!(classify_url_locality("https://api.openai.com/v1/chat/completions"), Some(false));
+        assert_eq!(classify_url_locality("https://api.anthropic.com"), Some(false));
+        assert_eq!(classify_url_locality("https://user:token@api.example.com/v1"), Some(false));
+    }
+
+    #[test]
+    fn classify_url_locality_malformed_is_none() {
+        assert_eq!(classify_url_locality("not-a-url"), None);
+    }
+
+    /// End-to-end check that `(noenrich)` rules are filtered out before the
+    /// prompt is built.  We exercise the filter at the `load_guardrails →
+    /// retain → build_enrichment_prompt` seam rather than going through
+    /// `enrich_via_llm` (which would try to spawn a subprocess); the seam
+    /// IS the filter, so this catches the regression.
+    #[test]
+    fn noenrich_rules_excluded_from_prompt() {
+        use crate::store::Store;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR: AtomicU64 = AtomicU64::new(900);
+
+        let id = CTR.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("arai_noenrich_test_{}", id));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("test.db")).unwrap();
+
+        let triples = vec![
+            crate::parser::Triple {
+                subject: "Public".to_string(),
+                predicate: "never".to_string(),
+                object: "leak public string".to_string(),
+                confidence: 0.9,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(1),
+                line_end: Some(1),
+                layer: Some(1),
+                expires_at: None,
+                noenrich: false,
+            },
+            crate::parser::Triple {
+                subject: "Internal".to_string(),
+                predicate: "never".to_string(),
+                object: "leak internal-codename-zeppelin".to_string(),
+                confidence: 0.9,
+                domain: "test".to_string(),
+                source_file: "test".to_string(),
+                line_start: Some(2),
+                line_end: Some(2),
+                layer: Some(1),
+                expires_at: None,
+                noenrich: true,
+            },
+        ];
+        store.upsert_file("test", "x", &triples, "test").unwrap();
+
+        let all = store.load_guardrails().unwrap();
+        assert_eq!(all.len(), 2, "both rules round-trip from the DB");
+        let kept: Vec<_> = all.into_iter().filter(|g| !g.noenrich).collect();
+        assert_eq!(kept.len(), 1, "noenrich rule is filtered before the prompt");
+        let prompt = build_enrichment_prompt(&kept);
+        assert!(prompt.contains("leak public string"));
+        assert!(
+            !prompt.contains("internal-codename-zeppelin"),
+            "noenrich object must not appear in the LLM prompt: {prompt}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
