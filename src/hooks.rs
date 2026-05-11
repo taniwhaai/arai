@@ -899,6 +899,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("manual", "x", &[triple], "manual").unwrap();
         store.classify_all_guardrails().unwrap();
