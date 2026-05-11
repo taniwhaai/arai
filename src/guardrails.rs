@@ -332,10 +332,27 @@ fn relevance_percentage(score: usize, total_terms: usize, base_confidence: f64) 
 /// Higher score = more term overlap = more relevant.
 /// Command verbs that are semantically distinct — if a rule mentions one,
 /// the command should contain that same verb for a high relevance score.
+/// Command verbs that, when present in a rule's object, gate the rule by
+/// requiring at least one of them to also appear in the extracted command
+/// terms.  See `relevance_score` for the contract.
+///
+/// **Why `"run"` is intentionally absent.**  `run` is also in `NOISE_WORDS`
+/// (filtered from extracted command terms — `cargo run`, `docker run`,
+/// `npm run` all share the wrapper word, which carries no signal on its
+/// own).  If `run` lived in both lists the verb-mismatch check would
+/// permanently drop any rule whose only command-verb is `run`, because
+/// the term is structurally absent from every command.  That broke
+/// rules of the shape `Never use docker run for X` against the matching
+/// `docker run …` command.  The trade-off: a rule whose only verb is
+/// `run` no longer gets verb-mismatch protection against sibling
+/// subcommands of the same tool — `Never use docker run for X` will
+/// fire on `docker compose up` too.  The proper fix is adjacency-aware
+/// multi-word verb matching (treat `docker run` as a phrase); tracked
+/// separately.
 const COMMAND_VERBS: &[&str] = &[
     "push", "pull", "commit", "merge", "rebase", "checkout", "clone", "fetch",
     "stash", "reset", "revert", "cherry", "bisect", "tag", "branch",
-    "install", "uninstall", "build", "test", "run", "deploy", "publish",
+    "install", "uninstall", "build", "test", "deploy", "publish",
     "start", "stop", "create", "delete", "remove", "add", "update", "upgrade",
 ];
 
@@ -791,6 +808,33 @@ mod tests {
         let score = relevance_score("hand-write migration files", &terms)
             .expect("no command verb in rule → keep, score 0");
         assert_eq!(score, 0, "no overlap should score 0 — got {score}");
+    }
+
+    /// Regression for the docker-run interaction: `run` is a `NOISE_WORD` so
+    /// it never appears in extracted command terms, which means treating it
+    /// as a verb-mismatch trigger would permanently silence any rule whose
+    /// only command-verb is `run`.  `run` was therefore removed from
+    /// `COMMAND_VERBS` (see the const's docstring).  This test locks the
+    /// behaviour: the rule survives the verb-mismatch gate against a real
+    /// `docker run` command and against a sibling `docker compose` command —
+    /// the latter is the deliberate trade-off documented for the upcoming
+    /// adjacency-aware verb matcher.
+    #[test]
+    fn test_relevance_run_no_longer_blocks_docker_run_rule() {
+        // Real `docker run` command — `run` is filtered as noise.
+        let docker_run_terms = vec!["docker".to_string(), "ubuntu".to_string()];
+        let score = relevance_score("use docker run for local dev", &docker_run_terms)
+            .expect("rule whose only verb is `run` must not be dropped on a docker run command");
+        assert!(score >= 1, "docker term should overlap — got {score}");
+
+        // Sibling subcommand — same rule fires too (acknowledged regression
+        // pending adjacency-aware multi-word verb matching).  Locking the
+        // behaviour here so a future fix that *does* disambiguate has a
+        // visible test to flip.
+        let docker_compose_terms = vec!["docker".to_string(), "compose".to_string()];
+        let score = relevance_score("use docker run for local dev", &docker_compose_terms)
+            .expect("rule survives — adjacency matching not yet implemented");
+        assert!(score >= 1, "docker term should still overlap — got {score}");
     }
 
     #[test]
