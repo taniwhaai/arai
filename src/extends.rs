@@ -71,8 +71,7 @@ fn read_trust(arai_base: &Path) -> TrustFile {
 fn write_trust(arai_base: &Path, tf: &TrustFile) -> Result<(), String> {
     let path = trust_path(arai_base);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create trust dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create trust dir: {e}"))?;
     }
     let encoded =
         toml::to_string_pretty(tf).map_err(|e| format!("Failed to encode trust file: {e}"))?;
@@ -124,8 +123,7 @@ fn validate_url(url: &str) -> Result<(), String> {
     if url.len() > 2048 {
         return Err("URL is implausibly long (>2048 chars)".to_string());
     }
-    let host = extract_host(url)
-        .ok_or_else(|| format!("could not parse host from {url:?}"))?;
+    let host = extract_host(url).ok_or_else(|| format!("could not parse host from {url:?}"))?;
     validate_host_not_private(host)?;
     Ok(())
 }
@@ -344,8 +342,7 @@ fn fetch_remote(url: &str) -> Result<String, String> {
         ));
     }
 
-    String::from_utf8(bytes)
-        .map_err(|e| format!("response was not valid UTF-8: {e}"))
+    String::from_utf8(bytes).map_err(|e| format!("response was not valid UTF-8: {e}"))
 }
 
 fn filetouch(path: &Path) -> std::io::Result<()> {
@@ -512,9 +509,18 @@ mod tests {
     #[test]
     fn test_extract_host_basic() {
         assert_eq!(extract_host("https://example.com"), Some("example.com"));
-        assert_eq!(extract_host("https://example.com/path"), Some("example.com"));
-        assert_eq!(extract_host("https://example.com:443/p"), Some("example.com"));
-        assert_eq!(extract_host("https://user:pw@example.com/p"), Some("example.com"));
+        assert_eq!(
+            extract_host("https://example.com/path"),
+            Some("example.com")
+        );
+        assert_eq!(
+            extract_host("https://example.com:443/p"),
+            Some("example.com")
+        );
+        assert_eq!(
+            extract_host("https://user:pw@example.com/p"),
+            Some("example.com")
+        );
         assert_eq!(extract_host("https://[::1]:443/p"), Some("::1"));
         assert_eq!(extract_host("https://[2001:db8::1]/p"), Some("2001:db8::1"));
     }
@@ -544,10 +550,17 @@ mod tests {
     fn test_is_private_ip_classifications() {
         use std::str::FromStr;
         let private_cases = [
-            "127.0.0.1", "10.0.0.1", "172.20.5.1", "192.168.0.1",
-            "169.254.169.254", "0.0.0.0", "224.0.0.1",
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.20.5.1",
+            "192.168.0.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "224.0.0.1",
             "100.64.0.1", // CGNAT
-            "::1", "fc00::1", "fe80::1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
         ];
         for s in private_cases {
             let ip: IpAddr = IpAddr::from_str(s).unwrap();
@@ -563,10 +576,7 @@ mod tests {
 
     #[test]
     fn test_trust_add_and_list() {
-        let tmp = std::env::temp_dir().join(format!(
-            "arai_trust_test_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("arai_trust_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let url = "https://example.com/rules.md";
         assert!(trust_add(url, &tmp).unwrap());
@@ -582,10 +592,7 @@ mod tests {
     #[test]
     fn test_resolve_inlines_untrusted_url_silently_noops() {
         // Untrusted URL: resolve returns original content, prints to stderr.
-        let tmp = std::env::temp_dir().join(format!(
-            "arai_resolve_untrust_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("arai_resolve_untrust_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let content = "<!-- arai:extends https://example.com/not-trusted.md -->\n\n- local rule\n";
         let resolved = resolve(content, &tmp);

@@ -14,7 +14,11 @@ pub fn run() -> Result<(), String> {
 
     for f in &files {
         let line_count = f.content.lines().count();
-        println!("    \u{2713} {} ({line_count} lines, {})", display_path(&f.path, &cfg), f.source_type);
+        println!(
+            "    \u{2713} {} ({line_count} lines, {})",
+            display_path(&f.path, &cfg),
+            f.source_type
+        );
     }
 
     println!("\n  Extracting guardrails...");
@@ -60,14 +64,20 @@ pub fn run() -> Result<(), String> {
     db.upsert_code_graph(&imports).map_err(|e| e.to_string())?;
     let tool_count = db.code_graph_tool_count().map_err(|e| e.to_string())?;
     let file_count = db.code_graph_file_count().map_err(|e| e.to_string())?;
-    println!("    \u{2713} {import_count} imports from {file_count} files, {tool_count} unique tools");
+    println!(
+        "    \u{2713} {import_count} imports from {file_count} files, {tool_count} unique tools"
+    );
 
     println!("\n  Setting up hooks...");
     inject_hooks(&cfg)?;
     println!("    \u{2713} .claude/settings.json updated");
 
     // Track init event + flush queued telemetry
-    let enrichment = if model_dir.join("model.onnx").exists() { "model" } else { "taxonomy" };
+    let enrichment = if model_dir.join("model.onnx").exists() {
+        "model"
+    } else {
+        "taxonomy"
+    };
     crate::telemetry::track_init(
         &cfg.arai_base_dir,
         total_rules,
@@ -147,8 +157,7 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     let mut settings: Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings.json: {e}"))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse settings.json: {e}"))?
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings.json: {e}"))?
     } else {
         serde_json::json!({})
     };
@@ -159,9 +168,7 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
 
-    let hooks_obj = hooks
-        .as_object_mut()
-        .ok_or("hooks is not an object")?;
+    let hooks_obj = hooks.as_object_mut().ok_or("hooks is not an object")?;
 
     // Inject arai hook into relevant hook events
     for event in &["PreToolUse", "PostToolUse", "UserPromptSubmit"] {

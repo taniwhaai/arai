@@ -12,8 +12,8 @@
 //! number for a maintainer evaluating Arai on a real project — it tells
 //! you which rules the model honours and which ones it routes around.
 
-use crate::config::Config;
 use crate::audit;
+use crate::config::Config;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -242,7 +242,10 @@ pub fn compute(entries: &[Value]) -> Stats {
                 // payload.  Older audit entries don't carry the field —
                 // treat absent as `false` (first-time injection, no
                 // saving claimed).
-                if r.get("seen_before").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if r.get("seen_before")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
                     suppressed_repeats += 1;
                 }
 
@@ -303,10 +306,8 @@ pub fn compute(entries: &[Value]) -> Stats {
         .into_iter()
         .map(|(triple_id, (subject, predicate, object))| {
             let fires = *fires_by_id.get(&triple_id).unwrap_or(&0);
-            let (obeyed, ignored, unclear) = outcomes_by_id
-                .get(&triple_id)
-                .copied()
-                .unwrap_or((0, 0, 0));
+            let (obeyed, ignored, unclear) =
+                outcomes_by_id.get(&triple_id).copied().unwrap_or((0, 0, 0));
             let denom = obeyed + ignored;
             let ratio = if denom > 0 {
                 Some(obeyed as f64 / denom as f64)
@@ -412,7 +413,10 @@ pub fn run(
                     .collect(),
             );
         }
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
@@ -512,7 +516,9 @@ fn print_compliance_section(rows: &[RuleCompliance], top: usize) {
     let any_outcomes = rows.iter().any(|r| r.obeyed + r.ignored + r.unclear > 0);
     println!("Per-rule compliance");
     if !any_outcomes {
-        println!("  (no Compliance events yet — Pre/Post correlation produces these on PostToolUse)");
+        println!(
+            "  (no Compliance events yet — Pre/Post correlation produces these on PostToolUse)"
+        );
     }
     println!(
         "  {:>5} {:>6} {:>7} {:>7} {:>7}  rule",
@@ -530,8 +536,7 @@ fn print_compliance_section(rows: &[RuleCompliance], top: usize) {
         };
         println!(
             "  {:>5} {:>6} {:>7} {:>7} {:>7}  {} {}: {}{}",
-            r.fires, r.obeyed, r.ignored, r.unclear, ratio,
-            r.subject, r.predicate, r.object, flag,
+            r.fires, r.obeyed, r.ignored, r.unclear, ratio, r.subject, r.predicate, r.object, flag,
         );
     }
     if rows.len() > top {
@@ -545,7 +550,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn pre_firing(ts: &str, tool: &str, triple_id: i64, subj: &str, pred: &str, obj: &str) -> Value {
+    fn pre_firing(
+        ts: &str,
+        tool: &str,
+        triple_id: i64,
+        subj: &str,
+        pred: &str,
+        obj: &str,
+    ) -> Value {
         json!({
             "ts": ts,
             "tool": tool,
@@ -599,9 +611,30 @@ mod tests {
     #[test]
     fn test_rule_count_aggregation() {
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T11:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T12:00:00Z", "Write", 2, "alembic", "never", "hand-write"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T11:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T12:00:00Z",
+                "Write",
+                2,
+                "alembic",
+                "never",
+                "hand-write",
+            ),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.total_firings, 3);
@@ -625,7 +658,15 @@ mod tests {
         let stats = compute(&entries);
         assert_eq!(stats.by_tool[0], ("Bash".to_string(), 2));
         assert_eq!(stats.by_tool[1], ("Write".to_string(), 1));
-        assert_eq!(stats.by_event.iter().find(|(k, _)| k == "PreToolUse").unwrap().1, 2);
+        assert_eq!(
+            stats
+                .by_event
+                .iter()
+                .find(|(k, _)| k == "PreToolUse")
+                .unwrap()
+                .1,
+            2
+        );
     }
 
     #[test]
@@ -660,12 +701,51 @@ mod tests {
         // 3 distinct Pre firings of rule 1 (different pre_ts), each
         // correlated with one definitive Post: 2 obeyed + 1 ignored.
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push"),
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
-            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:01:00Z"),
-            compliance_event("2026-04-20T10:02:30Z", "Bash", 1, "ignored", "2026-04-20T10:02:00Z"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:01:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:02:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            compliance_event(
+                "2026-04-20T10:00:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+            ),
+            compliance_event(
+                "2026-04-20T10:01:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:01:00Z",
+            ),
+            compliance_event(
+                "2026-04-20T10:02:30Z",
+                "Bash",
+                1,
+                "ignored",
+                "2026-04-20T10:02:00Z",
+            ),
         ];
         let stats = compute(&entries);
 
@@ -690,9 +770,14 @@ mod tests {
     #[test]
     fn test_compliance_rollup_no_outcomes_yields_none_ratio() {
         // Pre firings only, no Compliance events: ratio is None.
-        let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 7, "alembic", "never", "hand-write"),
-        ];
+        let entries = vec![pre_firing(
+            "2026-04-20T10:00:00Z",
+            "Bash",
+            7,
+            "alembic",
+            "never",
+            "hand-write",
+        )];
         let stats = compute(&entries);
         assert_eq!(stats.by_rule_compliance.len(), 1);
         assert_eq!(stats.by_rule_compliance[0].fires, 1);
@@ -731,8 +816,20 @@ mod tests {
             pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "a", "never", "x"),
             pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "a", "never", "x"),
             pre_firing("2026-04-20T10:03:00Z", "Bash", 2, "b", "never", "y"),
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
-            compliance_event("2026-04-20T10:03:30Z", "Bash", 2, "ignored", "2026-04-20T10:03:00Z"),
+            compliance_event(
+                "2026-04-20T10:00:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+            ),
+            compliance_event(
+                "2026-04-20T10:03:30Z",
+                "Bash",
+                2,
+                "ignored",
+                "2026-04-20T10:03:00Z",
+            ),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.by_rule_compliance[0].triple_id, 1);
@@ -826,7 +923,10 @@ mod tests {
         ];
         let stats = compute(&entries);
         let rc = &stats.by_rule_compliance[0];
-        assert_eq!(rc.ignored, 1, "first definitive wins, even if preceded by unclear");
+        assert_eq!(
+            rc.ignored, 1,
+            "first definitive wins, even if preceded by unclear"
+        );
         assert_eq!(rc.obeyed, 0);
         assert_eq!(rc.unclear, 0);
     }
@@ -888,10 +988,42 @@ mod tests {
         // 4 firings of rule 1: first is fresh, next 3 are seen_before.
         // Suppression count is 3; tokens saved = 3 * 50 = 150.
         let entries = vec![
-            pre_firing_seen("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push", false),
-            pre_firing_seen("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push", true),
-            pre_firing_seen("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push", true),
-            pre_firing_seen("2026-04-20T10:03:00Z", "Bash", 1, "git", "never", "force-push", true),
+            pre_firing_seen(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+                false,
+            ),
+            pre_firing_seen(
+                "2026-04-20T10:01:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+                true,
+            ),
+            pre_firing_seen(
+                "2026-04-20T10:02:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+                true,
+            ),
+            pre_firing_seen(
+                "2026-04-20T10:03:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+                true,
+            ),
         ];
         let stats = compute(&entries);
         let t = &stats.token_economics;
@@ -905,16 +1037,86 @@ mod tests {
     fn test_token_economics_weights_blocked_vs_advisory() {
         // 2 obeyed-block + 3 obeyed-warn → 2*2000 + 3*500 = 5500.
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:02:00Z", "Bash", 2, "cargo", "always", "test before commit"),
-            pre_firing("2026-04-20T10:03:00Z", "Bash", 2, "cargo", "always", "test before commit"),
-            pre_firing("2026-04-20T10:04:00Z", "Bash", 2, "cargo", "always", "test before commit"),
-            compliance_event_with_severity("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z", "block"),
-            compliance_event_with_severity("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:01:00Z", "block"),
-            compliance_event_with_severity("2026-04-20T10:02:30Z", "Bash", 2, "obeyed", "2026-04-20T10:02:00Z", "warn"),
-            compliance_event_with_severity("2026-04-20T10:03:30Z", "Bash", 2, "obeyed", "2026-04-20T10:03:00Z", "warn"),
-            compliance_event_with_severity("2026-04-20T10:04:30Z", "Bash", 2, "obeyed", "2026-04-20T10:04:00Z", "warn"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:01:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:02:00Z",
+                "Bash",
+                2,
+                "cargo",
+                "always",
+                "test before commit",
+            ),
+            pre_firing(
+                "2026-04-20T10:03:00Z",
+                "Bash",
+                2,
+                "cargo",
+                "always",
+                "test before commit",
+            ),
+            pre_firing(
+                "2026-04-20T10:04:00Z",
+                "Bash",
+                2,
+                "cargo",
+                "always",
+                "test before commit",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:00:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+                "block",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:01:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:01:00Z",
+                "block",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:02:30Z",
+                "Bash",
+                2,
+                "obeyed",
+                "2026-04-20T10:02:00Z",
+                "warn",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:03:30Z",
+                "Bash",
+                2,
+                "obeyed",
+                "2026-04-20T10:03:00Z",
+                "warn",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:04:30Z",
+                "Bash",
+                2,
+                "obeyed",
+                "2026-04-20T10:04:00Z",
+                "warn",
+            ),
         ];
         let stats = compute(&entries);
         let t = &stats.token_economics;
@@ -928,8 +1130,22 @@ mod tests {
         // An `ignored` verdict means the model ran the action despite the
         // rule.  No tokens saved — we don't claim retroactive credit.
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            compliance_event_with_severity("2026-04-20T10:00:30Z", "Bash", 1, "ignored", "2026-04-20T10:00:00Z", "block"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            compliance_event_with_severity(
+                "2026-04-20T10:00:30Z",
+                "Bash",
+                1,
+                "ignored",
+                "2026-04-20T10:00:00Z",
+                "block",
+            ),
         ];
         let stats = compute(&entries);
         let t = &stats.token_economics;
@@ -944,7 +1160,14 @@ mod tests {
         // severity field shouldn't blow up or attribute tokens.  Older
         // audit entries (pre-severity tracking) take this path.
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
             json!({
                 "ts": "2026-04-20T10:00:30Z",
                 "tool": "Bash",
@@ -973,9 +1196,30 @@ mod tests {
         // suppression credit) — never as `seen_before: true`.
         let entries = vec![
             // Vanilla pre_firing helper omits seen_before.
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:01:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T10:02:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:01:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T10:02:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
         ];
         let stats = compute(&entries);
         assert_eq!(stats.token_economics.suppressed_repeats, 0);
@@ -988,14 +1232,52 @@ mod tests {
         // multiple firings of the same rule are still independent
         // observations.
         let entries = vec![
-            pre_firing("2026-04-20T10:00:00Z", "Bash", 1, "git", "never", "force-push"),
-            pre_firing("2026-04-20T11:00:00Z", "Bash", 1, "git", "never", "force-push"),
+            pre_firing(
+                "2026-04-20T10:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
+            pre_firing(
+                "2026-04-20T11:00:00Z",
+                "Bash",
+                1,
+                "git",
+                "never",
+                "force-push",
+            ),
             // Pre #1: lots of correlated obeyed, dedupes to 1 obeyed.
-            compliance_event("2026-04-20T10:00:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
-            compliance_event("2026-04-20T10:01:00Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
-            compliance_event("2026-04-20T10:01:30Z", "Bash", 1, "obeyed", "2026-04-20T10:00:00Z"),
+            compliance_event(
+                "2026-04-20T10:00:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+            ),
+            compliance_event(
+                "2026-04-20T10:01:00Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+            ),
+            compliance_event(
+                "2026-04-20T10:01:30Z",
+                "Bash",
+                1,
+                "obeyed",
+                "2026-04-20T10:00:00Z",
+            ),
             // Pre #2: ignored.
-            compliance_event("2026-04-20T11:00:30Z", "Bash", 1, "ignored", "2026-04-20T11:00:00Z"),
+            compliance_event(
+                "2026-04-20T11:00:30Z",
+                "Bash",
+                1,
+                "ignored",
+                "2026-04-20T11:00:00Z",
+            ),
         ];
         let stats = compute(&entries);
         let rc = &stats.by_rule_compliance[0];

@@ -87,8 +87,8 @@ pub struct ScenarioResult {
 pub fn run_file(path: &Path, cfg: &Config, db: &Store) -> Result<Vec<ScenarioResult>, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read scenario file {}: {e}", path.display()))?;
-    let file: ScenarioFile = serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid scenario JSON: {e}"))?;
+    let file: ScenarioFile =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid scenario JSON: {e}"))?;
 
     let mut results = Vec::with_capacity(file.scenarios.len());
     for scenario in file.scenarios {
@@ -127,40 +127,26 @@ fn run_one(scenario: &Scenario, cfg: &Config, db: &Store) -> ScenarioResult {
     }
 }
 
-fn check_expectations(
-    expect: &Expect,
-    matched: &[(Guardrail, u8)],
-    failures: &mut Vec<String>,
-) {
+fn check_expectations(expect: &Expect, matched: &[(Guardrail, u8)], failures: &mut Vec<String>) {
     let count = matched.len();
     if let Some(min) = expect.min_matches {
         if count < min {
-            failures.push(format!(
-                "expected at least {min} matches, got {count}"
-            ));
+            failures.push(format!("expected at least {min} matches, got {count}"));
         }
     }
     if let Some(max) = expect.max_matches {
         if count > max {
-            failures.push(format!(
-                "expected at most {max} matches, got {count}"
-            ));
+            failures.push(format!("expected at most {max} matches, got {count}"));
         }
     }
     for needle in &expect.matches_subject {
-        let hit = matched
-            .iter()
-            .any(|(g, _)| g.subject.contains(needle));
+        let hit = matched.iter().any(|(g, _)| g.subject.contains(needle));
         if !hit {
-            failures.push(format!(
-                "no matched rule subject contained {needle:?}"
-            ));
+            failures.push(format!("no matched rule subject contained {needle:?}"));
         }
     }
     for needle in &expect.does_not_match_subject {
-        let hit = matched
-            .iter()
-            .find(|(g, _)| g.subject.contains(needle));
+        let hit = matched.iter().find(|(g, _)| g.subject.contains(needle));
         if let Some((g, _)) = hit {
             failures.push(format!(
                 "rule {:?} {} {:?} matched but was excluded by does_not_match_subject={needle:?}",
@@ -195,7 +181,10 @@ pub fn run(path: &Path, json: bool) -> Result<(), String> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        );
     } else {
         print_results(&results);
     }
@@ -237,9 +226,7 @@ fn reconstruct_tool_input(tool: &str, preview: &str) -> Value {
     match tool {
         "Bash" => json!({ "command": preview }),
         "Edit" | "Write" | "MultiEdit" => {
-            let path = preview
-                .strip_prefix(&format!("{tool} "))
-                .unwrap_or(preview);
+            let path = preview.strip_prefix(&format!("{tool} ")).unwrap_or(preview);
             json!({ "file_path": path })
         }
         _ => json!({ "preview": preview }),
@@ -380,7 +367,11 @@ mod tests {
             min_matches: Some(2),
             ..Default::default()
         };
-        check_expectations(&expect, &[gr(1, "git", "never", "force-push")], &mut failures);
+        check_expectations(
+            &expect,
+            &[gr(1, "git", "never", "force-push")],
+            &mut failures,
+        );
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("at least 2"));
     }
@@ -394,10 +385,7 @@ mod tests {
         };
         check_expectations(
             &expect,
-            &[
-                gr(1, "git", "never", "a"),
-                gr(2, "git", "never", "b"),
-            ],
+            &[gr(1, "git", "never", "a"), gr(2, "git", "never", "b")],
             &mut failures,
         );
         assert_eq!(failures.len(), 1);

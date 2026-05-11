@@ -34,15 +34,29 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
     // when it's a directory the entry above already covered it and
     // `try_read_file` here returns None.
     let project_files: Vec<(PathBuf, &str, f64)> = vec![
-        (cfg.project_root.join("CLAUDE.md"), "claude_md_project", 0.92),
-        (cfg.project_root.join(".cursor").join("rules"), "cursor_rules", 0.90),
+        (
+            cfg.project_root.join("CLAUDE.md"),
+            "claude_md_project",
+            0.92,
+        ),
+        (
+            cfg.project_root.join(".cursor").join("rules"),
+            "cursor_rules",
+            0.90,
+        ),
         (cfg.project_root.join(".cursorrules"), "cursor_rules", 0.90),
         (
-            cfg.project_root.join(".github").join("copilot-instructions.md"),
+            cfg.project_root
+                .join(".github")
+                .join("copilot-instructions.md"),
             "copilot_instructions",
             0.90,
         ),
-        (cfg.project_root.join(".windsurfrules"), "windsurf_rules", 0.90),
+        (
+            cfg.project_root.join(".windsurfrules"),
+            "windsurf_rules",
+            0.90,
+        ),
     ];
 
     for (path, source_type, confidence) in project_files {
@@ -134,26 +148,25 @@ fn read_memory_file(path: &PathBuf) -> Option<DiscoveredFile> {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let (source_type, confidence) =
-        if let Some(fm_type) = frontmatter.get("type") {
-            match fm_type.as_str() {
-                "feedback" => ("feedback", 0.95),
-                "user" => ("user", 0.90),
-                "project" => ("project", 0.82),
-                "reference" => ("reference", 0.85),
-                _ => ("project", 0.82),
-            }
-        } else if file_stem.starts_with("feedback_") {
-            ("feedback", 0.95)
-        } else if file_stem.starts_with("user_") {
-            ("user", 0.90)
-        } else if file_stem.starts_with("project_") {
-            ("project", 0.82)
-        } else if file_stem.starts_with("reference_") {
-            ("reference", 0.85)
-        } else {
-            ("project", 0.82)
-        };
+    let (source_type, confidence) = if let Some(fm_type) = frontmatter.get("type") {
+        match fm_type.as_str() {
+            "feedback" => ("feedback", 0.95),
+            "user" => ("user", 0.90),
+            "project" => ("project", 0.82),
+            "reference" => ("reference", 0.85),
+            _ => ("project", 0.82),
+        }
+    } else if file_stem.starts_with("feedback_") {
+        ("feedback", 0.95)
+    } else if file_stem.starts_with("user_") {
+        ("user", 0.90)
+    } else if file_stem.starts_with("project_") {
+        ("project", 0.82)
+    } else if file_stem.starts_with("reference_") {
+        ("reference", 0.85)
+    } else {
+        ("project", 0.82)
+    };
 
     Some(DiscoveredFile {
         path: path.to_string_lossy().to_string(),
@@ -190,7 +203,11 @@ pub fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
             let line = line.trim();
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim().to_string();
-                let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                let value = value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 if !key.is_empty() && !value.is_empty() {
                     map.insert(key, value);
                 }
@@ -260,10 +277,23 @@ mod tests {
 
         let out = read_cursor_rules_dir(&rules);
         let names: Vec<String> = out.iter().map(|f| f.path.clone()).collect();
-        assert_eq!(out.len(), 3, "should pick up all 3 .md/.mdc files: {names:?}");
-        assert!(names.iter().any(|n| n.ends_with("a.md")), "a.md missing: {names:?}");
-        assert!(names.iter().any(|n| n.ends_with("b.mdc")), "b.mdc missing: {names:?}");
-        assert!(names.iter().any(|n| n.ends_with("c.md")), "sub/c.md missing: {names:?}");
+        assert_eq!(
+            out.len(),
+            3,
+            "should pick up all 3 .md/.mdc files: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.ends_with("a.md")),
+            "a.md missing: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.ends_with("b.mdc")),
+            "b.mdc missing: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.ends_with("c.md")),
+            "sub/c.md missing: {names:?}"
+        );
         assert!(
             !names.iter().any(|n| n.ends_with("ignored.txt")),
             "txt leaked: {names:?}"

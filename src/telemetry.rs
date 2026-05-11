@@ -19,10 +19,16 @@ pub fn is_enabled() -> bool {
     }
 
     // Standard opt-out env vars
-    if std::env::var("ARAI_TELEMETRY").map(|v| v == "off" || v == "0" || v == "false").unwrap_or(false) {
+    if std::env::var("ARAI_TELEMETRY")
+        .map(|v| v == "off" || v == "0" || v == "false")
+        .unwrap_or(false)
+    {
         return false;
     }
-    if std::env::var("DO_NOT_TRACK").map(|v| v == "1" || v == "true").unwrap_or(false) {
+    if std::env::var("DO_NOT_TRACK")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false)
+    {
         return false;
     }
 
@@ -93,32 +99,50 @@ pub fn track_rule_fired(
     match_pct: u8,
     severity: &str,
 ) {
-    track(arai_base, "rule_fired", serde_json::json!({
-        "rule_hash": rule_hash(subject, predicate),
-        "tool_name": tool_name,
-        "hook_event": hook_event,
-        "match_pct": match_pct,
-        "severity": severity,
-    }));
+    track(
+        arai_base,
+        "rule_fired",
+        serde_json::json!({
+            "rule_hash": rule_hash(subject, predicate),
+            "tool_name": tool_name,
+            "hook_event": hook_event,
+            "match_pct": match_pct,
+            "severity": severity,
+        }),
+    );
 }
 
 /// Track an arai init event.
-pub fn track_init(arai_base: &Path, rule_count: usize, file_count: usize, tool_count: i64, enrichment: &str) {
-    track(arai_base, "arai_init", serde_json::json!({
-        "rule_count": rule_count,
-        "file_count": file_count,
-        "code_graph_tools": tool_count,
-        "enrichment_tier": enrichment,
-    }));
+pub fn track_init(
+    arai_base: &Path,
+    rule_count: usize,
+    file_count: usize,
+    tool_count: i64,
+    enrichment: &str,
+) {
+    track(
+        arai_base,
+        "arai_init",
+        serde_json::json!({
+            "rule_count": rule_count,
+            "file_count": file_count,
+            "code_graph_tools": tool_count,
+            "enrichment_tier": enrichment,
+        }),
+    );
 }
 
 /// Track hook latency.
 pub fn track_hook_latency(arai_base: &Path, hook_event: &str, latency_ms: u128, matched: bool) {
-    track(arai_base, "hook_latency", serde_json::json!({
-        "hook_event": hook_event,
-        "latency_ms": latency_ms,
-        "matched": matched,
-    }));
+    track(
+        arai_base,
+        "hook_latency",
+        serde_json::json!({
+            "hook_event": hook_event,
+            "latency_ms": latency_ms,
+            "matched": matched,
+        }),
+    );
 }
 
 /// Flush queued events to PostHog (called from non-hook commands like `arai init`).
@@ -152,12 +176,21 @@ pub fn flush(arai_base: &Path) {
     let batch: Vec<serde_json::Value> = events
         .iter()
         .map(|e| {
-            let mut props = e.get("properties").cloned().unwrap_or(serde_json::json!({}));
+            let mut props = e
+                .get("properties")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
             if let Some(obj) = props.as_object_mut() {
                 obj.insert("distinct_id".to_string(), serde_json::json!(distinct_id));
-                obj.insert("arai_version".to_string(), serde_json::json!(env!("CARGO_PKG_VERSION")));
+                obj.insert(
+                    "arai_version".to_string(),
+                    serde_json::json!(env!("CARGO_PKG_VERSION")),
+                );
                 obj.insert("os".to_string(), serde_json::json!(std::env::consts::OS));
-                obj.insert("arch".to_string(), serde_json::json!(std::env::consts::ARCH));
+                obj.insert(
+                    "arch".to_string(),
+                    serde_json::json!(std::env::consts::ARCH),
+                );
             }
             serde_json::json!({
                 "event": e.get("event").and_then(|v| v.as_str()).unwrap_or("unknown"),
@@ -181,10 +214,14 @@ pub fn flush(arai_base: &Path) {
     // Use curl in background to avoid adding HTTP deps to non-enrich builds
     std::process::Command::new("curl")
         .args([
-            "-sS", "-X", "POST",
+            "-sS",
+            "-X",
+            "POST",
             &format!("{POSTHOG_HOST}/batch/"),
-            "-H", "Content-Type: application/json",
-            "-d", &payload_str,
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &payload_str,
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

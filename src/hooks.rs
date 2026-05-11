@@ -108,11 +108,7 @@ pub struct HookMatch {
 /// caller owns stdout, audit log, and telemetry.  Used by the hook handler
 /// *and* by the `arai test` scenario runner — both paths see the same
 /// matching logic so scenarios stay faithful to production.
-pub fn match_hook(
-    hook: &Value,
-    cfg: &Config,
-    db: &Store,
-) -> Result<HookMatch, String> {
+pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, String> {
     let event = hook
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -291,16 +287,13 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             "Hook input exceeded {MAX_HOOK_INPUT_BYTES}-byte cap"
         ));
     }
-    let input = String::from_utf8(buf)
-        .map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
+    let input =
+        String::from_utf8(buf).map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
 
-    let hook: Value = serde_json::from_str(&input)
-        .map_err(|e| format!("Invalid hook JSON: {e}"))?;
+    let hook: Value =
+        serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
 
-    let tool_name = hook
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
     let event = hook
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -338,9 +331,9 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             // correlate "Arai was off but stats has no bypass entry".  The
             // hook still exits 0 — the user explicitly chose `ARAI_DISABLED`
             // so the model must proceed.
-            Err(e) => eprintln!(
-                "arai: ARAI_DISABLED set but could not load config to record bypass: {e}"
-            ),
+            Err(e) => {
+                eprintln!("arai: ARAI_DISABLED set but could not load config to record bypass: {e}")
+            }
         }
         return Ok(());
     }
@@ -393,7 +386,11 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         if result.domain_rules.is_empty() {
             return Ok(());
         }
-        let mut subjects: Vec<String> = result.domain_rules.iter().map(|g| g.subject.clone()).collect();
+        let mut subjects: Vec<String> = result
+            .domain_rules
+            .iter()
+            .map(|g| g.subject.clone())
+            .collect();
         subjects.sort();
         subjects.dedup();
         let summary = format!(
@@ -407,7 +404,10 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 "additionalContext": summary
             }
         });
-        println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string(&response).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
 
@@ -460,11 +460,8 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     // and avoids attention dilution from repeat re-reads.  Empty session_id
     // means we can't track, so all matches behave as first-time injections.
     let triple_ids: Vec<i64> = result.matched.iter().map(|(g, _)| g.triple_id).collect();
-    let (unseen, seen) = session::partition_seen_rules(
-        &cfg.arai_base_dir,
-        &result.session_id,
-        &triple_ids,
-    );
+    let (unseen, seen) =
+        session::partition_seen_rules(&cfg.arai_base_dir, &result.session_id, &triple_ids);
     let seen_set: std::collections::HashSet<i64> = seen.iter().copied().collect();
 
     audit::record_firing(
@@ -514,7 +511,10 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         }),
     };
 
-    println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string(&response).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -529,7 +529,11 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
             .map(|i| i.severity)
             .unwrap_or_else(|| Severity::from_predicate(&g.predicate));
         if sev == Severity::Block {
-            let src = if g.file_path.is_empty() { &*g.source_file } else { &*g.file_path };
+            let src = if g.file_path.is_empty() {
+                &*g.source_file
+            } else {
+                &*g.file_path
+            };
             // Append `:N` when we know the line — saves the user a manual
             // search to the rule that just blocked their action.
             let line_suffix = g.line_start.map(|l| format!(":{l}")).unwrap_or_default();
@@ -568,11 +572,12 @@ fn is_arai_self_command(tool_input: &Value) -> bool {
         .unwrap_or(cmd)
         .trim();
     let first_token = first_segment.split_whitespace().next().unwrap_or("");
-    let basename = first_token.rsplit(['/', '\\']).next().unwrap_or(first_token);
+    let basename = first_token
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(first_token);
     // Strip an optional Windows `.exe` so cross-platform invocations match.
-    let stripped = basename
-        .strip_suffix(".exe")
-        .unwrap_or(basename);
+    let stripped = basename.strip_suffix(".exe").unwrap_or(basename);
     stripped.eq_ignore_ascii_case("arai")
 }
 
@@ -615,7 +620,8 @@ mod tests {
 
     fn temp_db() -> (Store, PathBuf) {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("arai_hooks_test_{}_{}", std::process::id(), id));
+        let dir =
+            std::env::temp_dir().join(format!("arai_hooks_test_{}_{}", std::process::id(), id));
         std::fs::create_dir_all(&dir).unwrap();
         let db_path = dir.join("test.db");
         let store = Store::open(&db_path).unwrap();
@@ -660,14 +666,20 @@ mod tests {
             );
         }
         std::env::remove_var(DENY_MODE_ENV);
-        assert!(deny_mode_enabled(), "unset ARAI_DENY_MODE should enable deny mode");
+        assert!(
+            deny_mode_enabled(),
+            "unset ARAI_DENY_MODE should enable deny mode"
+        );
     }
 
     #[test]
     fn known_hook_event_accepts_canonical_three() {
         assert_eq!(known_hook_event("PreToolUse"), Some("PreToolUse"));
         assert_eq!(known_hook_event("PostToolUse"), Some("PostToolUse"));
-        assert_eq!(known_hook_event("UserPromptSubmit"), Some("UserPromptSubmit"));
+        assert_eq!(
+            known_hook_event("UserPromptSubmit"),
+            Some("UserPromptSubmit")
+        );
     }
 
     #[test]
@@ -677,7 +689,11 @@ mod tests {
         // Substring / prefix variants — none should slip through.
         assert_eq!(known_hook_event("PreToolUse "), None);
         assert_eq!(known_hook_event(" PreToolUse"), None);
-        assert_eq!(known_hook_event("pretooluse"), None, "case-sensitive on purpose");
+        assert_eq!(
+            known_hook_event("pretooluse"),
+            None,
+            "case-sensitive on purpose"
+        );
         assert_eq!(known_hook_event(""), None);
         assert_eq!(known_hook_event("PreToolUse\nPostToolUse"), None);
         assert_eq!(known_hook_event("../../../etc/passwd"), None);
@@ -709,7 +725,10 @@ mod tests {
         let matched = vec![
             (mk_guardrail(1, "alembic", "prefers", "autogenerate"), 90u8),
             (mk_guardrail(2, "git", "never", "force-push to main"), 100u8),
-            (mk_guardrail(3, "cargo", "always", "test before commit"), 80u8),
+            (
+                mk_guardrail(3, "cargo", "always", "test before commit"),
+                80u8,
+            ),
         ];
         // No rule_intent rows → falls back to predicate-derived severity.
         assert_eq!(highest_severity(&matched), Severity::Block);
@@ -734,7 +753,9 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &[triple], "test")
+            .unwrap();
         let tid = store.load_guardrails().unwrap()[0].triple_id;
 
         let intent = RuleIntent {
@@ -767,11 +788,23 @@ mod tests {
         let (_store, dir) = temp_db();
         let matched = vec![(mk_guardrail(1, "git", "never", "force-push to main"), 100u8)];
         let reason = deny_reason(&matched);
-        assert!(reason.contains("never"), "reason should quote the predicate: {reason:?}");
-        assert!(reason.contains("force-push"), "reason should quote the object: {reason:?}");
-        assert!(reason.contains("CLAUDE.md"), "reason should cite source: {reason:?}");
+        assert!(
+            reason.contains("never"),
+            "reason should quote the predicate: {reason:?}"
+        );
+        assert!(
+            reason.contains("force-push"),
+            "reason should quote the object: {reason:?}"
+        );
+        assert!(
+            reason.contains("CLAUDE.md"),
+            "reason should cite source: {reason:?}"
+        );
         // Line number is included when present — `mk_guardrail` sets line 42.
-        assert!(reason.contains(":42"), "reason should include :line_number: {reason:?}");
+        assert!(
+            reason.contains(":42"),
+            "reason should include :line_number: {reason:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -781,7 +814,10 @@ mod tests {
         g.line_start = None;
         let matched = vec![(g, 100u8)];
         let reason = deny_reason(&matched);
-        assert!(reason.contains("CLAUDE.md"), "still cites source: {reason:?}");
+        assert!(
+            reason.contains("CLAUDE.md"),
+            "still cites source: {reason:?}"
+        );
         // No line:N suffix.  Look specifically for a colon followed by a
         // digit inside the source citation rather than rejecting any colon
         // (the `Arai:` prefix is fine).
@@ -800,8 +836,14 @@ mod tests {
         ];
         let reason = deny_reason(&matched);
         // Should pick the `never` rule, not the `prefers` rule.
-        assert!(reason.contains("force-push"), "picked wrong rule: {reason:?}");
-        assert!(!reason.contains("small commits"), "non-block rule leaked: {reason:?}");
+        assert!(
+            reason.contains("force-push"),
+            "picked wrong rule: {reason:?}"
+        );
+        assert!(
+            !reason.contains("small commits"),
+            "non-block rule leaked: {reason:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -824,7 +866,9 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "x", &[triple], "test")
+            .unwrap();
 
         // Pre-classification: intent should be None on every guardrail.
         let pre = store.load_guardrails().unwrap();
@@ -857,24 +901,44 @@ mod tests {
     #[test]
     fn arai_self_command_recognised_by_first_token() {
         // Bare invocations
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai why \"git push\"" })));
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai severity \"git push\" block" })));
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai status" })));
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "arai" })));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "arai why \"git push\"" })
+        ));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "arai severity \"git push\" block" })
+        ));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "arai status" })
+        ));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "arai" })
+        ));
 
         // Path-prefixed invocations
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "/usr/local/bin/arai why x" })));
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "./arai add 'Never X'" })));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "/usr/local/bin/arai why x" })
+        ));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "./arai add 'Never X'" })
+        ));
         // Windows-style separator + .exe suffix
-        assert!(is_arai_self_command(&serde_json::json!({ "command": "C:\\bin\\arai.exe status" })));
+        assert!(is_arai_self_command(
+            &serde_json::json!({ "command": "C:\\bin\\arai.exe status" })
+        ));
 
         // Negatives
-        assert!(!is_arai_self_command(&serde_json::json!({ "command": "git push --force origin main" })));
-        assert!(!is_arai_self_command(&serde_json::json!({ "command": "echo arai" })));
+        assert!(!is_arai_self_command(
+            &serde_json::json!({ "command": "git push --force origin main" })
+        ));
+        assert!(!is_arai_self_command(
+            &serde_json::json!({ "command": "echo arai" })
+        ));
         // Compose with arai in the middle of a pipeline — only the first
         // segment counts.  `git status && arai why` is still a `git`
         // command from the rule-engine's point of view.
-        assert!(!is_arai_self_command(&serde_json::json!({ "command": "git status && arai why x" })));
+        assert!(!is_arai_self_command(
+            &serde_json::json!({ "command": "git status && arai why x" })
+        ));
         assert!(!is_arai_self_command(&serde_json::json!({ "command": "" })));
         assert!(!is_arai_self_command(&serde_json::json!({})));
     }
@@ -901,7 +965,9 @@ mod tests {
             expires_at: None,
             noenrich: false,
         };
-        store.upsert_file("manual", "x", &[triple], "manual").unwrap();
+        store
+            .upsert_file("manual", "x", &[triple], "manual")
+            .unwrap();
         store.classify_all_guardrails().unwrap();
         let rules = store.load_guardrails().unwrap();
 
@@ -914,7 +980,8 @@ mod tests {
             "main".to_string(),
         ];
         let push_phrases = vec!["git push".to_string()];
-        let matched = guardrails::match_guardrails(&rules, &push_terms, &push_phrases, "Bash", "PreToolUse");
+        let matched =
+            guardrails::match_guardrails(&rules, &push_terms, &push_phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "push rule must fire on the push command");
 
         // Read-only subcommands MUST NOT fire it.
@@ -924,7 +991,8 @@ mod tests {
             (vec!["git".to_string(), "log".to_string()], "git log"),
         ] {
             let phrases = vec![phrase.to_string()];
-            let matched = guardrails::match_guardrails(&rules, &read_only, &phrases, "Bash", "PreToolUse");
+            let matched =
+                guardrails::match_guardrails(&rules, &read_only, &phrases, "Bash", "PreToolUse");
             assert!(
                 matched.is_empty(),
                 "git push rule must not fire on read-only `{read_only:?}` (issue #86)"
@@ -942,7 +1010,8 @@ mod tests {
             "scope".to_string(),
         ];
         let gh_phrases = vec!["gh issue".to_string()];
-        let matched = guardrails::match_guardrails(&rules, &gh_terms, &gh_phrases, "Bash", "PreToolUse");
+        let matched =
+            guardrails::match_guardrails(&rules, &gh_terms, &gh_phrases, "Bash", "PreToolUse");
         assert!(
             matched.is_empty(),
             "git push rule must not fire on a `gh issue create` whose title contains `git-level` (issue #86)"

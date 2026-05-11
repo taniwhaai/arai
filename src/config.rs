@@ -80,11 +80,7 @@ pub struct ResolvedBaseDir {
 /// 3. else `path_exists(<home>/.taniwha/arai)` true → that path, no notice.
 /// 4. else `path_exists(<home>/.arai)` true → that path, `DeprecatedDefaultPath` notice.
 /// 5. else fresh-install fallback → `<home>/.taniwha/arai`, no notice.
-pub fn resolve_base_dir<E, P>(
-    env_lookup: E,
-    path_exists: P,
-    home_dir: &str,
-) -> ResolvedBaseDir
+pub fn resolve_base_dir<E, P>(env_lookup: E, path_exists: P, home_dir: &str) -> ResolvedBaseDir
 where
     E: Fn(&str) -> Option<String>,
     P: Fn(&str) -> bool,
@@ -549,7 +545,10 @@ mod tests {
                 vec![("ARAI_BASE_DIR", None), ("ARAI_DB_DIR", None)],
                 &env_calls,
             ),
-            exists_with(vec![(NEW_DEFAULT, false), (OLD_DEFAULT, false)], &path_calls),
+            exists_with(
+                vec![(NEW_DEFAULT, false), (OLD_DEFAULT, false)],
+                &path_calls,
+            ),
             HOME,
         );
 

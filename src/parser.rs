@@ -44,15 +44,75 @@ fn is_false(b: &bool) -> bool {
 
 /// Known tool names for subject extraction, "use X" two-signal gate, and content sniffing.
 pub const KNOWN_TOOLS: &[&str] = &[
-    "alembic", "cargo", "npm", "yarn", "pnpm", "pip", "uv", "poetry",
-    "docker", "git", "gh", "pytest", "jest", "vitest", "mocha", "rspec",
-    "go", "rustc", "gcc", "make", "cmake", "webpack", "vite", "eslint",
-    "prettier", "black", "ruff", "mypy", "pyright", "tsc", "terraform",
-    "ansible", "kubectl", "helm", "gradle", "maven", "sbt", "mix",
-    "bundle", "composer", "apt", "brew", "dnf", "yum", "pacman", "snap",
-    "flatpak", "nix", "tmux", "sed", "awk", "grep", "curl", "wget",
-    "ruby", "python", "node", "deno", "bun", "java", "dotnet", "swift",
-    "clang", "bazel", "nx", "turbo", "pnpm", "pipenv", "conda",
+    "alembic",
+    "cargo",
+    "npm",
+    "yarn",
+    "pnpm",
+    "pip",
+    "uv",
+    "poetry",
+    "docker",
+    "git",
+    "gh",
+    "pytest",
+    "jest",
+    "vitest",
+    "mocha",
+    "rspec",
+    "go",
+    "rustc",
+    "gcc",
+    "make",
+    "cmake",
+    "webpack",
+    "vite",
+    "eslint",
+    "prettier",
+    "black",
+    "ruff",
+    "mypy",
+    "pyright",
+    "tsc",
+    "terraform",
+    "ansible",
+    "kubectl",
+    "helm",
+    "gradle",
+    "maven",
+    "sbt",
+    "mix",
+    "bundle",
+    "composer",
+    "apt",
+    "brew",
+    "dnf",
+    "yum",
+    "pacman",
+    "snap",
+    "flatpak",
+    "nix",
+    "tmux",
+    "sed",
+    "awk",
+    "grep",
+    "curl",
+    "wget",
+    "ruby",
+    "python",
+    "node",
+    "deno",
+    "bun",
+    "java",
+    "dotnet",
+    "swift",
+    "clang",
+    "bazel",
+    "nx",
+    "turbo",
+    "pnpm",
+    "pipenv",
+    "conda",
 ];
 
 /// Extract guardrail rules from markdown content.
@@ -92,8 +152,7 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
 pub fn extract_expiry(object: &str) -> (String, Option<String>) {
     static EXPIRY_RE: OnceLock<Regex> = OnceLock::new();
     let re = EXPIRY_RE.get_or_init(|| {
-        Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$")
-            .expect("valid regex")
+        Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$").expect("valid regex")
     });
     if let Some(caps) = re.captures(object) {
         let date = caps.get(1).map(|m| m.as_str().to_string());
@@ -110,9 +169,8 @@ pub fn extract_expiry(object: &str) -> (String, Option<String>) {
 /// without disabling the feature globally.
 pub fn extract_noenrich(object: &str) -> (String, bool) {
     static NOENRICH_RE: OnceLock<Regex> = OnceLock::new();
-    let re = NOENRICH_RE.get_or_init(|| {
-        Regex::new(r"(?i)\s*\(noenrich\)\s*$").expect("valid regex")
-    });
+    let re =
+        NOENRICH_RE.get_or_init(|| Regex::new(r"(?i)\s*\(noenrich\)\s*$").expect("valid regex"));
     if re.is_match(object) {
         let cleaned = re.replace(object, "").trim().to_string();
         (cleaned, true)
@@ -215,8 +273,17 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
             let header = trimmed.trim_start_matches('#').trim().to_string();
             // Strip leading numbered prefix like "4. " and trailing formatting like " (§3)"
             let header = strip_list_prefix(&header);
-            let header = header.split('(').next().unwrap_or(&header).trim().to_string();
-            current_section = if header.is_empty() { None } else { Some(header) };
+            let header = header
+                .split('(')
+                .next()
+                .unwrap_or(&header)
+                .trim()
+                .to_string();
+            current_section = if header.is_empty() {
+                None
+            } else {
+                Some(header)
+            };
             // Flush any pending item — emit only if we're not inside an
             // active skip after this heading-level adjustment.
             if let Some((text, start)) = current_item.take() {
@@ -316,24 +383,18 @@ fn extract_list_items(body: &str) -> Vec<ListItem> {
 /// and whitespace-tolerant: `<!--arai:skip-->`, `<!-- ARAI:SKIP -->`, etc.
 fn line_contains_skip_marker(line: &str) -> bool {
     static MARKER: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = MARKER.get_or_init(|| {
-        Regex::new(r"(?i)<!--\s*arai\s*:\s*skip\s*-->").expect("valid regex")
-    });
+    let re = MARKER
+        .get_or_init(|| Regex::new(r"(?i)<!--\s*arai\s*:\s*skip\s*-->").expect("valid regex"));
     re.is_match(line)
 }
 
 fn is_list_start(trimmed: &str) -> bool {
-    if trimmed.starts_with("- ")
-        || trimmed.starts_with("* ")
-        || trimmed.starts_with("+ ")
-    {
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
         return true;
     }
     // Numbered list: "1. ", "2. ", etc.
     static NUMBERED_LIST_RE: OnceLock<Regex> = OnceLock::new();
-    let re = NUMBERED_LIST_RE.get_or_init(|| {
-        Regex::new(r"^\d+\.\s").expect("valid regex")
-    });
+    let re = NUMBERED_LIST_RE.get_or_init(|| Regex::new(r"^\d+\.\s").expect("valid regex"));
     re.is_match(trimmed)
 }
 
@@ -342,9 +403,7 @@ fn strip_list_prefix(trimmed: &str) -> String {
         return trimmed[2..].to_string();
     }
     static NUMBERED_PREFIX_RE: OnceLock<Regex> = OnceLock::new();
-    let re = NUMBERED_PREFIX_RE.get_or_init(|| {
-        Regex::new(r"^\d+\.\s+").expect("valid regex")
-    });
+    let re = NUMBERED_PREFIX_RE.get_or_init(|| Regex::new(r"^\d+\.\s+").expect("valid regex"));
     re.replace(trimmed, "").to_string()
 }
 
@@ -353,15 +412,10 @@ fn strip_markdown(text: &str) -> String {
     static BOLD_RE: OnceLock<Regex> = OnceLock::new();
     static CODE_RE: OnceLock<Regex> = OnceLock::new();
     static LINK_RE: OnceLock<Regex> = OnceLock::new();
-    let re_bold = BOLD_RE.get_or_init(|| {
-        Regex::new(r"\*\*(.+?)\*\*|__(.+?)__").expect("valid regex")
-    });
-    let re_code = CODE_RE.get_or_init(|| {
-        Regex::new(r"`([^`]+)`").expect("valid regex")
-    });
-    let re_link = LINK_RE.get_or_init(|| {
-        Regex::new(r"\[([^]]+)]\([^)]+\)").expect("valid regex")
-    });
+    let re_bold =
+        BOLD_RE.get_or_init(|| Regex::new(r"\*\*(.+?)\*\*|__(.+?)__").expect("valid regex"));
+    let re_code = CODE_RE.get_or_init(|| Regex::new(r"`([^`]+)`").expect("valid regex"));
+    let re_link = LINK_RE.get_or_init(|| Regex::new(r"\[([^]]+)]\([^)]+\)").expect("valid regex"));
     // Strip bold **text** and __text__
     let s = re_bold.replace_all(text, "$1$2").to_string();
     // Strip inline code `text`
@@ -376,7 +430,10 @@ fn strip_markdown(text: &str) -> String {
 /// Returns (subject, predicate, object, layer) or None.  `layer` is the 1-based
 /// index of the pattern family that fired, surfaced in the audit log + hook
 /// output so a reviewer can trace the derivation without reading this file.
-fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(String, String, String, u8)> {
+fn match_imperative(
+    text: &str,
+    section_context: &Option<String>,
+) -> Option<(String, String, String, u8)> {
     // Skip items that look like pure code references
     if is_code_reference(text) {
         return None;
@@ -395,9 +452,8 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // Catches the colon-inside-bold case the previous trailing-separator
     // regex missed.
     static BOLD_LABEL_RE: OnceLock<Regex> = OnceLock::new();
-    let bold_label_re = BOLD_LABEL_RE.get_or_init(|| {
-        Regex::new(r"^\*\*[^*]+\s[^*]*\*\*").expect("valid regex")
-    });
+    let bold_label_re =
+        BOLD_LABEL_RE.get_or_init(|| Regex::new(r"^\*\*[^*]+\s[^*]*\*\*").expect("valid regex"));
     let is_bold_label = bold_label_re.is_match(text.trim_start());
 
     // Strip markdown formatting before matching
@@ -457,7 +513,11 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         ];
         raw.iter()
             .map(|(p, pred)| {
-                (Regex::new(p).expect("valid regex"), *pred, p.contains("consider"))
+                (
+                    Regex::new(p).expect("valid regex"),
+                    *pred,
+                    p.contains("consider"),
+                )
             })
             .collect()
     });
@@ -484,9 +544,7 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // is feature-absence description, not a rule.
     if !is_bold_label {
         static NO_RE: OnceLock<Regex> = OnceLock::new();
-        let no_re = NO_RE.get_or_init(|| {
-            Regex::new(r"(?i)^no\s+(.+)").expect("valid regex")
-        });
+        let no_re = NO_RE.get_or_init(|| Regex::new(r"(?i)^no\s+(.+)").expect("valid regex"));
         if let Some(caps) = no_re.captures(&cleaned) {
             if let Some(obj_match) = caps.get(1) {
                 let object = obj_match.as_str().trim().to_string();
@@ -527,19 +585,56 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
             let after_lower = after_colon.to_lowercase();
             // Check if the part after colon starts with an imperative
             let colon_imperatives = [
-                "never", "always", "don't", "do not", "must", "avoid", "ensure",
-                "make", "find", "keep", "use", "run", "check", "add", "write",
-                "update", "mark", "set", "get", "put", "send", "stop", "start",
-                "enter", "exit", "verify", "test", "review", "demonstrate",
-                "offload", "throw", "challenge", "pause", "ask", "diff",
-                "ruthlessly", "zero", "no ", "only",
+                "never",
+                "always",
+                "don't",
+                "do not",
+                "must",
+                "avoid",
+                "ensure",
+                "make",
+                "find",
+                "keep",
+                "use",
+                "run",
+                "check",
+                "add",
+                "write",
+                "update",
+                "mark",
+                "set",
+                "get",
+                "put",
+                "send",
+                "stop",
+                "start",
+                "enter",
+                "exit",
+                "verify",
+                "test",
+                "review",
+                "demonstrate",
+                "offload",
+                "throw",
+                "challenge",
+                "pause",
+                "ask",
+                "diff",
+                "ruthlessly",
+                "zero",
+                "no ",
+                "only",
             ];
-            if colon_imperatives.iter().any(|imp| after_lower.starts_with(imp)) {
+            if colon_imperatives
+                .iter()
+                .any(|imp| after_lower.starts_with(imp))
+            {
                 let label = cleaned[..colon_pos].trim();
                 let subject = if !label.is_empty() {
                     // Use the label as subject if it's meaningful
                     let label_lower = label.to_lowercase();
-                    if let Some(tool) = KNOWN_TOOLS.iter().find(|t| contains_word(&label_lower, t)) {
+                    if let Some(tool) = KNOWN_TOOLS.iter().find(|t| contains_word(&label_lower, t))
+                    {
                         capitalize(tool)
                     } else {
                         label.to_string()
@@ -547,7 +642,12 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
                 } else {
                     extract_subject(&after_lower, section_context)
                 };
-                return Some((subject, "requires".to_string(), clean_object(after_colon), 3));
+                return Some((
+                    subject,
+                    "requires".to_string(),
+                    clean_object(after_colon),
+                    3,
+                ));
             }
         }
     }
@@ -581,17 +681,73 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
         let condition = caps.get(1)?.as_str().trim().to_lowercase();
         let allowed_verbs = [
             // From Layer 6
-            "enter", "exit", "run", "check", "test", "write", "read", "review",
-            "update", "delete", "add", "remove", "set", "get", "keep", "find",
-            "fix", "verify", "demonstrate", "prove", "show", "deploy", "build",
-            "install", "configure", "enable", "disable", "start", "stop",
-            "offload", "throw", "challenge", "pause", "diff", "ask",
-            "point", "create", "implement", "document", "define", "store",
-            "state", "share", "explain", "describe", "connect", "apply",
+            "enter",
+            "exit",
+            "run",
+            "check",
+            "test",
+            "write",
+            "read",
+            "review",
+            "update",
+            "delete",
+            "add",
+            "remove",
+            "set",
+            "get",
+            "keep",
+            "find",
+            "fix",
+            "verify",
+            "demonstrate",
+            "prove",
+            "show",
+            "deploy",
+            "build",
+            "install",
+            "configure",
+            "enable",
+            "disable",
+            "start",
+            "stop",
+            "offload",
+            "throw",
+            "challenge",
+            "pause",
+            "diff",
+            "ask",
+            "point",
+            "create",
+            "implement",
+            "document",
+            "define",
+            "store",
+            "state",
+            "share",
+            "explain",
+            "describe",
+            "connect",
+            "apply",
             // Layer 1 leaders
-            "never", "always", "don't", "dont", "do", "must", "should",
-            "shouldn't", "shouldnt", "avoid", "ensure", "use", "prefer",
-            "consider", "recommend", "make", "be", "no", "only",
+            "never",
+            "always",
+            "don't",
+            "dont",
+            "do",
+            "must",
+            "should",
+            "shouldn't",
+            "shouldnt",
+            "avoid",
+            "ensure",
+            "use",
+            "prefer",
+            "consider",
+            "recommend",
+            "make",
+            "be",
+            "no",
+            "only",
         ];
         if allowed_verbs.contains(&verb.as_str()) {
             // Decide predicate based on the inner verb.  Bias toward
@@ -657,13 +813,12 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // where the writer means the section's framing, not a generic verb
     // call-out.
     static USE_RE: OnceLock<Regex> = OnceLock::new();
-    let use_re = USE_RE.get_or_init(|| {
-        Regex::new(r"(?i)^use\s+(.+)").expect("valid regex")
-    });
+    let use_re = USE_RE.get_or_init(|| Regex::new(r"(?i)^use\s+(.+)").expect("valid regex"));
     if let Some(caps) = use_re.captures(&cleaned) {
         let object = caps.get(1)?.as_str().trim();
         let has_known_tool = contains_known_tool(&lower);
-        let has_co_imperative = lower.contains("always") || lower.contains("must") || lower.contains("never");
+        let has_co_imperative =
+            lower.contains("always") || lower.contains("must") || lower.contains("never");
         let in_rules_section = is_rules_section(section_context);
 
         if has_known_tool || has_co_imperative || in_rules_section {
@@ -675,20 +830,59 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
     // Layer 6: Catch-all — any list item with a verb-like start is a candidate rule
     // These get lower confidence (handled by the caller via source_type)
     let verb_starts = [
-        "enter", "exit", "run", "check", "test", "write", "read", "review",
-        "update", "delete", "add", "remove", "set", "get", "keep", "find",
-        "fix", "verify", "demonstrate", "prove", "show", "deploy", "build",
-        "install", "configure", "enable", "disable", "start", "stop",
-        "offload", "throw", "challenge", "pause", "diff", "ask",
+        "enter",
+        "exit",
+        "run",
+        "check",
+        "test",
+        "write",
+        "read",
+        "review",
+        "update",
+        "delete",
+        "add",
+        "remove",
+        "set",
+        "get",
+        "keep",
+        "find",
+        "fix",
+        "verify",
+        "demonstrate",
+        "prove",
+        "show",
+        "deploy",
+        "build",
+        "install",
+        "configure",
+        "enable",
+        "disable",
+        "start",
+        "stop",
+        "offload",
+        "throw",
+        "challenge",
+        "pause",
+        "diff",
+        "ask",
         "point",
         // v0.2.11 additions — measured against the broadened public corpus
         // (~80 additional rule extractions; see CHANGELOG).
-        "create", "implement", "document", "define", "store",
+        "create",
+        "implement",
+        "document",
+        "define",
+        "store",
         // Common imperatives observed in instruction prose (kraken,
         // arai, public corpora).  Each unambiguous in list-item-leading
         // position; low false-positive risk.  Also referenced by Layer 7's
         // allowed_verbs whitelist.
-        "state", "share", "explain", "describe", "connect", "apply",
+        "state",
+        "share",
+        "explain",
+        "describe",
+        "connect",
+        "apply",
     ];
 
     let first_word = lower.split_whitespace().next().unwrap_or("");
@@ -704,7 +898,9 @@ fn match_imperative(text: &str, section_context: &Option<String>) -> Option<(Str
 /// canonical "rules-shaped" section names so an unrelated `## Use Cases`
 /// section doesn't accidentally promote every `use X` bullet.
 fn is_rules_section(section_context: &Option<String>) -> bool {
-    let Some(section) = section_context else { return false; };
+    let Some(section) = section_context else {
+        return false;
+    };
     let lower = section.to_lowercase();
     [
         "convention",
@@ -733,9 +929,7 @@ fn is_code_reference(text: &str) -> bool {
     }
     // file:line reference
     static FILE_LINE_RE: OnceLock<Regex> = OnceLock::new();
-    let re = FILE_LINE_RE.get_or_init(|| {
-        Regex::new(r"^[\w./\\-]+:\d+$").expect("valid regex")
-    });
+    let re = FILE_LINE_RE.get_or_init(|| Regex::new(r"^[\w./\\-]+:\d+$").expect("valid regex"));
     if re.is_match(trimmed) {
         return true;
     }
@@ -766,10 +960,9 @@ fn extract_subject(lower_text: &str, section_context: &Option<String>) -> String
 
 fn extract_first_noun(text: &str) -> String {
     let skip_words = [
-        "the", "a", "an", "all", "any", "every", "each", "this", "that",
-        "your", "my", "our", "their", "its", "for", "to", "in", "on",
-        "with", "from", "of", "and", "or", "not", "no", "is", "are",
-        "was", "were", "be", "been", "being",
+        "the", "a", "an", "all", "any", "every", "each", "this", "that", "your", "my", "our",
+        "their", "its", "for", "to", "in", "on", "with", "from", "of", "and", "or", "not", "no",
+        "is", "are", "was", "were", "be", "been", "being",
     ];
 
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -790,12 +983,18 @@ fn extract_first_noun(text: &str) -> String {
 /// Ambiguous tool names that need context to confirm they mean the tool.
 /// "go" can mean "go ahead" or the Go language — only match if followed by
 /// a subcommand like "test", "build", "run", "fmt", "mod", "get".
-const AMBIGUOUS_TOOLS: &[(&str, &[&str])] = &[
-    ("go", &["test", "build", "run", "fmt", "mod", "get", "install", "vet", "generate"]),
-];
+const AMBIGUOUS_TOOLS: &[(&str, &[&str])] = &[(
+    "go",
+    &[
+        "test", "build", "run", "fmt", "mod", "get", "install", "vet", "generate",
+    ],
+)];
 
 fn find_earliest_tool(text: &str) -> Option<&'static str> {
-    let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
     for (i, word) in words.iter().enumerate() {
         for tool in KNOWN_TOOLS {
             if *word == *tool {
@@ -823,7 +1022,9 @@ fn contains_word(text: &str, word: &str) -> bool {
 }
 
 fn contains_known_tool(lower_text: &str) -> bool {
-    KNOWN_TOOLS.iter().any(|tool| contains_word(lower_text, tool))
+    KNOWN_TOOLS
+        .iter()
+        .any(|tool| contains_word(lower_text, tool))
 }
 
 fn capitalize(s: &str) -> String {
@@ -895,9 +1096,18 @@ mod tests {
 ";
         let rules = extract_rules(md, "test", 0.9);
         let objects: Vec<&str> = rules.iter().map(|r| r.object.as_str()).collect();
-        assert!(objects.iter().any(|o| o.contains("Z")), "Z should fire: {objects:?}");
-        assert!(!objects.iter().any(|o| o.contains("X")), "X should be skipped: {objects:?}");
-        assert!(!objects.iter().any(|o| o.contains("Y")), "Y should be skipped: {objects:?}");
+        assert!(
+            objects.iter().any(|o| o.contains("Z")),
+            "Z should fire: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("X")),
+            "X should be skipped: {objects:?}"
+        );
+        assert!(
+            !objects.iter().any(|o| o.contains("Y")),
+            "Y should be skipped: {objects:?}"
+        );
     }
 
     #[test]
@@ -963,7 +1173,11 @@ mod tests {
 - Never real
 ";
         let rules = extract_rules(md, "test", 0.9);
-        assert_eq!(rules.len(), 1, "only the post-heading rule survives: {rules:?}");
+        assert_eq!(
+            rules.len(),
+            1,
+            "only the post-heading rule survives: {rules:?}"
+        );
         assert!(rules[0].object.contains("real"));
     }
 
@@ -984,42 +1198,34 @@ mod tests {
 
     #[test]
     fn test_expiry_is_extracted_and_stripped() {
-        let rules = extract_rules(
-            "- Never skip tests (expires 2026-12-31)",
-            "test",
-            0.9,
-        );
+        let rules = extract_rules("- Never skip tests (expires 2026-12-31)", "test", 0.9);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].expires_at.as_deref(), Some("2026-12-31"));
         // Object should no longer contain the annotation.
-        assert!(!rules[0].object.contains("expires"), "object still carries annotation: {}", rules[0].object);
-        assert!(rules[0].object.contains("skip tests"), "object missing rule body: {}", rules[0].object);
+        assert!(
+            !rules[0].object.contains("expires"),
+            "object still carries annotation: {}",
+            rules[0].object
+        );
+        assert!(
+            rules[0].object.contains("skip tests"),
+            "object missing rule body: {}",
+            rules[0].object
+        );
     }
 
     #[test]
     fn test_expiry_variants() {
         // "until" variant
-        let rules = extract_rules(
-            "- Always use autogenerate (until 2027-01-15)",
-            "test",
-            0.9,
-        );
+        let rules = extract_rules("- Always use autogenerate (until 2027-01-15)", "test", 0.9);
         assert_eq!(rules[0].expires_at.as_deref(), Some("2027-01-15"));
 
         // "expire" (no s) also accepted
-        let rules = extract_rules(
-            "- Avoid direct sql writes (expire 2026-06-01)",
-            "test",
-            0.9,
-        );
+        let rules = extract_rules("- Avoid direct sql writes (expire 2026-06-01)", "test", 0.9);
         assert_eq!(rules[0].expires_at.as_deref(), Some("2026-06-01"));
 
         // No annotation → None
-        let rules = extract_rules(
-            "- Never force-push to main",
-            "test",
-            0.9,
-        );
+        let rules = extract_rules("- Never force-push to main", "test", 0.9);
         assert_eq!(rules[0].expires_at, None);
     }
 
@@ -1172,7 +1378,11 @@ mod tests {
 
     fn extract_one(line: &str) -> Triple {
         let rules = extract_rules(line, "test", 0.9);
-        assert_eq!(rules.len(), 1, "expected exactly 1 rule from {line:?}, got {rules:#?}");
+        assert_eq!(
+            rules.len(),
+            1,
+            "expected exactly 1 rule from {line:?}, got {rules:#?}"
+        );
         rules.into_iter().next().unwrap()
     }
 
@@ -1415,7 +1625,8 @@ mod tests {
 
     #[test]
     fn test_conditional_for_use() {
-        let r = extract_one("- For tasks that need more compute, use subagents to work in parallel");
+        let r =
+            extract_one("- For tasks that need more compute, use subagents to work in parallel");
         assert_eq!(r.layer, Some(7));
     }
 

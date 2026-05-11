@@ -172,10 +172,7 @@ pub fn query(
             Err(_) => continue,
         };
         // Read lines into a buffer then reverse so newest-in-file comes first.
-        let lines: Vec<String> = BufReader::new(file)
-            .lines()
-            .map_while(Result::ok)
-            .collect();
+        let lines: Vec<String> = BufReader::new(file).lines().map_while(Result::ok).collect();
         for line in lines.into_iter().rev() {
             if out.len() >= max_entries {
                 return Ok(out);
@@ -339,11 +336,12 @@ fn civil_to_epoch(y: i32, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
     let doy: i64 = (153 * mp + 2) / 5 + (d as i64 - 1);
     let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days_since_epoch: i64 = era * 146_097 + doe - 719_468;
-    let secs: i64 = days_since_epoch * 86_400
-        + (h as i64) * 3600
-        + (mi as i64) * 60
-        + (s as i64);
-    if secs < 0 { 0 } else { secs as u64 }
+    let secs: i64 = days_since_epoch * 86_400 + (h as i64) * 3600 + (mi as i64) * 60 + (s as i64);
+    if secs < 0 {
+        0
+    } else {
+        secs as u64
+    }
 }
 
 #[cfg(test)]
@@ -353,9 +351,19 @@ mod tests {
     #[test]
     fn test_epoch_roundtrip() {
         // Round-trip a handful of fixed epochs through format + parse.
-        for epoch in [0u64, 946_684_800, 1_577_836_800, 1_776_013_800, 2_524_608_000] {
+        for epoch in [
+            0u64,
+            946_684_800,
+            1_577_836_800,
+            1_776_013_800,
+            2_524_608_000,
+        ] {
             let ts = format_epoch_utc(epoch);
-            assert_eq!(parse_rfc3339_to_epoch(&ts), Some(epoch), "roundtrip failed for {ts}");
+            assert_eq!(
+                parse_rfc3339_to_epoch(&ts),
+                Some(epoch),
+                "roundtrip failed for {ts}"
+            );
         }
         // And a known reference — 2000-01-01 00:00:00 UTC is 946684800.
         assert_eq!(format_epoch_utc(946_684_800), "2000-01-01T00:00:00Z");

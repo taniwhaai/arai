@@ -16,9 +16,11 @@ const MODEL_DIR_NAME: &str = "models";
 const MODEL_NAME: &str = "all-MiniLM-L6-v2";
 
 #[cfg(feature = "enrich")]
-const MODEL_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
+const MODEL_URL: &str =
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
 #[cfg(feature = "enrich")]
-const TOKENIZER_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
+const TOKENIZER_URL: &str =
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
 #[cfg(feature = "enrich")]
 /// Archetype sentences for each intent category.
@@ -132,7 +134,12 @@ pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, S
             };
 
             // Use taxonomy for timing classification (model doesn't handle this)
-            let timing = crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject)).timing;
+            let timing = crate::intent::classify_rule_with_subject(
+                &g.predicate,
+                &g.object,
+                Some(&g.subject),
+            )
+            .timing;
 
             let intent = RuleIntent {
                 action: best_action,
@@ -143,7 +150,8 @@ pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, S
                 severity: crate::intent::Severity::from_predicate(&g.predicate),
             };
 
-            store.upsert_rule_intent(g.triple_id, &intent)
+            store
+                .upsert_rule_intent(g.triple_id, &intent)
                 .map_err(|e| e.to_string())?;
             count += 1;
         }
@@ -208,10 +216,12 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     }
 
     // Verify file was created and has content
-    let meta = std::fs::metadata(dest)
-        .map_err(|e| format!("Downloaded file not found: {e}"))?;
+    let meta = std::fs::metadata(dest).map_err(|e| format!("Downloaded file not found: {e}"))?;
     if meta.len() < 1000 {
-        return Err(format!("Downloaded file is suspiciously small ({} bytes)", meta.len()));
+        return Err(format!(
+            "Downloaded file is suspiciously small ({} bytes)",
+            meta.len()
+        ));
     }
 
     Ok(())
@@ -237,11 +247,16 @@ fn embed_single(
     tokenizer: &tokenizers::Tokenizer,
     text: &str,
 ) -> Result<Vec<f32>, String> {
-    let encoding = tokenizer.encode(text, true)
+    let encoding = tokenizer
+        .encode(text, true)
         .map_err(|e| format!("Tokenization failed: {e}"))?;
 
     let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-    let mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+    let mask: Vec<i64> = encoding
+        .get_attention_mask()
+        .iter()
+        .map(|&m| m as i64)
+        .collect();
     let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
     let len = ids.len();
 
@@ -257,8 +272,7 @@ fn embed_single(
         .map_err(|e| format!("Inference failed: {e}"))?;
 
     // Get the first output (last_hidden_state) — shape [1, seq_len, 384]
-    let output = outputs.values().next()
-        .ok_or("No output from model")?;
+    let output = outputs.values().next().ok_or("No output from model")?;
 
     let (shape, raw_data) = output
         .try_extract_tensor::<f32>()
@@ -266,7 +280,11 @@ fn embed_single(
 
     // Mean pooling: average across sequence length dimension
     let hidden_size = *shape.last().unwrap_or(&384) as usize;
-    let seq_len = if shape.len() >= 2 { shape[shape.len() - 2] as usize } else { 1 };
+    let seq_len = if shape.len() >= 2 {
+        shape[shape.len() - 2] as usize
+    } else {
+        1
+    };
 
     let mut embedding = vec![0.0f32; hidden_size];
     for i in 0..seq_len {
@@ -314,12 +332,16 @@ fn build_enrichment_prompt(guardrails: &[crate::store::Guardrail]) -> String {
     for (i, g) in guardrails.iter().enumerate() {
         rules_text.push_str(&format!(
             "{}. [id:{}] {} {}: {}\n",
-            i + 1, g.triple_id, g.subject, g.predicate, g.object
+            i + 1,
+            g.triple_id,
+            g.subject,
+            g.predicate,
+            g.object
         ));
     }
 
     format!(
-r#"You are classifying guardrail rules for a CLI tool called Arai. For each rule, determine:
+        r#"You are classifying guardrail rules for a CLI tool called Arai. For each rule, determine:
 
 1. **action**: What type of action does this rule govern?
    - "create" — about creating NEW files (Write tool)
@@ -364,7 +386,11 @@ fn parse_and_apply(
         Some(s) => s,
         None => {
             save_failed_response(arai_base_dir, response);
-            let preview = if response.len() > 500 { &response[..500] } else { response };
+            let preview = if response.len() > 500 {
+                &response[..500]
+            } else {
+                response
+            };
             return Err(format!(
                 "Could not parse LLM response as JSON array.\n\
                  Raw output (first 500 chars):\n{preview}\n\n\
@@ -392,7 +418,11 @@ fn parse_and_apply(
 /// Enrich guardrails by shelling out to an LLM CLI.
 /// Uses the configured command (ARAI_LLM_CMD env var or config.toml).
 /// Falls back to `claude -p` if nothing configured.
-pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &Path) -> Result<usize, String> {
+pub fn enrich_via_llm(
+    store: &Store,
+    llm_command: Option<&str>,
+    arai_base_dir: &Path,
+) -> Result<usize, String> {
     let cmd = llm_command
         .map(String::from)
         .or_else(detect_llm_command)
@@ -403,7 +433,7 @@ pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &
              \n  ARAI_LLM_CMD=\"llm -m gpt-4o\"             # Simon Willison's llm\
              \n\nOr add to ~/.taniwha/arai/config.toml:\n\
              \n  [enrich]\
-             \n  llm_command = \"claude -p\""
+             \n  llm_command = \"claude -p\"",
         )?;
 
     let all = store.load_guardrails().map_err(|e| e.to_string())?;
@@ -418,7 +448,13 @@ pub fn enrich_via_llm(store: &Store, llm_command: Option<&str>, arai_base_dir: &
         return Ok(0);
     }
 
-    print_destination_notice("LLM CLI", &cmd, classify_cli_locality(&cmd), guardrails.len(), excluded);
+    print_destination_notice(
+        "LLM CLI",
+        &cmd,
+        classify_cli_locality(&cmd),
+        guardrails.len(),
+        excluded,
+    );
 
     let prompt = build_enrichment_prompt(&guardrails);
     let response = run_llm_command(&cmd, &prompt)?;
@@ -466,7 +502,13 @@ pub fn enrich_via_api(
     }
 
     let label = format!("HTTP API (model: {})", config.model);
-    print_destination_notice(&label, &config.url, classify_url_locality(&config.url), guardrails.len(), excluded);
+    print_destination_notice(
+        &label,
+        &config.url,
+        classify_url_locality(&config.url),
+        guardrails.len(),
+        excluded,
+    );
 
     let prompt = build_enrichment_prompt(&guardrails);
     let response = call_chat_completions(&config, &prompt)?;
@@ -488,15 +530,20 @@ type Locality = Option<bool>;
 /// Goes to stderr-equivalent (`println!` stays with the existing `cmd_scan`
 /// progress lines) but uses an explicit `[notice]` prefix so a user scanning
 /// the output sees that rule text is about to leave the local process.
-fn print_destination_notice(channel: &str, dest: &str, locality: Locality, rules: usize, excluded: usize) {
+fn print_destination_notice(
+    channel: &str,
+    dest: &str,
+    locality: Locality,
+    rules: usize,
+    excluded: usize,
+) {
     let locality_str = match locality {
         Some(true) => "local",
         Some(false) => "REMOTE",
         None => "unknown locality",
     };
-    let mut line = format!(
-        "    [notice] Sending {rules} rule(s) to {channel}: {dest} ({locality_str})"
-    );
+    let mut line =
+        format!("    [notice] Sending {rules} rule(s) to {channel}: {dest} ({locality_str})");
     if excluded > 0 {
         line.push_str(&format!(" — {excluded} rule(s) skipped via (noenrich)"));
     }
@@ -543,7 +590,10 @@ pub(crate) fn classify_url_locality(url: &str) -> Locality {
     // Strip the optional port without mangling bracketed IPv6 literals.
     let host = if let Some(stripped) = authority.strip_prefix('[') {
         // `[::1]:8080` → take through the closing bracket and reinsert it
-        stripped.split(']').next().map(|s| format!("[{s}]"))
+        stripped
+            .split(']')
+            .next()
+            .map(|s| format!("[{s}]"))
             .unwrap_or_default()
     } else {
         authority.split(':').next().unwrap_or("").to_string()
@@ -601,7 +651,8 @@ fn resolve_api_config(
          \n  [enrich]\
          \n  api_url = \"https://api.openai.com/v1\"\
          \n  api_key_env = \"OPENAI_API_KEY\"\
-         \n  model = \"gpt-4o-mini\"".to_string())
+         \n  model = \"gpt-4o-mini\""
+        .to_string())
 }
 
 /// Ensure the URL ends with /chat/completions.
@@ -625,7 +676,11 @@ fn probe_ollama() -> bool {
     match agent.get("http://localhost:11434/").call() {
         Ok(response) => {
             let mut body = String::new();
-            response.into_body().as_reader().read_to_string(&mut body).ok();
+            response
+                .into_body()
+                .as_reader()
+                .read_to_string(&mut body)
+                .ok();
             body.contains("Ollama")
         }
         Err(_) => false,
@@ -654,31 +709,32 @@ fn call_chat_completions(config: &ApiConfig, prompt: &str) -> Result<String, Str
         .build()
         .new_agent();
 
-    let mut request = agent.post(&config.url)
+    let mut request = agent
+        .post(&config.url)
         .header("Content-Type", "application/json");
 
     if let Some(ref key) = config.api_key {
         request = request.header("Authorization", &format!("Bearer {key}"));
     }
 
-    let response = request
-        .send_json(&body)
-        .map_err(|e| {
-            match &e {
-                ureq::Error::StatusCode(401) =>
-                    "Authentication failed. Check your ARAI_API_KEY.".to_string(),
-                ureq::Error::StatusCode(429) =>
-                    "Rate limited by API. Try again in a moment.".to_string(),
-                ureq::Error::StatusCode(404) =>
-                    format!("Endpoint not found: {}. Check your ARAI_API_URL.", config.url),
-                ureq::Error::StatusCode(code) =>
-                    format!("API returned HTTP {code}"),
-                _ => format!("API request failed: {e}"),
-            }
-        })?;
+    let response = request.send_json(&body).map_err(|e| match &e {
+        ureq::Error::StatusCode(401) => {
+            "Authentication failed. Check your ARAI_API_KEY.".to_string()
+        }
+        ureq::Error::StatusCode(429) => "Rate limited by API. Try again in a moment.".to_string(),
+        ureq::Error::StatusCode(404) => format!(
+            "Endpoint not found: {}. Check your ARAI_API_URL.",
+            config.url
+        ),
+        ureq::Error::StatusCode(code) => format!("API returned HTTP {code}"),
+        _ => format!("API request failed: {e}"),
+    })?;
 
     let mut response_str = String::new();
-    response.into_body().as_reader().read_to_string(&mut response_str)
+    response
+        .into_body()
+        .as_reader()
+        .read_to_string(&mut response_str)
         .map_err(|e| format!("Failed to read API response: {e}"))?;
 
     let response_body: serde_json::Value = serde_json::from_str(&response_str)
@@ -693,15 +749,17 @@ fn call_chat_completions(config: &ApiConfig, prompt: &str) -> Result<String, Str
         .and_then(|c: &serde_json::Value| c.as_str())
         .map(String::from)
         .ok_or_else(|| {
-            format!("Unexpected API response structure: {}",
-                serde_json::to_string_pretty(&response_body).unwrap_or_default())
+            format!(
+                "Unexpected API response structure: {}",
+                serde_json::to_string_pretty(&response_body).unwrap_or_default()
+            )
         })
 }
 
 /// Import enrichment from a JSON file (same format as LLM output).
 pub fn enrich_from_file(store: &Store, path: &str, arai_base_dir: &Path) -> Result<usize, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {path}: {e}"))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
 
     let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
     parse_and_apply(store, &guardrails, &content, arai_base_dir)
@@ -729,14 +787,27 @@ fn apply_classifications(
         }
         let g = guardrail.unwrap();
 
-        let raw_action = entry.get("action").and_then(|v| v.as_str()).unwrap_or("general");
-        let raw_timing = entry.get("timing").and_then(|v| v.as_str()).unwrap_or("principle");
-        let allow_inverse = entry.get("allow_inverse").and_then(|v| v.as_bool()).unwrap_or(false);
+        let raw_action = entry
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("general");
+        let raw_timing = entry
+            .get("timing")
+            .and_then(|v| v.as_str())
+            .unwrap_or("principle");
+        let allow_inverse = entry
+            .get("allow_inverse")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let tools: Vec<String> = entry
             .get("tools")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_else(|| vec!["*".to_string()]);
 
         // Validate + fuzzy match each enum field
@@ -745,7 +816,10 @@ fn apply_classifications(
         let action = if Action::is_valid(raw_action) {
             Action::from_str(raw_action)
         } else {
-            eprintln!("    \u{26a0} Rule '{}': unrecognized action '{}', using fuzzy match", g.subject, raw_action);
+            eprintln!(
+                "    \u{26a0} Rule '{}': unrecognized action '{}', using fuzzy match",
+                g.subject, raw_action
+            );
             is_partial = true;
             fuzzy_match_action(raw_action, g)
         };
@@ -753,7 +827,10 @@ fn apply_classifications(
         let timing_raw = if crate::intent::Timing::is_valid(raw_timing) {
             crate::intent::Timing::from_str(raw_timing)
         } else {
-            eprintln!("    \u{26a0} Rule '{}': unrecognized timing '{}', using fuzzy match", g.subject, raw_timing);
+            eprintln!(
+                "    \u{26a0} Rule '{}': unrecognized timing '{}', using fuzzy match",
+                g.subject, raw_timing
+            );
             is_partial = true;
             fuzzy_match_timing(raw_timing, g)
         };
@@ -763,7 +840,9 @@ fn apply_classifications(
         if timing == crate::intent::Timing::ToolCall {
             let full_text = format!("{} {}", g.subject.to_lowercase(), g.object.to_lowercase());
             let has_tool = crate::parser::KNOWN_TOOLS.iter().any(|tool| {
-                full_text.split(|c: char| !c.is_alphanumeric()).any(|w| w == *tool)
+                full_text
+                    .split(|c: char| !c.is_alphanumeric())
+                    .any(|w| w == *tool)
             });
             if !has_tool {
                 timing = crate::intent::Timing::Principle;
@@ -779,11 +858,17 @@ fn apply_classifications(
             timing,
             tools,
             allow_inverse,
-            enriched_by: if is_partial { "llm-partial".to_string() } else { "llm".to_string() },
+            enriched_by: if is_partial {
+                "llm-partial".to_string()
+            } else {
+                "llm".to_string()
+            },
             severity: crate::intent::Severity::from_predicate(&g.predicate),
         };
 
-        store.upsert_rule_intent(id, &intent).map_err(|e| e.to_string())?;
+        store
+            .upsert_rule_intent(id, &intent)
+            .map_err(|e| e.to_string())?;
         count += 1;
     }
 
@@ -803,15 +888,32 @@ fn fuzzy_match_action(raw: &str, g: &crate::store::Guardrail) -> Action {
     if lower.contains("creat") || lower.contains("writ") || lower.contains("generat") {
         return Action::Create;
     }
-    if lower.contains("modif") || lower.contains("edit") || lower.contains("updat") || lower.contains("chang") {
+    if lower.contains("modif")
+        || lower.contains("edit")
+        || lower.contains("updat")
+        || lower.contains("chang")
+    {
         return Action::Modify;
     }
-    if lower.contains("exec") || lower.contains("run") || lower.contains("command") || lower.contains("invoke") {
+    if lower.contains("exec")
+        || lower.contains("run")
+        || lower.contains("command")
+        || lower.contains("invoke")
+    {
         return Action::Execute;
     }
-    if lower.contains("forbid") || lower.contains("prevent") || lower.contains("block") || lower.contains("deny") {
+    if lower.contains("forbid")
+        || lower.contains("prevent")
+        || lower.contains("block")
+        || lower.contains("deny")
+    {
         // "forbid" is about the predicate, not the action — fall back to taxonomy
-        return crate::intent::classify_rule_with_subject(&g.predicate, &g.object, Some(&g.subject)).action;
+        return crate::intent::classify_rule_with_subject(
+            &g.predicate,
+            &g.object,
+            Some(&g.subject),
+        )
+        .action;
     }
 
     // Fall back to taxonomy
@@ -832,7 +934,11 @@ fn fuzzy_match_timing(raw: &str, g: &crate::store::Guardrail) -> crate::intent::
     if lower.contains("start") || lower.contains("begin") || lower.contains("prompt") {
         return crate::intent::Timing::Start;
     }
-    if lower.contains("stop") || lower.contains("end") || lower.contains("finish") || lower.contains("complet") {
+    if lower.contains("stop")
+        || lower.contains("end")
+        || lower.contains("finish")
+        || lower.contains("complet")
+    {
         return crate::intent::Timing::Stop;
     }
     if lower.contains("princip") || lower.contains("general") || lower.contains("always") {
@@ -978,7 +1084,11 @@ mod tests {
     fn test_fuzzy_action_prevent() {
         let g = dummy_guardrail();
         let action = fuzzy_match_action("prevent", &g);
-        assert_ne!(action, Action::Create, "prevent should fall back to taxonomy");
+        assert_ne!(
+            action,
+            Action::Create,
+            "prevent should fall back to taxonomy"
+        );
     }
 
     #[test]
@@ -1027,13 +1137,34 @@ mod tests {
     #[test]
     fn test_fuzzy_timing_variants() {
         let g = dummy_guardrail();
-        assert_eq!(fuzzy_match_timing("pre_tool_use", &g), crate::intent::Timing::ToolCall);
-        assert_eq!(fuzzy_match_timing("pretool", &g), crate::intent::Timing::ToolCall);
-        assert_eq!(fuzzy_match_timing("on_start", &g), crate::intent::Timing::Start);
-        assert_eq!(fuzzy_match_timing("before_finish", &g), crate::intent::Timing::Stop);
-        assert_eq!(fuzzy_match_timing("completion", &g), crate::intent::Timing::Stop);
-        assert_eq!(fuzzy_match_timing("general_principle", &g), crate::intent::Timing::Principle);
-        assert_eq!(fuzzy_match_timing("always_apply", &g), crate::intent::Timing::Principle);
+        assert_eq!(
+            fuzzy_match_timing("pre_tool_use", &g),
+            crate::intent::Timing::ToolCall
+        );
+        assert_eq!(
+            fuzzy_match_timing("pretool", &g),
+            crate::intent::Timing::ToolCall
+        );
+        assert_eq!(
+            fuzzy_match_timing("on_start", &g),
+            crate::intent::Timing::Start
+        );
+        assert_eq!(
+            fuzzy_match_timing("before_finish", &g),
+            crate::intent::Timing::Stop
+        );
+        assert_eq!(
+            fuzzy_match_timing("completion", &g),
+            crate::intent::Timing::Stop
+        );
+        assert_eq!(
+            fuzzy_match_timing("general_principle", &g),
+            crate::intent::Timing::Principle
+        );
+        assert_eq!(
+            fuzzy_match_timing("always_apply", &g),
+            crate::intent::Timing::Principle
+        );
     }
 
     #[test]
@@ -1202,22 +1333,20 @@ mod tests {
 
     #[test]
     fn test_build_enrichment_prompt_format() {
-        let guardrails = vec![
-            crate::store::Guardrail {
-                triple_id: 1,
-                subject: "Git".to_string(),
-                predicate: "never".to_string(),
-                object: "force-push to main".to_string(),
-                confidence: 0.92,
-                source_file: "test".to_string(),
-                file_path: "test".to_string(),
-                layer: None,
-                line_start: None,
-                expires_at: None,
-                noenrich: false,
-                intent: None,
-            },
-        ];
+        let guardrails = vec![crate::store::Guardrail {
+            triple_id: 1,
+            subject: "Git".to_string(),
+            predicate: "never".to_string(),
+            object: "force-push to main".to_string(),
+            confidence: 0.92,
+            source_file: "test".to_string(),
+            file_path: "test".to_string(),
+            layer: None,
+            line_start: None,
+            expires_at: None,
+            noenrich: false,
+            intent: None,
+        }];
         let prompt = build_enrichment_prompt(&guardrails);
         assert!(prompt.contains("[id:1] Git never: force-push to main"));
         assert!(prompt.contains("\"action\""));
@@ -1227,11 +1356,9 @@ mod tests {
 
     #[test]
     fn test_resolve_api_config_explicit_url() {
-        let config = resolve_api_config(
-            Some("https://api.example.com/v1"),
-            None,
-            Some("test-model"),
-        ).unwrap();
+        let config =
+            resolve_api_config(Some("https://api.example.com/v1"), None, Some("test-model"))
+                .unwrap();
         assert_eq!(config.url, "https://api.example.com/v1/chat/completions");
         assert_eq!(config.model, "test-model");
         assert!(config.api_key.is_none());
@@ -1306,7 +1433,10 @@ mod tests {
     #[test]
     fn classify_cli_locality_known_local() {
         assert_eq!(classify_cli_locality("ollama run llama3.1"), Some(true));
-        assert_eq!(classify_cli_locality("/usr/local/bin/ollama serve"), Some(true));
+        assert_eq!(
+            classify_cli_locality("/usr/local/bin/ollama serve"),
+            Some(true)
+        );
     }
 
     #[test]
@@ -1323,7 +1453,10 @@ mod tests {
 
     #[test]
     fn classify_url_locality_loopback() {
-        assert_eq!(classify_url_locality("http://localhost:11434/v1/chat/completions"), Some(true));
+        assert_eq!(
+            classify_url_locality("http://localhost:11434/v1/chat/completions"),
+            Some(true)
+        );
         assert_eq!(classify_url_locality("http://127.0.0.1:11434"), Some(true));
         assert_eq!(classify_url_locality("http://[::1]:8080/v1"), Some(true));
         assert_eq!(classify_url_locality("unix:/var/run/llm.sock"), Some(true));
@@ -1331,9 +1464,18 @@ mod tests {
 
     #[test]
     fn classify_url_locality_remote() {
-        assert_eq!(classify_url_locality("https://api.openai.com/v1/chat/completions"), Some(false));
-        assert_eq!(classify_url_locality("https://api.anthropic.com"), Some(false));
-        assert_eq!(classify_url_locality("https://user:token@api.example.com/v1"), Some(false));
+        assert_eq!(
+            classify_url_locality("https://api.openai.com/v1/chat/completions"),
+            Some(false)
+        );
+        assert_eq!(
+            classify_url_locality("https://api.anthropic.com"),
+            Some(false)
+        );
+        assert_eq!(
+            classify_url_locality("https://user:token@api.example.com/v1"),
+            Some(false)
+        );
     }
 
     #[test]

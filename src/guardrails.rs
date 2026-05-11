@@ -9,10 +9,9 @@ const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
 
 /// Noise words to skip when extracting terms from Bash commands.
 const NOISE_WORDS: &[&str] = &[
-    "run", "sudo", "cd", "echo", "python", "bash", "sh", "cat", "head",
-    "tail", "ls", "mkdir", "rm", "cp", "mv", "true", "false",
-    "set", "export", "source", "exec", "xargs", "env", "time", "nice",
-    "nohup", "eval",
+    "run", "sudo", "cd", "echo", "python", "bash", "sh", "cat", "head", "tail", "ls", "mkdir",
+    "rm", "cp", "mv", "true", "false", "set", "export", "source", "exec", "xargs", "env", "time",
+    "nice", "nohup", "eval",
 ];
 
 /// Short tokens that are valid tool names (allowlisted despite < 3 chars).
@@ -29,8 +28,8 @@ const SHORT_TOOL_ALLOWLIST: &[&str] = &["go", "gh", "uv", "mv", "rm", "ls", "cd"
 /// preposition-only on purpose: short verbs like `run`, `test`, `build`
 /// MUST remain extractable as subcommands.
 const PHRASE_STOPWORDS: &[&str] = &[
-    "for", "in", "with", "to", "the", "a", "an", "as", "from", "into",
-    "on", "of", "by", "at", "is", "are", "or", "and", "via",
+    "for", "in", "with", "to", "the", "a", "an", "as", "from", "into", "on", "of", "by", "at",
+    "is", "are", "or", "and", "via",
 ];
 
 /// Check if a tool should skip guardrail matching entirely.
@@ -58,9 +57,7 @@ pub fn enrich_terms_from_graph(
 ) {
     // Only enrich for file-based operations
     let file_path = match tool_name {
-        "Edit" | "Write" | "NotebookEdit" => {
-            tool_input.get("file_path").and_then(|v| v.as_str())
-        }
+        "Edit" | "Write" | "NotebookEdit" => tool_input.get("file_path").and_then(|v| v.as_str()),
         _ => None,
     };
 
@@ -345,9 +342,7 @@ fn extract_phrases_from_segment(segment: &str, phrases: &mut Vec<String>) {
             }
             if j < raw_tokens.len() {
                 let sub = raw_tokens[j].to_lowercase();
-                let clean: String = sub
-                    .trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_string();
+                let clean: String = sub.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
                 if !clean.is_empty() {
                     phrases.push(format!("{tool} {clean}"));
                 }
@@ -435,7 +430,13 @@ pub fn match_guardrails(
         .collect();
 
     // Sort by relevance score (highest first), then by confidence
-    matched.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.confidence.partial_cmp(&a.0.confidence).unwrap_or(std::cmp::Ordering::Equal)));
+    matched.sort_by(|a, b| {
+        b.1.cmp(&a.1).then(
+            b.0.confidence
+                .partial_cmp(&a.0.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
 
     // If we have high-relevance matches, suppress low-relevance ones
     let top_score = matched.first().map(|(_, s)| *s).unwrap_or(0);
@@ -443,10 +444,13 @@ pub fn match_guardrails(
         matched.retain(|(_, s)| *s >= top_score);
     }
 
-    matched.into_iter().map(|(g, score)| {
-        let pct = relevance_percentage(score, terms.len(), g.confidence);
-        (g, pct)
-    }).collect()
+    matched
+        .into_iter()
+        .map(|(g, score)| {
+            let pct = relevance_percentage(score, terms.len(), g.confidence);
+            (g, pct)
+        })
+        .collect()
 }
 
 /// Convert raw relevance score into a confidence percentage (0-100).
@@ -482,10 +486,35 @@ fn relevance_percentage(score: usize, total_terms: usize, base_confidence: f64) 
 /// multi-word verb matching (treat `docker run` as a phrase); tracked
 /// separately.
 const COMMAND_VERBS: &[&str] = &[
-    "push", "pull", "commit", "merge", "rebase", "checkout", "clone", "fetch",
-    "stash", "reset", "revert", "cherry", "bisect", "tag", "branch",
-    "install", "uninstall", "build", "test", "deploy", "publish",
-    "start", "stop", "create", "delete", "remove", "add", "update", "upgrade",
+    "push",
+    "pull",
+    "commit",
+    "merge",
+    "rebase",
+    "checkout",
+    "clone",
+    "fetch",
+    "stash",
+    "reset",
+    "revert",
+    "cherry",
+    "bisect",
+    "tag",
+    "branch",
+    "install",
+    "uninstall",
+    "build",
+    "test",
+    "deploy",
+    "publish",
+    "start",
+    "stop",
+    "create",
+    "delete",
+    "remove",
+    "add",
+    "update",
+    "upgrade",
 ];
 
 /// Check whether a rule's subject overlaps with any extracted command term as
@@ -507,9 +536,7 @@ fn subject_matches_terms(subject: &str, terms: &[String]) -> bool {
     if subj_tokens.is_empty() {
         return false;
     }
-    subj_tokens
-        .iter()
-        .any(|st| terms.iter().any(|t| t == st))
+    subj_tokens.iter().any(|st| terms.iter().any(|t| t == st))
 }
 
 /// Score a rule's object text against the extracted command terms and
@@ -535,11 +562,7 @@ fn subject_matches_terms(subject: &str, terms: &[String]) -> bool {
 /// fires; `n` may be zero for general rules whose object names no
 /// command verbs and no command-term overlap (e.g. "hand-write
 /// migration files" firing on a Write because the *subject* matched).
-fn relevance_score(
-    object: &str,
-    terms: &[String],
-    command_phrases: &[String],
-) -> Option<usize> {
+fn relevance_score(object: &str, terms: &[String], command_phrases: &[String]) -> Option<usize> {
     let object_words: Vec<String> = object
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -562,7 +585,8 @@ fn relevance_score(
         }
     }
 
-    let base_score: usize = terms.iter()
+    let base_score: usize = terms
+        .iter()
         .filter(|t| object_words.iter().any(|w| w == *t))
         .count();
 
@@ -570,11 +594,11 @@ fn relevance_score(
     // them appear in the command terms.  Previously this halved the score
     // (min 1) so the rule still fired; that let a `git push` rule block
     // every `git status`.  Now: drop the match entirely.
-    let rule_verbs: Vec<&String> = object_words.iter()
+    let rule_verbs: Vec<&String> = object_words
+        .iter()
         .filter(|w| COMMAND_VERBS.contains(&w.as_str()))
         .collect();
-    let has_verb_mismatch = !rule_verbs.is_empty()
-        && !rule_verbs.iter().any(|v| terms.contains(v));
+    let has_verb_mismatch = !rule_verbs.is_empty() && !rule_verbs.iter().any(|v| terms.contains(v));
 
     if has_verb_mismatch {
         None
@@ -619,7 +643,10 @@ pub fn format_context(
         }
     }
     if matched.len() > MAX_RULES_PER_HOOK {
-        lines.push(format!("  ({} more suppressed)", matched.len() - MAX_RULES_PER_HOOK));
+        lines.push(format!(
+            "  ({} more suppressed)",
+            matched.len() - MAX_RULES_PER_HOOK
+        ));
     }
     lines.join("\n")
 }
@@ -754,7 +781,10 @@ mod tests {
     fn sniff_finds_tool_at_word_boundary_case_insensitively() {
         let mut terms = Vec::new();
         sniff_content_for_tools("Git pull origin main", &mut terms);
-        assert!(terms.contains(&"git".to_string()), "case-insensitive prefix match: {terms:?}");
+        assert!(
+            terms.contains(&"git".to_string()),
+            "case-insensitive prefix match: {terms:?}"
+        );
     }
 
     #[test]
@@ -762,7 +792,10 @@ mod tests {
         // "github" contains "git" but is its own word — must NOT match `git`.
         let mut terms = Vec::new();
         sniff_content_for_tools("see github.com/foo", &mut terms);
-        assert!(!terms.contains(&"git".to_string()), "substring leak: {terms:?}");
+        assert!(
+            !terms.contains(&"git".to_string()),
+            "substring leak: {terms:?}"
+        );
     }
 
     #[test]
@@ -881,7 +914,9 @@ mod tests {
             },
         ];
 
-        store.upsert_file("CLAUDE.md", "test content", &triples, "test").unwrap();
+        store
+            .upsert_file("CLAUDE.md", "test content", &triples, "test")
+            .unwrap();
         store.classify_all_guardrails().unwrap();
 
         let guardrails = store.load_guardrails().unwrap();
@@ -891,22 +926,38 @@ mod tests {
         // is irrelevant — pass &[] across the board.
         let terms = vec!["alembic".to_string()];
         let matched = match_guardrails(&guardrails, &terms, &[], "Write", "PreToolUse");
-        assert_eq!(matched.len(), 1, "hand-write rule should fire on Write/PreToolUse");
+        assert_eq!(
+            matched.len(),
+            1,
+            "hand-write rule should fire on Write/PreToolUse"
+        );
 
         let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "PreToolUse");
         assert_eq!(matched.len(), 0, "hand-write rule should not fire on Bash");
 
         let matched = match_guardrails(&guardrails, &terms, &[], "Edit", "PreToolUse");
-        assert_eq!(matched.len(), 0, "hand-write rule should not fire on Edit (allow_inverse)");
+        assert_eq!(
+            matched.len(),
+            0,
+            "hand-write rule should not fire on Edit (allow_inverse)"
+        );
 
         // Git "force-push" rule: principle timing → doesn't fire on any hook
         // (principles are already in CLAUDE.md, Arai doesn't repeat them)
         let terms = vec!["git".to_string()];
         let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "PreToolUse");
-        assert_eq!(matched.len(), 0, "principle rule should not fire on PreToolUse");
+        assert_eq!(
+            matched.len(),
+            0,
+            "principle rule should not fire on PreToolUse"
+        );
 
         let matched = match_guardrails(&guardrails, &terms, &[], "Bash", "UserPromptSubmit");
-        assert_eq!(matched.len(), 0, "principle rule should not fire on UserPromptSubmit either");
+        assert_eq!(
+            matched.len(),
+            0,
+            "principle rule should not fire on UserPromptSubmit either"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -927,7 +978,12 @@ mod tests {
     #[test]
     fn test_relevance_score() {
         // "push" and "main" both overlap, phrase matches, no verb mismatch
-        let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
+        let terms = vec![
+            "git".to_string(),
+            "push".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ];
         let phrases = vec!["git push".to_string()];
         let score = relevance_score("git push to main without a PR", &terms, &phrases)
             .expect("push verb matches — should score Some");
@@ -936,20 +992,35 @@ mod tests {
         // commit ≠ push: phrase mismatch (#98) drops first; even without
         // phrases the verb-mismatch fallback would also drop.
         let score = relevance_score("git commit with signed commits", &terms, &phrases);
-        assert!(score.is_none(),
-            "commit-verb rule should be dropped for a push command — got {score:?}");
+        assert!(
+            score.is_none(),
+            "commit-verb rule should be dropped for a push command — got {score:?}"
+        );
     }
 
     #[test]
     fn test_relevance_verb_mismatch_drops_rule() {
         // Rule says "push" but command is "pull" — phrase mismatch drops.
-        let pull_terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
+        let pull_terms = vec![
+            "git".to_string(),
+            "pull".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ];
         let pull_phrases = vec!["git pull".to_string()];
-        assert!(relevance_score("git push to main without a PR", &pull_terms, &pull_phrases).is_none());
-        assert!(relevance_score("git commit with signed commits", &pull_terms, &pull_phrases).is_none());
+        assert!(
+            relevance_score("git push to main without a PR", &pull_terms, &pull_phrases).is_none()
+        );
+        assert!(
+            relevance_score("git commit with signed commits", &pull_terms, &pull_phrases).is_none()
+        );
 
         // Rule says "install" but command is "uninstall" — phrase mismatch.
-        let terms = vec!["npm".to_string(), "uninstall".to_string(), "package".to_string()];
+        let terms = vec![
+            "npm".to_string(),
+            "uninstall".to_string(),
+            "package".to_string(),
+        ];
         let phrases = vec!["npm uninstall".to_string()];
         assert!(relevance_score("npm install with --save-exact", &terms, &phrases).is_none());
     }
@@ -961,7 +1032,10 @@ mod tests {
         let phrases = vec!["cargo test".to_string()];
         let score = relevance_score("run cargo test before pushing", &terms, &phrases)
             .expect("test verb matches");
-        assert!(score >= 2, "exact verb match should score high — got {score}");
+        assert!(
+            score >= 2,
+            "exact verb match should score high — got {score}"
+        );
     }
 
     #[test]
@@ -972,13 +1046,20 @@ mod tests {
         let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
         let score = relevance_score("always use feature branches for main", &terms, &[])
             .expect("no command verb in rule → no mismatch path");
-        assert!(score >= 1, "should match 'main' without penalty — got {score}");
+        assert!(
+            score >= 1,
+            "should match 'main' without penalty — got {score}"
+        );
     }
 
     #[test]
     fn test_relevance_zero_overlap() {
         // No terms match at all AND no command verbs in rule → Some(0)
-        let terms = vec!["docker".to_string(), "compose".to_string(), "up".to_string()];
+        let terms = vec![
+            "docker".to_string(),
+            "compose".to_string(),
+            "up".to_string(),
+        ];
         let score = relevance_score("hand-write migration files", &terms, &[])
             .expect("no command verb in rule → keep, score 0");
         assert_eq!(score, 0, "no overlap should score 0 — got {score}");
@@ -1034,7 +1115,10 @@ mod tests {
         );
         // Multiple phrases in one rule are deduplicated and sorted.
         let phrases = extract_rule_phrases("prefer cargo test over cargo run");
-        assert_eq!(phrases, vec!["cargo run".to_string(), "cargo test".to_string()]);
+        assert_eq!(
+            phrases,
+            vec!["cargo run".to_string(), "cargo test".to_string()]
+        );
     }
 
     #[test]
@@ -1086,8 +1170,14 @@ mod tests {
         // each can contribute its own phrase.
         let input = serde_json::json!({"command": "git status && docker run -it ubuntu"});
         let phrases = extract_command_phrases("Bash", &input);
-        assert!(phrases.contains(&"git status".to_string()), "got {phrases:?}");
-        assert!(phrases.contains(&"docker run".to_string()), "got {phrases:?}");
+        assert!(
+            phrases.contains(&"git status".to_string()),
+            "got {phrases:?}"
+        );
+        assert!(
+            phrases.contains(&"docker run".to_string()),
+            "got {phrases:?}"
+        );
     }
 
     #[test]
@@ -1120,7 +1210,10 @@ mod tests {
             &["npm".to_string(), "test".to_string()],
             &["npm test".to_string()],
         );
-        assert!(result.is_none(), "npm install rule must drop on npm test — got {result:?}");
+        assert!(
+            result.is_none(),
+            "npm install rule must drop on npm test — got {result:?}"
+        );
 
         // cargo test rule vs cargo build command
         let result = relevance_score(
@@ -1128,7 +1221,10 @@ mod tests {
             &["cargo".to_string(), "build".to_string()],
             &["cargo build".to_string()],
         );
-        assert!(result.is_none(), "cargo test rule must drop on cargo build — got {result:?}");
+        assert!(
+            result.is_none(),
+            "cargo test rule must drop on cargo build — got {result:?}"
+        );
 
         // Same rules survive against the matching command.
         assert!(
@@ -1172,12 +1268,18 @@ mod tests {
         // Single-token subject only matches an exact token in the command terms,
         // never a substring or hyphen-fragment.
         let subj = "git";
-        assert!(subject_matches_terms(subj, &["git".to_string(), "status".to_string()]));
+        assert!(subject_matches_terms(
+            subj,
+            &["git".to_string(), "status".to_string()]
+        ));
         // The actual term "git-level" was produced by `gh issue create --title
         // "...git-level..."` in issue #86; subject "git" must NOT match it.
         assert!(!subject_matches_terms(subj, &["git-level".to_string()]));
         // A rule subject "github" must not match a `git ...` command via substring.
-        assert!(!subject_matches_terms("github", &["git".to_string(), "status".to_string()]));
+        assert!(!subject_matches_terms(
+            "github",
+            &["git".to_string(), "status".to_string()]
+        ));
         // Multi-word subject — any constituent word can match.
         assert!(subject_matches_terms("force-push", &["force".to_string()]));
         assert!(subject_matches_terms("git push", &["push".to_string()]));
@@ -1187,7 +1289,10 @@ mod tests {
     fn test_relevance_percentage() {
         // High overlap: 3 of 4 terms match → high percentage
         let pct = relevance_percentage(3, 4, 0.92);
-        assert!(pct >= 70, "3/4 overlap + 0.92 confidence should be >= 70% — got {pct}%");
+        assert!(
+            pct >= 70,
+            "3/4 overlap + 0.92 confidence should be >= 70% — got {pct}%"
+        );
 
         // Low overlap: 1 of 4 terms match → lower percentage
         let pct = relevance_percentage(1, 4, 0.92);
@@ -1195,12 +1300,18 @@ mod tests {
 
         // Zero terms → falls back to base confidence
         let pct = relevance_percentage(0, 0, 0.90);
-        assert_eq!(pct, 90, "zero terms should use base confidence — got {pct}%");
+        assert_eq!(
+            pct, 90,
+            "zero terms should use base confidence — got {pct}%"
+        );
 
         // High overlap should always beat low overlap at same confidence
         let high = relevance_percentage(3, 4, 0.90);
         let low = relevance_percentage(1, 4, 0.90);
-        assert!(high > low, "high overlap ({high}%) should beat low overlap ({low}%)");
+        assert!(
+            high > low,
+            "high overlap ({high}%) should beat low overlap ({low}%)"
+        );
     }
 
     #[test]
@@ -1250,25 +1361,45 @@ mod tests {
         let guardrails = store.load_guardrails().unwrap();
 
         // "git push origin main" should ONLY fire the push rule
-        let terms = vec!["git".to_string(), "push".to_string(), "origin".to_string(), "main".to_string()];
+        let terms = vec![
+            "git".to_string(),
+            "push".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ];
         let phrases = vec!["git push".to_string()];
         let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
-        assert!(matched[0].0.object.contains("push"), "push rule should fire, got: {}", matched[0].0.object);
+        assert!(
+            matched[0].0.object.contains("push"),
+            "push rule should fire, got: {}",
+            matched[0].0.object
+        );
 
         // "git commit -m test" should ONLY fire the commit rule
         let terms = vec!["git".to_string(), "commit".to_string(), "test".to_string()];
         let phrases = vec!["git commit".to_string()];
         let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "only the relevant rule should fire");
-        assert!(matched[0].0.object.contains("commit"), "commit rule should fire, got: {}", matched[0].0.object);
+        assert!(
+            matched[0].0.object.contains("commit"),
+            "commit rule should fire, got: {}",
+            matched[0].0.object
+        );
 
         // "git pull origin main" — both rules should be suppressed (pull ≠ push, pull ≠ commit)
-        let terms = vec!["git".to_string(), "pull".to_string(), "origin".to_string(), "main".to_string()];
+        let terms = vec![
+            "git".to_string(),
+            "pull".to_string(),
+            "origin".to_string(),
+            "main".to_string(),
+        ];
         let phrases = vec!["git pull".to_string()];
         let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
-        assert!(matched.is_empty(),
-            "neither push nor commit rule should fire for pull command — got {matched:?}");
+        assert!(
+            matched.is_empty(),
+            "neither push nor commit rule should fire for pull command — got {matched:?}"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1296,9 +1427,18 @@ mod tests {
         let seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
         let ctx = format_context(&matched, &seen);
         // Full form carries the source trace.
-        assert!(ctx.contains("CLAUDE.md:42"), "full form should cite source: {ctx:?}");
-        assert!(ctx.contains("layer-1"), "full form should cite layer: {ctx:?}");
-        assert!(!ctx.contains("still:"), "first injection should NOT use compact prefix");
+        assert!(
+            ctx.contains("CLAUDE.md:42"),
+            "full form should cite source: {ctx:?}"
+        );
+        assert!(
+            ctx.contains("layer-1"),
+            "full form should cite layer: {ctx:?}"
+        );
+        assert!(
+            !ctx.contains("still:"),
+            "first injection should NOT use compact prefix"
+        );
     }
 
     #[test]
@@ -1307,9 +1447,18 @@ mod tests {
         let seen: std::collections::HashSet<i64> = [7i64].iter().copied().collect();
         let ctx = format_context(&matched, &seen);
         // Compact form drops source/layer trace; uses "still:" prefix.
-        assert!(ctx.contains("still:"), "repeat injection should use compact prefix");
-        assert!(!ctx.contains("CLAUDE.md:42"), "compact form should NOT re-cite source");
-        assert!(!ctx.contains("layer-1"), "compact form should NOT re-cite layer");
+        assert!(
+            ctx.contains("still:"),
+            "repeat injection should use compact prefix"
+        );
+        assert!(
+            !ctx.contains("CLAUDE.md:42"),
+            "compact form should NOT re-cite source"
+        );
+        assert!(
+            !ctx.contains("layer-1"),
+            "compact form should NOT re-cite layer"
+        );
         // Compact form is shorter — the whole point.
         let unseen_ctx = format_context(&matched, &std::collections::HashSet::new());
         assert!(
@@ -1325,7 +1474,10 @@ mod tests {
         // Two rules, only one already seen — output should have one full
         // line and one compact line.
         let matched = vec![
-            (mk_guardrail(1, "alembic", "must_not", "hand-write migrations"), 90u8),
+            (
+                mk_guardrail(1, "alembic", "must_not", "hand-write migrations"),
+                90u8,
+            ),
             (mk_guardrail(2, "git", "never", "force-push to main"), 95u8),
         ];
         let seen: std::collections::HashSet<i64> = [1i64].iter().copied().collect();
