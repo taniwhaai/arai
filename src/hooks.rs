@@ -584,6 +584,7 @@ mod tests {
             layer: Some(1),
             line_start: Some(42),
             expires_at: None,
+            noenrich: false,
             intent: None,
         }
     }
@@ -681,6 +682,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
         let tid = store.load_guardrails().unwrap()[0].triple_id;
@@ -770,6 +772,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "x", &[triple], "test").unwrap();
 

@@ -13,7 +13,7 @@ pub struct Store {
 /// migrations may run on a fresh DB or on an upgrading DB that already
 /// happens to have some columns from a previous schema-on-every-open era.
 type Migration = fn(&Connection) -> rusqlite::Result<()>;
-const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2];
+const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3];
 
 impl Store {
     pub fn open(db_path: &Path) -> Result<Store, String> {
@@ -127,8 +127,8 @@ impl Store {
         // Insert new triples
         for triple in triples {
             tx.execute(
-                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file, layer, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file, layer, expires_at, noenrich)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     file_id,
                     triple.subject,
@@ -141,6 +141,7 @@ impl Store {
                     path,
                     triple.layer.map(|l| l as i64),
                     triple.expires_at,
+                    triple.noenrich as i32,
                 ],
             )?;
         }
@@ -722,7 +723,7 @@ fn is_required(p: &str) -> bool {
 /// `AND <extra>` and `ORDER BY`).  `LEFT JOIN` so unclassified rules still
 /// surface — `intent` will be `None` on those.
 const GUARDRAIL_SELECT_PREDICATE_FILTERED: &str =
-    "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at,
+    "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at, t.noenrich,
             ri.action, ri.timing, ri.tools, ri.allow_inverse, ri.enriched_by, ri.severity, ri.severity_override
      FROM triples t
      JOIN files f ON t.file_id = f.id
@@ -730,7 +731,7 @@ const GUARDRAIL_SELECT_PREDICATE_FILTERED: &str =
      WHERE t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')";
 
 /// Row mapper paired with `GUARDRAIL_SELECT_PREDICATE_FILTERED`.  Pulls
-/// triple columns from indices 0..=9 and intent columns from 10..=16.
+/// triple columns from indices 0..=10 and intent columns from 11..=17.
 fn guardrail_from_row(row: &rusqlite::Row) -> rusqlite::Result<Guardrail> {
     Ok(Guardrail {
         triple_id: row.get(0)?,
@@ -743,7 +744,8 @@ fn guardrail_from_row(row: &rusqlite::Row) -> rusqlite::Result<Guardrail> {
         layer: row.get::<_, Option<i64>>(7)?.map(|v| v as u8),
         line_start: row.get::<_, Option<i64>>(8)?,
         expires_at: row.get::<_, Option<String>>(9)?,
-        intent: parse_intent_from_row(row, 10)?,
+        noenrich: row.get::<_, i64>(10)? != 0,
+        intent: parse_intent_from_row(row, 11)?,
     })
 }
 
@@ -808,6 +810,15 @@ pub struct Guardrail {
     /// `(expires ...)` annotation; always `None` for rules without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// Per-rule opt-out from LLM/API enrichment.  Set by a trailing
+    /// `(noenrich)` annotation in the rule text.  When `true`,
+    /// `enrich::enrich_via_llm` and `enrich_via_api` filter the rule out of
+    /// the prompt before it leaves the machine — useful for rules whose
+    /// object mentions an internal codename the user does not want shipped
+    /// to a third-party endpoint.  Default `false` preserves prior
+    /// enrichment behaviour for every existing rule.
+    #[serde(default, skip_serializing_if = "is_false_ref")]
+    pub noenrich: bool,
     /// Classified intent.  Populated by `load_guardrails` / `rules_for_file`
     /// via a single LEFT JOIN against `rule_intent`, so the hot path no
     /// longer needs an N-way `get_rule_intent` round trip per matched rule.
@@ -815,6 +826,10 @@ pub struct Guardrail {
     /// `arai add`, or a freshly-scanned file before `arai classify` runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<crate::intent::RuleIntent>,
+}
+
+fn is_false_ref(b: &bool) -> bool {
+    !b
 }
 
 fn compute_checksum(content: &str) -> String {
@@ -987,6 +1002,16 @@ fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
+/// Migration v2 -> v3: per-rule LLM/API enrichment opt-out.  Backed by a
+/// trailing `(noenrich)` annotation in the rule text (parsed in `parser.rs`),
+/// surfaced through `Guardrail::noenrich`, and consumed by
+/// `enrich::enrich_via_llm` / `enrich_via_api` to filter rules out of the
+/// prompt before it leaves the machine.  Default 0 means existing rules
+/// remain enrichable — opt-in semantics, never silent removal.
+fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(conn, "triples", "noenrich", "INTEGER NOT NULL DEFAULT 0")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1019,6 +1044,7 @@ mod tests {
             line_end: Some(1),
             layer: None,
             expires_at: None,
+            noenrich: false,
         }];
 
         let changed = store.upsert_file("CLAUDE.md", "- Never force-push to main", &triples, "claude_md_project").unwrap();
@@ -1051,6 +1077,7 @@ mod tests {
             line_end: Some(1),
             layer: None,
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project").unwrap();
         store.upsert_file(
@@ -1084,6 +1111,7 @@ mod tests {
             line_end: Some(1),
             layer: None,
             expires_at: None,
+            noenrich: false,
         };
         let always = Triple {
             subject: "alembic".to_string(),
@@ -1096,6 +1124,7 @@ mod tests {
             line_end: Some(2),
             layer: None,
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "- a\n- b", &[never, always], "claude_md_project").unwrap();
 
@@ -1123,6 +1152,7 @@ mod tests {
             line_end: Some(1),
             layer: None,
             expires_at: None,
+            noenrich: false,
         };
         let t2 = Triple {
             subject: "alembic".to_string(),
@@ -1135,6 +1165,7 @@ mod tests {
             line_end: Some(2),
             layer: None,
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project").unwrap();
 
@@ -1170,6 +1201,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "x", &[t], "claude_md_project").unwrap();
         store.classify_all_guardrails().unwrap();
@@ -1235,6 +1267,7 @@ mod tests {
             line_end: Some(line),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[mk("alembic", 1), mk("git", 2), mk("cargo", 3)], "claude_md_project")
@@ -1270,6 +1303,7 @@ mod tests {
             line_end: Some(line),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store
             .upsert_file("CLAUDE.md", "a", &[mk_in("CLAUDE.md", 1)], "claude_md_project")
@@ -1306,6 +1340,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: Some("2099-01-01".to_string()), // far future
+            noenrich: false,
         };
         let dead = Triple {
             subject: "legacy".to_string(),
@@ -1318,6 +1353,7 @@ mod tests {
             line_end: Some(2),
             layer: Some(1),
             expires_at: Some("2000-01-01".to_string()), // long past
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "x", &[alive, dead], "claude_md_project").unwrap();
 
@@ -1389,6 +1425,7 @@ mod tests {
                 line_end: Some(1),
                 layer: Some(1),
                 expires_at: None,
+                noenrich: false,
             },
             Triple {
                 subject: "cargo".to_string(),
@@ -1401,6 +1438,7 @@ mod tests {
                 line_end: Some(2),
                 layer: Some(1),
                 expires_at: None,
+                noenrich: false,
             },
         ];
         store.upsert_file("CLAUDE.md", "x", &triples, "test").unwrap();
@@ -1454,6 +1492,7 @@ mod tests {
             line_end: Some(1),
             layer: Some(1),
             expires_at: None,
+            noenrich: false,
         };
         store.upsert_file("CLAUDE.md", "x", &[t.clone()], "test").unwrap();
         store.disable_rule("git", "never", "force-push to main").unwrap();

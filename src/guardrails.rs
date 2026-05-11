@@ -646,6 +646,7 @@ mod tests {
                 line_end: Some(1),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -658,6 +659,7 @@ mod tests {
                 line_end: Some(2),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
         ];
 
@@ -802,6 +804,7 @@ mod tests {
                 line_end: Some(1),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -814,6 +817,7 @@ mod tests {
                 line_end: Some(2),
                 layer: None,
                 expires_at: None,
+                noenrich: false,
             },
         ];
 
@@ -855,6 +859,7 @@ mod tests {
             layer: Some(1),
             line_start: Some(42),
             expires_at: None,
+            noenrich: false,
             intent: None,
         }
     }

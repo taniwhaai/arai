@@ -29,6 +29,17 @@ pub struct Triple {
     /// after that date without any manual cleanup.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub expires_at: Option<String>,
+    /// Per-rule opt-out from LLM/API enrichment.  Extracted from a trailing
+    /// `(noenrich)` annotation in the rule text.  When set, `enrich_via_llm`
+    /// and `enrich_via_api` exclude the rule from the prompt — useful for
+    /// rules whose object mentions an internal codename the user does not
+    /// want to send to a third-party endpoint.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub noenrich: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 /// Known tool names for subject extraction, "use X" two-signal gate, and content sniffing.
@@ -54,7 +65,7 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
         if let Some((subject, predicate, object, layer)) =
             match_imperative(&item.text, &item.section_context)
         {
-            let (object, expires_at) = extract_expiry(&object);
+            let (object, expires_at, noenrich) = extract_annotations(&object);
             triples.push(Triple {
                 subject,
                 predicate,
@@ -66,6 +77,7 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
                 line_end: Some(item.line_end as i64),
                 layer: Some(layer),
                 expires_at,
+                noenrich,
             });
         }
     }
@@ -89,6 +101,49 @@ pub fn extract_expiry(object: &str) -> (String, Option<String>) {
         (cleaned, date)
     } else {
         (object.to_string(), None)
+    }
+}
+
+/// Strip a trailing `(noenrich)` annotation from the rule object and return
+/// the cleaned object plus a flag indicating whether the marker was present.
+/// Case-insensitive.  Used to opt a single rule out of LLM/API enrichment
+/// without disabling the feature globally.
+pub fn extract_noenrich(object: &str) -> (String, bool) {
+    static NOENRICH_RE: OnceLock<Regex> = OnceLock::new();
+    let re = NOENRICH_RE.get_or_init(|| {
+        Regex::new(r"(?i)\s*\(noenrich\)\s*$").expect("valid regex")
+    });
+    if re.is_match(object) {
+        let cleaned = re.replace(object, "").trim().to_string();
+        (cleaned, true)
+    } else {
+        (object.to_string(), false)
+    }
+}
+
+/// Apply both annotation extractors regardless of the order they appear in.
+/// Annotations always sit at the end of the object, so a single annotation
+/// hides anything to its left from the other regex; we loop until neither
+/// strips anything to handle `(expires ...) (noenrich)` and the reverse
+/// uniformly.
+pub fn extract_annotations(object: &str) -> (String, Option<String>, bool) {
+    let mut current = object.to_string();
+    let mut expires: Option<String> = None;
+    let mut noenrich = false;
+
+    loop {
+        let (after_expiry, found_expiry) = extract_expiry(&current);
+        if found_expiry.is_some() {
+            expires = found_expiry;
+        }
+        let (after_noenrich, found_noenrich) = extract_noenrich(&after_expiry);
+        if found_noenrich {
+            noenrich = true;
+        }
+        if after_noenrich == current {
+            return (after_noenrich, expires, noenrich);
+        }
+        current = after_noenrich;
     }
 }
 
@@ -966,6 +1021,58 @@ mod tests {
             0.9,
         );
         assert_eq!(rules[0].expires_at, None);
+    }
+
+    #[test]
+    fn test_noenrich_is_extracted_and_stripped() {
+        let rules = extract_rules(
+            "- Never deploy to internal-codename-cluster (noenrich)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].noenrich, "noenrich flag should be set");
+        assert!(
+            !rules[0].object.contains("noenrich"),
+            "object still carries annotation: {}",
+            rules[0].object
+        );
+        assert!(
+            rules[0].object.contains("internal-codename-cluster"),
+            "object missing rule body: {}",
+            rules[0].object
+        );
+
+        // No annotation → flag stays false
+        let rules = extract_rules("- Never force-push to main", "test", 0.9);
+        assert!(!rules[0].noenrich);
+    }
+
+    #[test]
+    fn test_noenrich_combined_with_expiry_either_order() {
+        // (expires ...) (noenrich)
+        let rules = extract_rules(
+            "- Never use legacy-shim (expires 2026-12-31) (noenrich)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].noenrich);
+        assert_eq!(rules[0].expires_at.as_deref(), Some("2026-12-31"));
+        assert!(!rules[0].object.contains("noenrich"));
+        assert!(!rules[0].object.contains("expires"));
+
+        // (noenrich) (expires ...)
+        let rules = extract_rules(
+            "- Never use legacy-shim (noenrich) (expires 2026-12-31)",
+            "test",
+            0.9,
+        );
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].noenrich);
+        assert_eq!(rules[0].expires_at.as_deref(), Some("2026-12-31"));
+        assert!(!rules[0].object.contains("noenrich"));
+        assert!(!rules[0].object.contains("expires"));
     }
 
     #[test]
