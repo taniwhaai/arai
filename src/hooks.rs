@@ -208,7 +208,14 @@ pub fn match_hook(
         return Ok(out);
     }
 
-    let matched = guardrails::match_guardrails(&all_guardrails, &terms, &tool_name, &event);
+    let command_phrases = guardrails::extract_command_phrases(&tool_name, &tool_input);
+    let matched = guardrails::match_guardrails(
+        &all_guardrails,
+        &terms,
+        &command_phrases,
+        &tool_name,
+        &event,
+    );
 
     // Filter out rules whose prerequisites have already been met
     let matched: Vec<_> = if !session_id.is_empty() && event == "PreToolUse" {
@@ -902,16 +909,18 @@ mod tests {
             "origin".to_string(),
             "main".to_string(),
         ];
-        let matched = guardrails::match_guardrails(&rules, &push_terms, "Bash", "PreToolUse");
+        let push_phrases = vec!["git push".to_string()];
+        let matched = guardrails::match_guardrails(&rules, &push_terms, &push_phrases, "Bash", "PreToolUse");
         assert_eq!(matched.len(), 1, "push rule must fire on the push command");
 
         // Read-only subcommands MUST NOT fire it.
-        for read_only in [
-            vec!["git".to_string(), "status".to_string()],
-            vec!["git".to_string(), "diff".to_string()],
-            vec!["git".to_string(), "log".to_string()],
+        for (read_only, phrase) in [
+            (vec!["git".to_string(), "status".to_string()], "git status"),
+            (vec!["git".to_string(), "diff".to_string()], "git diff"),
+            (vec!["git".to_string(), "log".to_string()], "git log"),
         ] {
-            let matched = guardrails::match_guardrails(&rules, &read_only, "Bash", "PreToolUse");
+            let phrases = vec![phrase.to_string()];
+            let matched = guardrails::match_guardrails(&rules, &read_only, &phrases, "Bash", "PreToolUse");
             assert!(
                 matched.is_empty(),
                 "git push rule must not fire on read-only `{read_only:?}` (issue #86)"
@@ -928,7 +937,8 @@ mod tests {
             "git-level".to_string(),
             "scope".to_string(),
         ];
-        let matched = guardrails::match_guardrails(&rules, &gh_terms, "Bash", "PreToolUse");
+        let gh_phrases = vec!["gh issue".to_string()];
+        let matched = guardrails::match_guardrails(&rules, &gh_terms, &gh_phrases, "Bash", "PreToolUse");
         assert!(
             matched.is_empty(),
             "git push rule must not fire on a `gh issue create` whose title contains `git-level` (issue #86)"
