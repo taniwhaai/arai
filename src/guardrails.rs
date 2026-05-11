@@ -327,7 +327,7 @@ fn extract_phrases_from_segment(segment: &str, phrases: &mut Vec<String>) {
             .next()
             .unwrap_or(&raw_tokens[i])
             .to_lowercase();
-        if KNOWN_TOOLS.iter().any(|t| *t == tool.as_str()) {
+        if KNOWN_TOOLS.contains(&tool.as_str()) {
             let mut j = i + 1;
             while j < raw_tokens.len() && raw_tokens[j].starts_with('-') {
                 j += 1;
@@ -374,7 +374,7 @@ fn extract_rule_phrases(object: &str) -> Vec<String> {
     let mut phrases = Vec::new();
     for i in 0..words.len().saturating_sub(1) {
         let tool = words[i];
-        if !KNOWN_TOOLS.iter().any(|t| *t == tool) {
+        if !KNOWN_TOOLS.contains(&tool) {
             continue;
         }
         let next = words[i + 1];
