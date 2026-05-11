@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-05-11
+
+### Added
+
+- *(enrich)* Per-rule (noenrich) opt-out + pre-send destination notice ([#94](https://github.com/taniwhaai/arai/pull/94)) ([#96](https://github.com/taniwhaai/arai/pull/96))
+
+### Fixed
+
+- *(matching)* Close substring-leak + self-block bugs ([#86](https://github.com/taniwhaai/arai/pull/86)) ([#91](https://github.com/taniwhaai/arai/pull/91))
+
+
 ## [0.2.15] - 2026-05-10
 
 ### Added
