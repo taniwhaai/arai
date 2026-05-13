@@ -12,6 +12,14 @@ use std::path::Path;
 const POSTHOG_HOST: &str = "https://us.i.posthog.com";
 const POSTHOG_KEY: &str = "phc_CZ9YDA5V5NZC4iJTaHR9YdYjSmGE6svUK4fDk3NLTaFC";
 
+/// Hard cap on the on-disk telemetry queue.  When the queue file is already
+/// at or above this size, `track` silently drops new events instead of
+/// appending — bounds worst-case growth for users who only ever invoke
+/// hooks (the flush path runs from CLI commands like `arai init`/`scan`/
+/// `audit`/`stats`).  Two megabytes is roughly 10,000 events; well past the
+/// point where the upstream sink would dedupe anyway.
+const TELEMETRY_QUEUE_CAP_BYTES: u64 = 2 * 1024 * 1024;
+
 /// Check if telemetry is enabled.
 pub fn is_enabled() -> bool {
     if POSTHOG_KEY.is_empty() {
@@ -42,6 +50,21 @@ pub fn track(arai_base: &Path, event: &str, properties: serde_json::Value) {
         return;
     }
 
+    let queue_path = arai_base.join("telemetry_queue.jsonl");
+
+    // Bound the queue at TELEMETRY_QUEUE_CAP_BYTES so a long-running install
+    // that only ever invokes hooks (never an `arai init`/`scan`/`audit` etc.
+    // that would flush) can't grow this file without limit.  We pay one
+    // metadata syscall here (~30 µs on a warm filesystem) — well inside the
+    // hook budget.  Dropped events are acceptable: the upstream sink dedups
+    // identical rule firings via the salted rule_hash anyway, so trimming
+    // the tail just loses a count, not a category.
+    if let Ok(meta) = std::fs::metadata(&queue_path) {
+        if meta.len() >= TELEMETRY_QUEUE_CAP_BYTES {
+            return;
+        }
+    }
+
     let event_entry = serde_json::json!({
         "event": event,
         "properties": properties,
@@ -49,7 +72,6 @@ pub fn track(arai_base: &Path, event: &str, properties: serde_json::Value) {
     });
 
     // Append to queue file (one JSON object per line)
-    let queue_path = arai_base.join("telemetry_queue.jsonl");
     if let Ok(line) = serde_json::to_string(&event_entry) {
         use std::io::Write;
         if let Ok(mut file) = std::fs::OpenOptions::new()

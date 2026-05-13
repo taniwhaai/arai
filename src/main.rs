@@ -102,6 +102,13 @@ enum Commands {
         /// Output as JSON (one entry per line)
         #[arg(long)]
         json: bool,
+        /// Verify the SHA-256 hash chain across every day-bucket in the
+        /// audit log and report any tampering / reordering / deletion.
+        /// Exits non-zero if any issue is found.  Mutually exclusive with
+        /// the other filters — this is a chain integrity check, not a
+        /// query.
+        #[arg(long)]
+        verify: bool,
     },
     /// Run the Ārai MCP server on stdio (for integration into Claude Code or
     /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
@@ -285,7 +292,8 @@ fn main() {
             rule,
             limit,
             json,
-        } => cmd_audit(since, tool, event, outcome, rule, limit, json),
+            verify,
+        } => cmd_audit(since, tool, event, outcome, rule, limit, json, verify),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
@@ -531,6 +539,7 @@ fn chrono_now() -> String {
     format!("{}", now.as_secs())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_audit(
     since: Option<String>,
     tool: Option<String>,
@@ -539,8 +548,48 @@ fn cmd_audit(
     rule: Option<String>,
     limit: usize,
     json: bool,
+    verify: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
+
+    // `--verify` is an administrative subcommand — it doesn't care about
+    // query filters, and short-circuits cmd_audit before the regular
+    // tail-the-log path runs.  Dispatched up front and exits so misuse
+    // like `arai audit --verify --tool=Bash` gives a clean result.
+    if verify {
+        let issues = audit::verify_chain(&cfg.arai_base_dir, &cfg.project_slug())?;
+        if json {
+            let payload = serde_json::json!({
+                "project_slug": cfg.project_slug(),
+                "issues": issues,
+                "ok": issues.is_empty(),
+            });
+            println!("{}", serde_json::to_string(&payload).map_err(|e| e.to_string())?);
+        } else if issues.is_empty() {
+            println!(
+                "✓ audit chain verified clean for {}",
+                cfg.project_slug()
+            );
+        } else {
+            println!(
+                "✗ {} chain integrity issue(s) for {}:",
+                issues.len(),
+                cfg.project_slug()
+            );
+            for issue in &issues {
+                println!(
+                    "  {} line {}: {} — {}",
+                    issue.day, issue.line_no, issue.kind, issue.detail
+                );
+            }
+        }
+        // Non-zero exit on any issue so this can gate CI / cron.
+        if !issues.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     let since_epoch = since.as_deref().map(parse_since).transpose()?;
 
     // `--outcome` is a shortcut that implies `--event=Compliance` unless the
