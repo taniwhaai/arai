@@ -235,6 +235,25 @@ fn url_cache_path(url: &str, arai_base: &Path) -> PathBuf {
     cache_dir(arai_base).join(format!("{short}.md"))
 }
 
+/// Sidecar SHA-256 file path: `<cache>/<hash>.md.sha256`.  Written alongside
+/// the cached content so a tampered cache file is detected before its rules
+/// reach the parser.  Without this, an attacker with write access to the
+/// cache directory could swap a cached policy out from under the trust list
+/// (the URL is still trusted; the content at rest is not).
+fn url_cache_sig_path(url: &str, arai_base: &Path) -> PathBuf {
+    let primary = url_cache_path(url, arai_base);
+    let mut s = primary.into_os_string();
+    s.push(".sha256");
+    PathBuf::from(s)
+}
+
+fn content_sha256_hex(content: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(content.as_bytes());
+    let bytes = h.finalize();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn cache_is_fresh(path: &Path) -> bool {
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
@@ -260,11 +279,15 @@ pub fn fetch(url: &str, arai_base: &Path) -> Result<String, String> {
     }
 
     let path = url_cache_path(url, arai_base);
+    let sig_path = url_cache_sig_path(url, arai_base);
 
     if cache_is_fresh(&path) {
-        if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Some(content) = read_cache_verified(&path, &sig_path, url) {
             return Ok(content);
         }
+        // Verification failed (or sidecar missing on a chain-aware install) —
+        // fall through and re-fetch.  We deliberately do NOT silently use a
+        // mismatched cache file; that's the whole point of the signature.
     }
 
     match fetch_remote(url) {
@@ -283,27 +306,79 @@ pub fn fetch(url: &str, arai_base: &Path) -> Result<String, String> {
                     ));
                 }
             }
+            if let Ok(meta) = std::fs::symlink_metadata(&sig_path) {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "refusing to write through symlink at {}",
+                        sig_path.display()
+                    ));
+                }
+            }
             let _ = std::fs::write(&path, &content);
+            let _ = std::fs::write(&sig_path, content_sha256_hex(&content));
             Ok(content)
         }
         Err(fetch_err) => {
-            // Stale-while-error: fall back to any existing cached copy —
-            // but again only if the cached path is a regular file, not a
-            // symlink an attacker could have planted.
-            if let Ok(meta) = std::fs::symlink_metadata(&path) {
-                if !meta.file_type().is_symlink() {
-                    if let Ok(cached) = std::fs::read_to_string(&path) {
-                        eprintln!(
-                            "arai: extends fetch failed for {url}, using stale cache ({fetch_err})"
-                        );
-                        let _ = filetouch(&path);
-                        return Ok(cached);
-                    }
-                }
+            // Stale-while-error: fall back to any existing cached copy, but
+            // only if it still matches its sidecar signature.  Silently
+            // accepting an unverified stale copy would let cache tampering
+            // outlive the TTL.
+            if let Some(cached) = read_cache_verified(&path, &sig_path, url) {
+                eprintln!(
+                    "arai: extends fetch failed for {url}, using verified stale cache ({fetch_err})"
+                );
+                let _ = filetouch(&path);
+                return Ok(cached);
             }
             Err(fetch_err)
         }
     }
+}
+
+/// Read a cached upstream policy and verify its SHA-256 against the sidecar.
+/// Returns `Some(content)` only when both the content and the sidecar are
+/// regular files (not symlinks) and the hash matches.  Sidecar miss or
+/// mismatch is treated the same as a missing cache — the caller decides
+/// whether to fetch or surface the error.  Mismatches go to stderr so the
+/// user sees the cause when troubleshooting a refused fetch.
+fn read_cache_verified(path: &Path, sig_path: &Path, url: &str) -> Option<String> {
+    // Reject symlinks at either path.  An attacker who could place a symlink
+    // here would otherwise sidestep the signature check by pointing at a
+    // file with a matching pre-computed sidecar.
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+    } else {
+        return None;
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(sig_path) {
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+    } else {
+        // No sidecar — treat as cache miss.  Existing pre-signature caches
+        // will fall into this branch once and be re-fetched, which writes a
+        // sidecar on the next successful fetch.
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let expected = std::fs::read_to_string(sig_path).ok()?;
+    let expected = expected.trim();
+    let actual = content_sha256_hex(&content);
+    if actual != expected {
+        eprintln!(
+            "arai: cached extends for {url} failed signature check (expected {}, got {}), refusing to use",
+            short_hash(expected),
+            short_hash(&actual)
+        );
+        return None;
+    }
+    Some(content)
+}
+
+fn short_hash(h: &str) -> String {
+    h.chars().take(12).collect()
 }
 
 fn fetch_remote(url: &str) -> Result<String, String> {
@@ -611,5 +686,91 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert!(a.to_string_lossy().ends_with(".md"));
+    }
+
+    #[test]
+    fn test_url_cache_sig_path_pairs_with_content() {
+        let tmp = std::path::PathBuf::from("/tmp/arai_cache_sig_test");
+        let content_path = url_cache_path("https://example.com/a.md", &tmp);
+        let sig_path = url_cache_sig_path("https://example.com/a.md", &tmp);
+        assert_eq!(
+            sig_path,
+            std::path::PathBuf::from(format!("{}.sha256", content_path.display()))
+        );
+    }
+
+    #[test]
+    fn test_read_cache_verified_accepts_matching_sidecar() {
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_extends_sigok_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/policy.md";
+        let path = url_cache_path(url, &tmp);
+        let sig = url_cache_sig_path(url, &tmp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let body = "- never push --force\n";
+        std::fs::write(&path, body).unwrap();
+        std::fs::write(&sig, content_sha256_hex(body)).unwrap();
+        let read = read_cache_verified(&path, &sig, url);
+        assert_eq!(read.as_deref(), Some(body));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_read_cache_verified_rejects_mismatched_sidecar() {
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_extends_sigbad_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/policy.md";
+        let path = url_cache_path(url, &tmp);
+        let sig = url_cache_sig_path(url, &tmp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Sidecar matches *original* content; tamper with the body after.
+        let original = "- never push --force\n";
+        std::fs::write(&sig, content_sha256_hex(original)).unwrap();
+        std::fs::write(&path, "- tampered policy\n").unwrap();
+        let read = read_cache_verified(&path, &sig, url);
+        assert!(
+            read.is_none(),
+            "tampered cache must be refused even with present sidecar"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_read_cache_verified_rejects_missing_sidecar() {
+        // Pre-signature cache files (or sidecar-deleted ones) must be
+        // treated as a miss — the caller can then re-fetch and write a
+        // fresh sidecar.
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_extends_signone_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/policy.md";
+        let path = url_cache_path(url, &tmp);
+        let sig = url_cache_sig_path(url, &tmp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "- some rule\n").unwrap();
+        // No sidecar written.
+        let read = read_cache_verified(&path, &sig, url);
+        assert!(read.is_none(), "missing sidecar → treat as cache miss");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

@@ -23,6 +23,19 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "arai";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Environment variable carrying the optional shared-secret token that gates
+/// `tools/list` and `tools/call` on this stdio connection.  When unset (or
+/// empty), the server is open — matching the pre-auth behaviour for
+/// backwards compatibility.  When set, the client MUST present the same
+/// value in `initialize.params.auth_token`; mismatches close the connection
+/// to anything beyond introspection.
+///
+/// Stdio MCP is a single-connection model: a successful `initialize`
+/// authenticates the rest of the conversation, so individual tool calls
+/// don't have to re-present the token.  This matches how the MCP spec
+/// treats stdio transports (auth is out-of-band, established at handshake).
+const MCP_AUTH_TOKEN_ENV: &str = "ARAI_MCP_AUTH_TOKEN";
+
 /// Maximum length of a rule body accepted by `arai_add_guard`.  Real
 /// guardrail rules fit in a tweet; 1 KiB is generous.  Without a cap an agent
 /// could hand us multi-MB inputs that go on to be parsed, classified, and
@@ -43,6 +56,13 @@ pub fn run() -> Result<(), String> {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut stdout_lock = stdout.lock();
+
+    let required_token = std::env::var(MCP_AUTH_TOKEN_ENV)
+        .ok()
+        .filter(|t| !t.is_empty());
+    // Open mode (no token configured) → already authed; auth-required mode
+    // → must wait for a successful `initialize` carrying the right token.
+    let mut authed = required_token.is_none();
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -66,9 +86,47 @@ pub fn run() -> Result<(), String> {
         let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let is_notification = req.get("id").is_none();
 
+        // JSON-RPC 2.0: requests without an `id` are notifications and MUST
+        // NOT receive a response — including auth failures.  Filter them out
+        // before any dispatch so the auth gate below doesn't accidentally
+        // emit a reply to a notification.
+        if is_notification {
+            continue;
+        }
+
         let resp = match method {
-            "initialize" => Some(success_response(id, handle_initialize())),
-            m if m.starts_with("notifications/") => None, // notifications never get responses
+            "initialize" => {
+                if let Some(ref tok) = required_token {
+                    let supplied = req
+                        .get("params")
+                        .and_then(|p| p.get("auth_token"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if !ct_eq(supplied, tok) {
+                        authed = false;
+                        Some(error_response(
+                            id,
+                            -32001,
+                            "unauthorized: initialize.params.auth_token did not match \
+                             ARAI_MCP_AUTH_TOKEN",
+                        ))
+                    } else {
+                        authed = true;
+                        Some(success_response(id, handle_initialize()))
+                    }
+                } else {
+                    Some(success_response(id, handle_initialize()))
+                }
+            }
+            // ping is the keepalive — answer regardless of auth so a peer can
+            // tell the difference between "process dead" and "auth failed"
+            // without leaking auth state.
+            "ping" => Some(success_response(id, json!({}))),
+            _ if !authed => Some(error_response(
+                id,
+                -32001,
+                "unauthorized: call initialize with a valid auth_token first",
+            )),
             "tools/list" => Some(success_response(id, handle_tools_list())),
             "tools/call" => {
                 let params = req.get("params").cloned().unwrap_or(Value::Null);
@@ -76,12 +134,6 @@ pub fn run() -> Result<(), String> {
                     Ok(v) => Some(success_response(id, v)),
                     Err(msg) => Some(error_response(id, -32000, &msg)),
                 }
-            }
-            "ping" => Some(success_response(id, json!({}))),
-            other if is_notification => {
-                // Unknown notification — silently drop per JSON-RPC 2.0.
-                let _ = other;
-                None
             }
             other => Some(error_response(
                 id,
@@ -96,6 +148,22 @@ pub fn run() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Constant-time string equality.  Returns false instantly on length
+/// mismatch (length itself is rarely sensitive), and otherwise compares
+/// byte-by-byte without short-circuiting so a side-channel observer can't
+/// learn a prefix of the secret from per-call timing.  Local stdio is a
+/// low-risk channel for this, but the function is essentially free.
+fn ct_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 fn handle_initialize() -> Value {
@@ -711,5 +779,14 @@ mod tests {
         let args = json!({ "rule": "   " });
         let err = tool_add_guard(&args).unwrap_err();
         assert!(err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn ct_eq_basic() {
+        assert!(ct_eq("abc", "abc"));
+        assert!(!ct_eq("abc", "abd"));
+        assert!(!ct_eq("abc", "abcd"));
+        assert!(!ct_eq("", "a"));
+        assert!(ct_eq("", ""));
     }
 }

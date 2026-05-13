@@ -19,9 +19,15 @@ use crate::config::Config;
 use crate::intent::Severity;
 use crate::store::{Guardrail, Store};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+
+/// Genesis-line `prev_hash` sentinel: 64 hex zeros, i.e. SHA-256 length of an
+/// all-zero buffer.  Marks the first line of a day-bucket's chain.  Picked
+/// over the empty string so verifier diffs can spot it at a glance.
+const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Map a numeric parser layer (1..=6) to a human-readable label.  Kept here
 /// rather than in `parser.rs` because it's presentation, not parsing, and the
@@ -71,10 +77,6 @@ pub fn record_firing(
     if matched.is_empty() {
         return;
     }
-    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
 
     let entry = json!({
         "ts": now_rfc3339(),
@@ -113,9 +115,7 @@ pub fn record_firing(
         }).collect::<Vec<_>>(),
     });
 
-    if let Ok(mut f) = open_audit_file(&log_path) {
-        let _ = writeln!(f, "{}", entry);
-    }
+    seal_and_append(cfg, entry);
 }
 
 /// Record an `ARAI_DISABLED` bypass entry — written when the env var
@@ -124,10 +124,6 @@ pub fn record_firing(
 /// and `decision` is the literal string `"bypassed"`.  Best-effort, silent
 /// on failure (matches `record_firing`'s I/O-handling).
 pub fn record_bypass(cfg: &Config, event: &str, tool_name: &str, session_id: &str) {
-    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
     let entry = json!({
         "ts": now_rfc3339(),
         "event": event,
@@ -136,9 +132,7 @@ pub fn record_bypass(cfg: &Config, event: &str, tool_name: &str, session_id: &st
         "decision": "bypassed",
         "rules": [],
     });
-    if let Ok(mut f) = open_audit_file(&log_path) {
-        let _ = writeln!(f, "{}", entry);
-    }
+    seal_and_append(cfg, entry);
 }
 
 /// Read firings matching the filter from the project's audit directory.
@@ -218,8 +212,47 @@ fn audit_log_path(arai_base: &Path, project_slug: &str) -> Result<PathBuf, Strin
         // mode 0600 below), so the leak surface is limited to file *names*.
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     }
+    #[cfg(windows)]
+    {
+        // Windows equivalent of `chmod 0700`: drop inheritance from the user
+        // profile and grant the current user full control with no other
+        // principals.  Done once per audit dir, gated by `.arai_acl_set` so
+        // every audit-write doesn't re-shell to icacls.  Best-effort —
+        // failure falls back to the inherited ACL (typically user-only on a
+        // single-user profile but not pinned).
+        lock_dir_windows(&dir);
+    }
     let fname = format!("{}.jsonl", today_yyyymmdd());
     Ok(dir.join(fname))
+}
+
+#[cfg(windows)]
+fn lock_dir_windows(dir: &Path) {
+    let marker = dir.join(".arai_acl_set");
+    if marker.exists() {
+        return;
+    }
+    let username = std::env::var("USERNAME").unwrap_or_default();
+    if username.is_empty() {
+        return;
+    }
+    // /inheritance:r — strip inherited ACEs (so a relaxed profile ACL
+    // doesn't grant Everyone read).
+    // /grant:r USER:(OI)(CI)F — replace any existing entry for USER with
+    // (Object-Inherit, Container-Inherit, Full-control).  Children created
+    // afterwards inherit the same.
+    let _ = std::process::Command::new("icacls.exe")
+        .arg(dir)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(format!("{username}:(OI)(CI)F"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    // Write the marker only after icacls returns — if it failed (e.g. on a
+    // network share that doesn't honour DACLs) we'll retry on the next
+    // audit write, which is what we want.
+    let _ = fs::File::create(&marker);
 }
 
 /// Open an audit-log file with restrictive permissions.  On Unix the file is
@@ -243,10 +276,6 @@ fn open_audit_file(path: &Path) -> std::io::Result<std::fs::File> {
 /// Best-effort: silently no-ops on IO failure so a borked log file never
 /// blocks a hook response.
 pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str, payload: Value) {
-    let log_path = match audit_log_path(&cfg.arai_base_dir, &cfg.project_slug()) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
     let entry = json!({
         "ts": now_rfc3339(),
         "event": event,
@@ -254,9 +283,287 @@ pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str
         "session": session_id,
         "payload": payload,
     });
-    if let Ok(mut f) = open_audit_file(&log_path) {
-        let _ = writeln!(f, "{}", entry);
+    seal_and_append(cfg, entry);
+}
+
+/// Single common writer for every audit entry — adds the SHA-256 chain
+/// (`prev_hash` + `hash`) so a reviewer can detect any line being edited,
+/// deleted, or reordered after the fact.  Best-effort: silent on I/O failure
+/// so a borked log file never blocks a hook response (matches the previous
+/// behaviour of `record_firing` / `record_event`).
+///
+/// Chain rules:
+///   - First line of a day-bucket has `prev_hash = GENESIS_HASH`.
+///   - Each subsequent line's `prev_hash` is the previous line's `hash`.
+///   - `hash` covers everything in the line *except* `hash` itself —
+///     `prev_hash` is hashed in, so tampering with it is detected too.
+///   - Canonicalisation: `serde_json::to_string` on the `prev_hash`-extended
+///     entry.  `serde_json`'s default `Map` is `BTreeMap`-backed → sorted
+///     keys → deterministic bytes both at write and verify time.
+///
+/// Head storage: per-day sidecar at
+/// `{arai_base}/audit/{slug}/.head.{YYYYMMDD}` containing the last hash.
+/// Acts as a cache; if the sidecar is missing or stale, `seal_and_append`
+/// recovers by reading the actual last line of the day-bucket.
+fn seal_and_append(cfg: &Config, mut entry: Value) {
+    let arai_base = &cfg.arai_base_dir;
+    let slug = cfg.project_slug();
+    let log_path = match audit_log_path(arai_base, &slug) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let day = today_yyyymmdd();
+
+    // Recover previous hash from the per-day sidecar; fall back to scanning
+    // the last line of the day-bucket if the sidecar is missing (process
+    // killed between line-write and head-write).  GENESIS_HASH starts the
+    // chain on a fresh day-bucket.
+    let prev_hash = read_head(arai_base, &slug, &day)
+        .or_else(|| last_line_hash(&log_path))
+        .unwrap_or_else(|| GENESIS_HASH.to_string());
+
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert("prev_hash".to_string(), Value::String(prev_hash.clone()));
     }
+    let canonical = match serde_json::to_string(&entry) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let new_hash = chain_hash(&prev_hash, &canonical);
+
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert("hash".to_string(), Value::String(new_hash.clone()));
+    }
+
+    if let Ok(mut f) = open_audit_file(&log_path) {
+        if writeln!(f, "{}", entry).is_ok() {
+            let _ = write_head(arai_base, &slug, &day, &new_hash);
+        }
+    }
+}
+
+/// SHA-256(prev_hash || "|" || canonical_bytes).  Hex-encoded so the hash
+/// sits cleanly inside JSON and inside the sidecar file.  The separator
+/// byte rules out length-extension collisions between `prev_hash` and the
+/// payload's leading characters.
+fn chain_hash(prev_hash: &str, canonical: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(prev_hash.as_bytes());
+    h.update(b"|");
+    h.update(canonical.as_bytes());
+    let bytes = h.finalize();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn head_path(arai_base: &Path, project_slug: &str, day: &str) -> PathBuf {
+    arai_base
+        .join("audit")
+        .join(project_slug)
+        .join(format!(".head.{day}"))
+}
+
+fn read_head(arai_base: &Path, project_slug: &str, day: &str) -> Option<String> {
+    let path = head_path(arai_base, project_slug, day);
+    let raw = fs::read_to_string(&path).ok()?;
+    let trimmed = raw.trim();
+    if is_sha256_hex(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn write_head(
+    arai_base: &Path,
+    project_slug: &str,
+    day: &str,
+    new_hash: &str,
+) -> std::io::Result<()> {
+    let path = head_path(arai_base, project_slug, day);
+    let mut opts = OpenOptions::new();
+    opts.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&path)?;
+    writeln!(f, "{}", new_hash)
+}
+
+fn last_line_hash(log_path: &Path) -> Option<String> {
+    let file = fs::File::open(log_path).ok()?;
+    let mut last = None;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if !line.trim().is_empty() {
+            last = Some(line);
+        }
+    }
+    let line = last?;
+    let v: Value = serde_json::from_str(&line).ok()?;
+    v.get("hash")
+        .and_then(|h| h.as_str())
+        .filter(|s| is_sha256_hex(s))
+        .map(|s| s.to_string())
+}
+
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// One line in a chain-verification report.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VerifyIssue {
+    pub day: String,
+    pub line_no: usize,
+    pub kind: String,
+    pub detail: String,
+}
+
+/// Verify the SHA-256 chain across every day-bucket for `project_slug`.
+/// Walks files in calendar order.  An issue is appended for any of:
+///
+///   - missing `prev_hash` / `hash` fields (pre-chain legacy entries)
+///   - `prev_hash` not matching the previous line's `hash` (reordering / deletion)
+///   - recomputed `hash` not matching the stored value (tampered payload)
+///   - malformed JSON
+///
+/// Returns the list of issues; an empty list means the chain verifies clean.
+pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIssue>, String> {
+    let dir = arai_base.join("audit").join(project_slug);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
+        .map_err(|e| format!("read audit dir: {e}"))?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("jsonl"))
+        .collect();
+    files.sort();
+
+    let mut issues = Vec::new();
+    for path in files {
+        let day = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
+        let file = match fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                issues.push(VerifyIssue {
+                    day: day.clone(),
+                    line_no: 0,
+                    kind: "open_failed".to_string(),
+                    detail: e.to_string(),
+                });
+                continue;
+            }
+        };
+        let mut expected_prev = GENESIS_HASH.to_string();
+        for (idx, line) in BufReader::new(file).lines().enumerate() {
+            let line_no = idx + 1;
+            let line = match line {
+                Ok(l) if l.trim().is_empty() => continue,
+                Ok(l) => l,
+                Err(e) => {
+                    issues.push(VerifyIssue {
+                        day: day.clone(),
+                        line_no,
+                        kind: "read_failed".to_string(),
+                        detail: e.to_string(),
+                    });
+                    break;
+                }
+            };
+            let mut v: Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(e) => {
+                    issues.push(VerifyIssue {
+                        day: day.clone(),
+                        line_no,
+                        kind: "malformed_json".to_string(),
+                        detail: e.to_string(),
+                    });
+                    break;
+                }
+            };
+            let claimed_hash = v
+                .get("hash")
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string());
+            let claimed_prev = v
+                .get("prev_hash")
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string());
+
+            let (Some(claimed_hash), Some(claimed_prev)) = (claimed_hash, claimed_prev) else {
+                issues.push(VerifyIssue {
+                    day: day.clone(),
+                    line_no,
+                    kind: "unchained_legacy".to_string(),
+                    detail: "line predates the SHA-256 chain (no prev_hash/hash fields)"
+                        .to_string(),
+                });
+                // Best-effort recovery: keep walking but reset the expected
+                // chain to whatever this line claims so we still surface a
+                // mid-file break.
+                expected_prev = String::new();
+                continue;
+            };
+
+            if !expected_prev.is_empty() && claimed_prev != expected_prev {
+                issues.push(VerifyIssue {
+                    day: day.clone(),
+                    line_no,
+                    kind: "broken_chain".to_string(),
+                    detail: format!(
+                        "prev_hash={} but previous line's hash={}",
+                        short(&claimed_prev),
+                        short(&expected_prev)
+                    ),
+                });
+            }
+
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("hash");
+            }
+            let canonical = match serde_json::to_string(&v) {
+                Ok(s) => s,
+                Err(e) => {
+                    issues.push(VerifyIssue {
+                        day: day.clone(),
+                        line_no,
+                        kind: "reserialise_failed".to_string(),
+                        detail: e.to_string(),
+                    });
+                    break;
+                }
+            };
+            let recomputed = chain_hash(&claimed_prev, &canonical);
+            if recomputed != claimed_hash {
+                issues.push(VerifyIssue {
+                    day: day.clone(),
+                    line_no,
+                    kind: "tampered_payload".to_string(),
+                    detail: format!(
+                        "stored hash={} but recomputed={}",
+                        short(&claimed_hash),
+                        short(&recomputed)
+                    ),
+                });
+            }
+
+            expected_prev = claimed_hash;
+        }
+    }
+
+    Ok(issues)
+}
+
+fn short(hash: &str) -> String {
+    hash.chars().take(12).collect()
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -409,6 +716,121 @@ mod tests {
             "audit log should be 0600 on Unix (got {mode:o})"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_chain_hash_deterministic_and_separator_safe() {
+        // Same inputs → same hash.
+        let a = chain_hash(GENESIS_HASH, r#"{"a":1}"#);
+        let b = chain_hash(GENESIS_HASH, r#"{"a":1}"#);
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64);
+        // Concatenating prev_hash and payload without a separator would let
+        // these two inputs collide.  With the `|` separator they must not.
+        let split_a = chain_hash("aa", "bb");
+        let split_b = chain_hash("aab", "b");
+        assert_ne!(
+            split_a, split_b,
+            "separator should prevent length-extension collision"
+        );
+    }
+
+    fn fresh_tmp_base(label: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "arai_audit_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn test_config(base: &std::path::Path) -> Config {
+        Config {
+            project_root: base.to_path_buf(),
+            home_dir: base.to_path_buf(),
+            arai_base_dir: base.to_path_buf(),
+            extra_sources: Vec::new(),
+            guardrails_mode: "advise".to_string(),
+            llm_command: None,
+            api_url: None,
+            api_key_env: None,
+            api_model: None,
+        }
+    }
+
+    #[test]
+    fn test_verify_chain_passes_on_clean_log() {
+        let base = fresh_tmp_base("verify_clean");
+        let cfg = test_config(&base);
+        for i in 0..3 {
+            record_event(&cfg, "TestEvent", "Bash", "sess", json!({"i": i}));
+        }
+        let issues = verify_chain(&base, &cfg.project_slug()).unwrap();
+        assert!(
+            issues.is_empty(),
+            "chain should verify cleanly; got: {:?}",
+            issues
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_verify_chain_detects_tampered_payload() {
+        let base = fresh_tmp_base("verify_tamper");
+        let cfg = test_config(&base);
+        record_event(&cfg, "TestEvent", "Bash", "sess", json!({"i": 1}));
+        record_event(&cfg, "TestEvent", "Bash", "sess", json!({"i": 2}));
+        // Hand-edit the log: tweak the payload of the second line without
+        // touching its hash.  Verification must catch this.
+        let log = base
+            .join("audit")
+            .join(cfg.project_slug())
+            .join(format!("{}.jsonl", today_yyyymmdd()));
+        let contents = std::fs::read_to_string(&log).unwrap();
+        let tampered = contents.replace(r#""i":2"#, r#""i":99"#);
+        assert_ne!(contents, tampered, "test setup: replacement must apply");
+        std::fs::write(&log, tampered).unwrap();
+        let issues = verify_chain(&base, &cfg.project_slug()).unwrap();
+        assert!(
+            issues.iter().any(|i| i.kind == "tampered_payload"),
+            "expected tampered_payload issue, got: {:?}",
+            issues
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_verify_chain_detects_deleted_line() {
+        let base = fresh_tmp_base("verify_delete");
+        let cfg = test_config(&base);
+        for i in 0..4 {
+            record_event(&cfg, "TestEvent", "Bash", "sess", json!({"i": i}));
+        }
+        let log = base
+            .join("audit")
+            .join(cfg.project_slug())
+            .join(format!("{}.jsonl", today_yyyymmdd()));
+        // Drop the second line — verifier should flag a broken chain at
+        // the line that previously followed it.
+        let contents = std::fs::read_to_string(&log).unwrap();
+        let kept: Vec<&str> = contents
+            .lines()
+            .enumerate()
+            .filter(|(idx, _)| *idx != 1)
+            .map(|(_, l)| l)
+            .collect();
+        std::fs::write(&log, format!("{}\n", kept.join("\n"))).unwrap();
+        let issues = verify_chain(&base, &cfg.project_slug()).unwrap();
+        assert!(
+            issues.iter().any(|i| i.kind == "broken_chain"),
+            "expected broken_chain issue, got: {:?}",
+            issues
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[cfg(unix)]
