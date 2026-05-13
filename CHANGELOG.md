@@ -4,11 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- *(compliance)* Surface the hash chain + `arai audit --verify`, MCP auth
+  via `ARAI_MCP_AUTH_TOKEN`, `arai:extends` cache-at-rest signature,
+  Windows ACL pin, and telemetry queue cap in the README, marketing site,
+  and the procurement deliverable. Add an explicit SOC 2 Trust Service
+  Criteria mapping (CC6.1 / CC6.6 / CC7.2 / CC7.3 / CC8.1 / CC9.2) to
+  `docs/arai-compliance-features.docx` + PDF so a reviewer doesn't have
+  to do the mapping themselves.
+
 ## [0.2.18] - 2026-05-13
 
 ### Security
 
-- Audit hash-chain, MCP auth, extends cache sig, telemetry cap ([#104](https://github.com/taniwhaai/arai/pull/104))
+- *(audit)* **Tamper-evident hash chain.** Every audit-log line carries
+  `prev_hash` + `hash` (SHA-256 over canonical bytes); a per-day
+  `.head.YYYYMMDD` sidecar anchors the chain tip. New `arai audit --verify`
+  walks every day-bucket and exits non-zero on any tamper / reorder /
+  deletion. Backs the previously-overclaimed "tamper-evident" with an
+  actual mechanism. Day-buckets are retained indefinitely — bucketing is
+  the segmentation, no auto-prune.
+  ([#104](https://github.com/taniwhaai/arai/pull/104))
+- *(audit)* **Windows audit ACLs pinned.** First audit write on Windows
+  shells once to `icacls /inheritance:r /grant:r USER:(OI)(CI)F` and drops
+  a `.arai_acl_set` marker so subsequent writes skip the call. Matches the
+  Unix 0700/0600 lock-down.
+- *(mcp)* **Shared-secret authentication** via `ARAI_MCP_AUTH_TOKEN`. When
+  set, `initialize.params.auth_token` must match (constant-time compare);
+  subsequent calls on the same stdio connection inherit auth. Open behaviour
+  preserved when the env var is unset. Notification handling hoisted above
+  the auth gate to stay JSON-RPC 2.0 compliant.
+- *(extends)* **Cache-at-rest signature** for `arai:extends`. Cached
+  upstream-policy files now carry a `<hash>.md.sha256` sidecar. Mismatched
+  or missing sidecars are treated as a cache miss in both the fresh-read
+  and stale-while-error paths. Closes the cache-tampering surface beneath
+  the trust list.
+- *(telemetry)* **2 MiB hard cap** on `telemetry_queue.jsonl`. One
+  `metadata()` syscall in `track()` drops events above the cap so installs
+  that only ever invoke hooks (and never the non-hook CLI commands that
+  flush) can't grow the queue unbounded.
 
 
 ## [0.2.17] - 2026-05-11
