@@ -422,10 +422,12 @@ pub struct VerifyIssue {
 
 /// Verify the SHA-256 chain across every day-bucket for `project_slug`.
 /// Walks files in calendar order.  An issue is appended for any of:
+///
 ///   - missing `prev_hash` / `hash` fields (pre-chain legacy entries)
 ///   - `prev_hash` not matching the previous line's `hash` (reordering / deletion)
 ///   - recomputed `hash` not matching the stored value (tampered payload)
 ///   - malformed JSON
+///
 /// Returns the list of issues; an empty list means the chain verifies clean.
 pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIssue>, String> {
     let dir = arai_base.join("audit").join(project_slug);
@@ -727,7 +729,10 @@ mod tests {
         // these two inputs collide.  With the `|` separator they must not.
         let split_a = chain_hash("aa", "bb");
         let split_b = chain_hash("aab", "b");
-        assert_ne!(split_a, split_b, "separator should prevent length-extension collision");
+        assert_ne!(
+            split_a, split_b,
+            "separator should prevent length-extension collision"
+        );
     }
 
     fn fresh_tmp_base(label: &str) -> std::path::PathBuf {

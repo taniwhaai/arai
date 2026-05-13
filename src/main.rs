@@ -564,12 +564,12 @@ fn cmd_audit(
                 "issues": issues,
                 "ok": issues.is_empty(),
             });
-            println!("{}", serde_json::to_string(&payload).map_err(|e| e.to_string())?);
-        } else if issues.is_empty() {
             println!(
-                "✓ audit chain verified clean for {}",
-                cfg.project_slug()
+                "{}",
+                serde_json::to_string(&payload).map_err(|e| e.to_string())?
             );
+        } else if issues.is_empty() {
+            println!("✓ audit chain verified clean for {}", cfg.project_slug());
         } else {
             println!(
                 "✗ {} chain integrity issue(s) for {}:",
