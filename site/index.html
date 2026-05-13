@@ -194,6 +194,24 @@
         }
         .family a { color: var(--primary); text-decoration: none; font-weight: 500; }
         .family a:hover { text-decoration: underline; }
+        .family .compliance-list {
+            list-style: none;
+            margin: 1.25rem 0;
+            padding: 0;
+            font-size: 0.95rem; color: var(--text-secondary);
+            line-height: 1.7;
+        }
+        .family .compliance-list li {
+            padding: 0.5rem 0 0.5rem 1.25rem;
+            border-left: 2px solid var(--border);
+            margin-bottom: 0.5rem;
+        }
+        .family .compliance-list code {
+            background: var(--bg-light);
+            padding: 0.1rem 0.35rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+        }
 
         /* Footer */
         footer {
@@ -271,7 +289,8 @@
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;<span class="accent">100%</span>&nbsp;&nbsp;cargo always: test before commit<br>
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3&nbsp;&nbsp;&nbsp;&nbsp;<span class="warm">57%</span>&nbsp;&nbsp;git must_not: --no-verify&nbsp;&nbsp;<span class="warm">&#x26A0;</span><br><br>
             <span class="dim"># PostToolUse correlation produces obeyed / ignored / unclear verdicts per rule.</span><br>
-            <span class="dim"># Tamper-evident JSONL audit log. No SIEM. No data egress. grep + jq, done.</span>
+            <span class="dim"># Tamper-evident JSONL audit log — SHA-256 hash-chained; `arai audit --verify` proves it.</span><br>
+            <span class="dim"># No SIEM. No data egress. grep + jq, done.</span>
         </div>
     </div>
 </section>
@@ -326,7 +345,15 @@
             </div>
             <div class="feature">
                 <h3>Supply-chain hardened</h3>
-                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects. MCP-source rules capped per project to bound a malfunctioning agent.</p>
+                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects &mdash; and cached upstream files carry a SHA-256 sidecar so an at-rest tamper is detected before the rules reach the parser. MCP-source rules capped per project to bound a malfunctioning agent.</p>
+            </div>
+            <div class="feature">
+                <h3>Hash-chained audit log</h3>
+                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Day-buckets are retained indefinitely &mdash; bucketing is the segmentation, no auto-prune.</p>
+            </div>
+            <div class="feature">
+                <h3>MCP authentication</h3>
+                <p>The agent-facing MCP server supports an optional shared-secret via <code>ARAI_MCP_AUTH_TOKEN</code>. When set, <code>initialize</code> must present a matching token (constant-time compare) before any tool call succeeds. Open by default for backwards compatibility.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule compliance ratios</h3>
@@ -373,6 +400,22 @@
                 <p>End-to-end per tool call, dominated by binary launch. SQLite lookups on the hook path. No network calls. No LLM calls at runtime.</p>
             </div>
         </div>
+    </div>
+</section>
+
+<section class="family">
+    <div class="container">
+        <h2>Audit &amp; compliance &mdash; controls aligned with SOC 2 TSC</h2>
+        <p>Arai gives you the evidence trail and the controls your InfoSec / procurement team will ask for. Arai itself is not a certified product &mdash; the certification is yours to pursue. The controls are designed to align with the <strong>SOC 2 Trust Service Criteria</strong>:</p>
+        <ul class="compliance-list">
+            <li><strong>CC6.1 logical access</strong> &mdash; audit dir locked to owner (0700/0600 on Unix; <code>icacls</code>-pinned on Windows).</li>
+            <li><strong>CC6.6 supply chain</strong> &mdash; SHA-256 binary verification on every install path; <code>arai:extends</code> SSRF-hardened transport plus cache-at-rest signature.</li>
+            <li><strong>CC7.2 monitoring</strong> &mdash; per-firing JSONL audit log, hash-chained (<code>prev_hash</code> + <code>hash</code>) so tampering is detected by <code>arai audit --verify</code>.</li>
+            <li><strong>CC7.3 detection</strong> &mdash; Pre/Post correlation produces obeyed / ignored / unclear verdicts per rule. Evidence of <em>effectiveness</em>, not just attempts.</li>
+            <li><strong>CC8.1 change management</strong> &mdash; <code>arai diff</code>, <code>arai test</code>, <code>arai record</code>, and the synthetic parser-coverage corpus turn rule edits into CI assertions.</li>
+            <li><strong>CC9.2 vendor management</strong> &mdash; MCP server supports an optional shared-secret (<code>ARAI_MCP_AUTH_TOKEN</code>); input caps bound a misbehaving agent.</li>
+        </ul>
+        <p>Full TSC-mapped feature inventory in the <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">compliance procurement doc</a>.</p>
     </div>
 </section>
 
