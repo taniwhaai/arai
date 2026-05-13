@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-05-13
+
+### Security
+
+- Audit hash-chain, MCP auth, extends cache sig, telemetry cap ([#104](https://github.com/taniwhaai/arai/pull/104))
+
+
 ## [0.2.17] - 2026-05-11
 
 ### Performance
