@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-05-14
+
+### Documentation
+
+- Surface hash-chain / MCP auth / cache sig + SOC 2 TSC mapping ([#106](https://github.com/taniwhaai/arai/pull/106))
+
+
 ### Documentation
 
 - *(compliance)* Surface the hash chain + `arai audit --verify`, MCP auth
