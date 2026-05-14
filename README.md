@@ -87,7 +87,13 @@ the enforcement.
 - **Local JSONL audit log** — one line per firing at
   `~/.taniwha/arai/audit/<project>/<YYYYMMDD>.jsonl`. Append-only, day-bucketed,
   queryable with `arai audit` (filters: `--since`, `--tool`, `--event`,
-  `--outcome`, `--rule`).
+  `--outcome`, `--rule`). Owner-only on disk (0700 dir / 0600 file on Unix;
+  `icacls`-pinned on Windows).
+- **Hash-chained — actually tamper-evident** — every line carries `prev_hash`
+  and `hash` (SHA-256 over canonical bytes); the chain is anchored per-day in
+  a `.head.YYYYMMDD` sidecar. `arai audit --verify` walks the chain across
+  every day-bucket and exits non-zero on any tamper / reorder / deletion —
+  drop it in a cron or pre-archive job to gate evidence integrity.
 - **Derivation trace per firing** — each rule entry records source file,
   line number, and parser layer (`from CLAUDE.md:42, layer-1 imperative`).
   Auditors can answer "why did this rule fire?" without code spelunking.
@@ -105,14 +111,24 @@ the enforcement.
 - **No data egress** — no network on the hook hot path. Anonymous opt-out
   telemetry is architecturally separate from the audit log; they share no
   code path. The audit data physically cannot leak via the telemetry
-  channel.
+  channel. The telemetry queue is hard-capped at 2 MiB on disk.
 - **Supply-chain hardened** — every install path verifies the binary
   against published `checksums.txt` (SHA-256). `arai:extends` upstream
   policy fetches refuse loopback / RFC1918 / link-local / cloud metadata
-  and disable redirects.
+  and disable redirects; **cached upstream policies carry a SHA-256
+  sidecar** so a tampered cache file is detected before its rules reach
+  the parser.
+- **MCP authentication** — the agent-facing MCP server supports an optional
+  shared-secret via `ARAI_MCP_AUTH_TOKEN`. When set, `initialize` must
+  present a matching token (constant-time compare) before any tool call
+  succeeds.
 
-A complete enterprise / compliance-team feature inventory — mapped to the
-controls a procurement reviewer or InfoSec team will ask about — is in
+Designed to align with the **SOC 2 Trust Service Criteria** (CC6.1 logical
+access, CC6.6 supply-chain, CC7.2 monitoring, CC7.3 detection, CC8.1 change
+management, CC9.2 vendor management). Arai is not itself a certified
+product — it gives you the controls and the evidence trail; the
+certification is yours to pursue. A complete TSC mapping and enterprise /
+procurement-team feature inventory is in
 [`docs/arai-compliance-features.pdf`](docs/arai-compliance-features.pdf).
 The Word source (`.docx`) is committed alongside it for editing.
 
@@ -161,6 +177,7 @@ arai add "Never X"         # Add a rule manually
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring
+arai audit --verify        # Verify the SHA-256 hash chain across every day-bucket
 arai stats                 # Aggregate audit log — top rules, compliance, token economics
 arai stats --by-rule       # Just the per-rule compliance + token economics
 arai severity alembic block # Pin a rule's severity (incremental deny rollout)
@@ -302,6 +319,8 @@ arai audit --event=Compliance # Compliance verdicts (Pre/Post correlation)
 arai audit --outcome=ignored  # Shortcut: Compliance events marked ignored
 arai audit --rule alembic     # Filter to firings/verdicts touching this rule
 arai audit --json             # JSONL stream (pipe-friendly)
+arai audit --verify           # Verify the SHA-256 hash chain (exits non-zero on any tamper)
+arai audit --verify --json    # Machine-readable verify report for CI / cron
 ```
 
 `--rule` is a case-insensitive substring match against the rule's
