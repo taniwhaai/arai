@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-05-15
+
+### Added
+
+- *(audit)* Arai audit --purge for retention / deletion controls ([#108](https://github.com/taniwhaai/arai/pull/108))
+
+
 ### Added
 
 - *(audit)* **`arai audit --purge` for retention / deletion controls.**
