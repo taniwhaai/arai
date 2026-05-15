@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- *(hooks)* **`FileChanged` + `InstructionsLoaded` event coverage — rule
+  set stays live across mid-session edits.** Arai now registers itself
+  against Claude Code's two file-observation events. When `CLAUDE.md`,
+  `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`, any
+  `.claude/rules/*.md` or `.cursor/rules/*.md` file, or a per-project
+  Claude Code memory file changes on disk or is loaded into context,
+  Arai spawns an `arai scan` in the background. The next tool-call hook
+  sees the refreshed guardrails — no manual rescan, no stale rules
+  enforcing a previous wording. Observability-only by design (these
+  events have no `permissionDecision` surface). Part of [#110](https://github.com/taniwhaai/arai/issues/110).
 - *(audit)* **`arai audit --purge` for retention / deletion controls.**
   Drops day-bucket files (and their `.head.` sidecars) under
   `~/.taniwha/arai/audit/<project>/`. Two scoping forms:

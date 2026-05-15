@@ -58,8 +58,77 @@ fn known_hook_event(event: &str) -> Option<&'static str> {
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
         "UserPromptSubmit" => Some("UserPromptSubmit"),
+        // Observability-only events that keep Arai's rule set in sync with
+        // disk and context.  Handled in `handle_stdin_impl` before the
+        // match pipeline — they never produce a `permissionDecision`.
+        "FileChanged" => Some("FileChanged"),
+        "InstructionsLoaded" => Some("InstructionsLoaded"),
         _ => None,
     }
+}
+
+/// Does this absolute path look like an AI-coding-assistant instruction
+/// file Arai cares about?  Used by the FileChanged / InstructionsLoaded
+/// handlers to decide whether to trigger a background rescan.  Kept
+/// permissive: a false positive (rescan when we didn't strictly need to)
+/// costs a few ms of background CPU; a false negative leaves Arai with a
+/// stale rule set, which is the bug we're fixing.
+pub(crate) fn is_instruction_file(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let normalized = path.replace('\\', "/");
+    let file_name = std::path::Path::new(&normalized)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    // Exact basenames Arai's discovery layer picks up.
+    if matches!(
+        file_name,
+        "CLAUDE.md" | ".cursorrules" | ".windsurfrules" | "copilot-instructions.md"
+    ) {
+        return true;
+    }
+    // Directory-anchored rule files: .claude/rules/*.md, .cursor/rules/*.md.
+    // Matched on path substring so we catch nested and project-local cases.
+    if (normalized.contains("/.claude/rules/") || normalized.contains("/.cursor/rules/"))
+        && file_name.ends_with(".md")
+    {
+        return true;
+    }
+    // Per-project Claude Code memory files: ~/.claude/projects/<slug>/memory/*.md.
+    if normalized.contains("/.claude/projects/")
+        && normalized.contains("/memory/")
+        && file_name.ends_with(".md")
+    {
+        return true;
+    }
+    false
+}
+
+/// Spawn a detached `arai scan` so the rule set picks up the edited /
+/// loaded instruction file before the next tool call.  Best-effort: any
+/// failure (binary not found, fork EAGAIN) is silently dropped — the
+/// existing stale rule set is still better than a panic on the hook
+/// path.  Both stdout and stderr are nulled so the child's output
+/// doesn't leak into Claude Code's hook-stdout-as-context channel.
+///
+/// Concurrent invocations (rapid CLAUDE.md saves; FileChanged plus
+/// InstructionsLoaded firing on the same edit) are safe — SQLite
+/// serialises writes, so the worst case is a wasted scan, not
+/// corruption.  Worth adding a debounce later if telemetry shows it
+/// matters.
+fn spawn_background_scan() {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let _ = std::process::Command::new(exe)
+        .arg("scan")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// Highest severity among the matched rules, if any.  Used to pick between
@@ -340,6 +409,39 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
 
     // Fast exit mirrors match_hook — avoids loading config/db for skipped tools
     if !tool_name.is_empty() && guardrails::should_skip_tool(tool_name) {
+        return Ok(());
+    }
+
+    // FileChanged / InstructionsLoaded: observability events Claude Code
+    // fires when an instruction file is edited on disk or loaded into
+    // context.  Arai's job here is to refresh its own rule set so the
+    // next tool-call hook sees the updated guardrails — *not* to gate
+    // anything (no `permissionDecision` surface on these events).
+    //
+    // Dispatched before the match pipeline because they don't have a
+    // `tool_name`/`tool_input` payload to match against, and they should
+    // be cheap: the steady-state behaviour on an unrelated file change
+    // is "spend 1ms checking the path, exit".
+    if event == "FileChanged" || event == "InstructionsLoaded" {
+        let file_path = hook.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+        if !is_instruction_file(file_path) {
+            return Ok(());
+        }
+        // Load config best-effort — if it fails (uninitialised project)
+        // we still want to silently no-op rather than break the hook.
+        if let Ok(cfg) = config::Config::load() {
+            audit::record_event(
+                &cfg,
+                event,
+                "",
+                session_id,
+                serde_json::json!({
+                    "file_path": file_path,
+                    "trigger": "instruction_file_touched",
+                }),
+            );
+            spawn_background_scan();
+        }
         return Ok(());
     }
 
@@ -1018,5 +1120,88 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_is_instruction_file_known_basenames() {
+        // The canonical filenames Arai's discovery layer picks up across
+        // Claude Code, Cursor, Windsurf, and Copilot.  These must trigger
+        // a rescan no matter where in the tree they live.
+        for path in [
+            "/home/dev/project/CLAUDE.md",
+            "C:\\Users\\dev\\project\\CLAUDE.md",
+            "/repo/.cursorrules",
+            "/repo/.windsurfrules",
+            "/repo/.github/copilot-instructions.md",
+        ] {
+            assert!(
+                is_instruction_file(path),
+                "{path} should be classed as an instruction file"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_instruction_file_rule_dirs() {
+        // Per-project rules dirs under .claude/rules and .cursor/rules
+        // are matched on path substring so nested layouts (workspace +
+        // package) still rescan.
+        for path in [
+            "/repo/.claude/rules/security.md",
+            "/repo/packages/api/.claude/rules/auth.md",
+            "/repo/.cursor/rules/style.md",
+            "C:\\repo\\.cursor\\rules\\style.md",
+        ] {
+            assert!(
+                is_instruction_file(path),
+                "{path} should be classed as a rules-dir instruction file"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_instruction_file_memory_files() {
+        // Per-project Claude Code memory files (the auto-memory the
+        // assistant maintains).
+        let path = "/home/tim/.claude/projects/some-slug/memory/feedback_xyz.md";
+        assert!(is_instruction_file(path));
+    }
+
+    #[test]
+    fn test_is_instruction_file_negative_cases() {
+        // Files Arai must NOT spend a scan on — the common build / source
+        // / test files that show up in FileChanged firings.  A false
+        // positive here means we spawn `arai scan` on every unrelated
+        // edit, which we explicitly avoid.
+        for path in [
+            "",
+            "/repo/src/main.rs",
+            "/repo/Cargo.toml",
+            "/repo/README.md", // README is not an instruction file
+            "/repo/.git/HEAD",
+            "/repo/target/debug/build.log",
+            "/repo/.claude/settings.json", // settings, not rules
+            "/repo/notes/CLAUDE.txt",      // wrong extension
+        ] {
+            assert!(
+                !is_instruction_file(path),
+                "{path} should NOT be classed as an instruction file"
+            );
+        }
+    }
+
+    #[test]
+    fn test_known_hook_event_covers_new_observability_events() {
+        // Regression guard: the fail-closed wrapper uses this allow-list
+        // to decide whether to propagate the event name to `event_hint`.
+        // Dropping FileChanged or InstructionsLoaded from it would cause
+        // their stdouts to be treated as PreToolUse-default in the
+        // panic path, which is the wrong fail mode.
+        assert_eq!(known_hook_event("FileChanged"), Some("FileChanged"));
+        assert_eq!(
+            known_hook_event("InstructionsLoaded"),
+            Some("InstructionsLoaded")
+        );
+        assert_eq!(known_hook_event("BogusEvent"), None);
     }
 }

@@ -66,6 +66,13 @@ block its tool calls. GitHub Copilot has no integration surface today; the
 file is ingested so its rules show up in `arai stats`, `arai diff`, and
 the audit log alongside the rest.
 
+Arai also hooks Claude Code's `FileChanged` and `InstructionsLoaded` events
+so the rule set stays live across an edit to `CLAUDE.md` (or any of the
+rules-dir / memory files). When one of those files changes on disk or is
+loaded into context mid-session, Arai spawns an `arai scan` in the
+background so the next tool-call hook sees the updated guardrails — no
+manual rescan required.
+
 ## Smart Matching
 
 Arai doesn't just do keyword matching. It understands your rules:
