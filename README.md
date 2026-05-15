@@ -94,6 +94,13 @@ the enforcement.
   a `.head.YYYYMMDD` sidecar. `arai audit --verify` walks the chain across
   every day-bucket and exits non-zero on any tamper / reorder / deletion —
   drop it in a cron or pre-archive job to gate evidence integrity.
+- **Retention controls** — `arai audit --purge --older=90` drops day-buckets
+  older than 90 days; `arai audit --purge --project=<slug>` wipes a specific
+  project (offboarding / decommission). Today's bucket is always preserved
+  and whole files are deleted (never individual lines), so the hash chain on
+  retained days stays valid. Pair with `--dry-run` (and `--json`) for a
+  pre-purge review, or wire into a scheduled job for time-based retention
+  policy.
 - **Derivation trace per firing** — each rule entry records source file,
   line number, and parser layer (`from CLAUDE.md:42, layer-1 imperative`).
   Auditors can answer "why did this rule fire?" without code spelunking.

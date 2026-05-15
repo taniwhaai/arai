@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- *(audit)* **`arai audit --purge` for retention / deletion controls.**
+  Drops day-bucket files (and their `.head.` sidecars) under
+  `~/.taniwha/arai/audit/<project>/`. Two scoping forms:
+  `--older=N` (age-based retention; `--older=0` keeps only today) and
+  `--project=<slug>` (full project wipe — offboarding / decommission).
+  Today's day-bucket is always preserved so the live hook chain isn't
+  disturbed, and whole files are deleted (never individual lines) so the
+  hash chain on retained days stays valid. `--dry-run` + `--json` for a
+  pre-purge review. Refuses to run without an explicit scope so a bare
+  `arai audit --purge` can't accidentally nuke history. Closes the
+  deletion-on-demand gap flagged in #95 (item 5).
+
 ## [0.2.19] - 2026-05-14
 
 ### Documentation

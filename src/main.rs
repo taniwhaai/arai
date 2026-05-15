@@ -109,6 +109,33 @@ enum Commands {
         /// query.
         #[arg(long)]
         verify: bool,
+        /// Delete audit-log day-bucket files (and their `.head.` sidecars)
+        /// to support retention policy / GDPR-style deletion requests.
+        /// Refuses to run without either `--older` or `--project` scoping
+        /// — purging without an explicit scope is too easy to misfire.
+        /// Today's day-bucket is always preserved (the live hook is
+        /// appending to it).  Mutually exclusive with `--verify` and the
+        /// query filters.
+        #[arg(long)]
+        purge: bool,
+        /// With `--purge`: only delete day-buckets older than this many
+        /// days.  `--older=90` keeps the last 90 days; `--older=0` keeps
+        /// only today.  Without `--project`, scopes to the current
+        /// project (derived from CWD).
+        #[arg(long, value_name = "DAYS")]
+        older: Option<u32>,
+        /// With `--purge`: scope to this project slug instead of the
+        /// current project.  Combine with `--older` to limit by age;
+        /// without `--older`, performs a full audit wipe for that
+        /// project (offboarding / decommission).  See
+        /// `~/.taniwha/arai/audit/` for the slug list.
+        #[arg(long, value_name = "SLUG")]
+        project: Option<String>,
+        /// With `--purge`: list what would be removed without removing
+        /// anything.  Pair with `--json` for machine-readable output a
+        /// pre-purge review can diff against.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Run the Ārai MCP server on stdio (for integration into Claude Code or
     /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
@@ -293,7 +320,13 @@ fn main() {
             limit,
             json,
             verify,
-        } => cmd_audit(since, tool, event, outcome, rule, limit, json, verify),
+            purge,
+            older,
+            project,
+            dry_run,
+        } => cmd_audit(
+            since, tool, event, outcome, rule, limit, json, verify, purge, older, project, dry_run,
+        ),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
         Commands::Trust { add, remove } => cmd_trust(add, remove),
@@ -549,8 +582,62 @@ fn cmd_audit(
     limit: usize,
     json: bool,
     verify: bool,
+    purge: bool,
+    older: Option<u32>,
+    project: Option<String>,
+    dry_run: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
+
+    if verify && purge {
+        return Err("`--verify` and `--purge` are mutually exclusive".to_string());
+    }
+
+    // `--purge` is the second administrative subcommand alongside
+    // `--verify`.  Requires explicit scope (`--older` or `--project`)
+    // to avoid a bare `arai audit --purge` deleting everything.
+    if purge {
+        if older.is_none() && project.is_none() {
+            return Err(
+                "`--purge` requires `--older` and/or `--project` — refusing to purge \
+                 the current project's entire audit log without an explicit scope. \
+                 Use `--older=0` to delete every day-bucket except today's; use \
+                 `--project=<slug>` to target a specific project."
+                    .to_string(),
+            );
+        }
+        let target_slug = project.unwrap_or_else(|| cfg.project_slug());
+        let report = audit::purge(&cfg.arai_base_dir, &target_slug, older, dry_run)?;
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|e| e.to_string())?
+            );
+        } else {
+            let verb = if dry_run { "would remove" } else { "removed" };
+            if report.removed_files.is_empty() {
+                println!(
+                    "{} 0 files from {} (nothing matched the scope)",
+                    verb, report.project_slug
+                );
+            } else {
+                println!(
+                    "{} {} file(s) ({} bytes) from {}",
+                    verb,
+                    report.removed_files.len(),
+                    report.removed_bytes,
+                    report.project_slug
+                );
+                for path in &report.removed_files {
+                    println!("  {}", path.display());
+                }
+            }
+            if report.kept_today {
+                println!("  (today's day-bucket preserved — live hook is appending to it)");
+            }
+        }
+        return Ok(());
+    }
 
     // `--verify` is an administrative subcommand — it doesn't care about
     // query filters, and short-circuits cmd_audit before the regular
