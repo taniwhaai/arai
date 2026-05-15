@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-05-15
+
+### Added
+
+- *(audit)* Arai audit --purge for retention / deletion controls ([#108](https://github.com/taniwhaai/arai/pull/108))
+- *(hooks)* Tier 1+2 event coverage (FileChanged, InstructionsLoaded, CwdChanged, PostToolBatch, PermissionDenied) + Tier-3 Kete-HTTP design doc ([#111](https://github.com/taniwhaai/arai/pull/111))
+
+
 ### Added
 
 - *(hooks)* **Tier-1 hook event coverage — rule set stays live,
