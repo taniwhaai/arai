@@ -65,6 +65,10 @@ fn known_hook_event(event: &str) -> Option<&'static str> {
         "InstructionsLoaded" => Some("InstructionsLoaded"),
         "CwdChanged" => Some("CwdChanged"),
         "PostToolBatch" => Some("PostToolBatch"),
+        // PermissionDenied is decision-bearing (can return retry: true)
+        // but isn't a tool-call event; handled in its own dispatch
+        // branch alongside the observability events.
+        "PermissionDenied" => Some("PermissionDenied"),
         _ => None,
     }
 }
@@ -484,6 +488,89 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 }),
             );
             spawn_background_scan(Some(new_cwd));
+        }
+        return Ok(());
+    }
+
+    // PermissionDenied: Claude Code's auto-mode classifier denied a
+    // tool call.  Arai's role here is twofold:
+    //   1. Log the denial into the audit trail so the unified record
+    //      shows both classifiers' decisions (no silent disagreement).
+    //   2. If Arai's own policy for this tool call is *Warn* (not
+    //      Block) — i.e. Arai would have inject-with-warning rather
+    //      than denied — return `{retry: true}` to override the
+    //      auto-deny so the call proceeds.
+    //
+    // We deliberately do NOT retry when Arai has no matching rule
+    // (Arai has no opinion → Anthropic's classifier stands) or when
+    // Arai matches at Block severity (we agree with the deny).
+    if event == "PermissionDenied" {
+        let cfg = match config::Config::load() {
+            Ok(c) => c,
+            Err(_) => return Ok(()),
+        };
+        let db_path = cfg.db_path();
+        // Synthesize a PreToolUse-shaped payload from the denied call so
+        // we run through the exact same match pipeline as a normal
+        // pre-call gate.  Lets us reuse extract_terms, code-graph
+        // enrichment, severity-from-rule logic without forking.
+        let denied_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+        let synthesized = serde_json::json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": denied_tool_name,
+            "tool_input": hook
+                .get("tool_input")
+                .cloned()
+                .unwrap_or(Value::Object(serde_json::Map::new())),
+            "session_id": session_id,
+        });
+
+        let arai_top_severity: Option<Severity> = if db_path.exists() {
+            match store::Store::open(&db_path) {
+                Ok(db) => match match_hook(&synthesized, &cfg, &db) {
+                    Ok(r) if !r.matched.is_empty() => Some(highest_severity(&r.matched)),
+                    _ => None,
+                },
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // Retry iff Arai matched at Warn (and deny mode is enabled —
+        // if the operator has flipped `ARAI_DENY_MODE=off`, Arai is in
+        // advise-only mode and shouldn't be overriding Anthropic's
+        // classifier in any direction).
+        let retry = deny_mode_enabled() && arai_top_severity == Some(Severity::Warn);
+
+        let denial_reason = hook
+            .get("denial_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        audit::record_event(
+            &cfg,
+            "PermissionDenied",
+            denied_tool_name,
+            session_id,
+            serde_json::json!({
+                "denial_reason": denial_reason,
+                "arai_matched": arai_top_severity.is_some(),
+                "arai_severity": arai_top_severity.map(|s| s.as_str()),
+                "retry": retry,
+            }),
+        );
+
+        if retry {
+            let response = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionDenied",
+                    "retry": true,
+                }
+            });
+            println!(
+                "{}",
+                serde_json::to_string(&response).map_err(|e| e.to_string())?
+            );
         }
         return Ok(());
     }
@@ -1320,6 +1407,10 @@ mod tests {
         );
         assert_eq!(known_hook_event("CwdChanged"), Some("CwdChanged"));
         assert_eq!(known_hook_event("PostToolBatch"), Some("PostToolBatch"));
+        assert_eq!(
+            known_hook_event("PermissionDenied"),
+            Some("PermissionDenied")
+        );
         assert_eq!(known_hook_event("BogusEvent"), None);
     }
 }

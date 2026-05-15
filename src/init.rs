@@ -172,6 +172,10 @@ const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
     // PostToolBatch: parallel-tool compliance correlation.  No matcher
     // — Arai's own skip-tool list filters per-tool inside the handler.
     ("PostToolBatch", ""),
+    // PermissionDenied: classifier-disagreement audit + Warn-level
+    // retry override.  Empty matcher — the handler inspects the
+    // denied tool_input itself.
+    ("PermissionDenied", ""),
 ];
 
 fn inject_hooks(cfg: &config::Config) -> Result<(), String> {

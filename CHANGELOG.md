@@ -32,6 +32,16 @@ All notable changes to this project will be documented in this file.
     advertised on the marketing site.
   - All four are observability-only — no `permissionDecision` surface,
     no agentic-loop blocking. Gating still happens at PreToolUse.
+- *(hooks)* **`PermissionDenied` — unified audit + Warn-level retry
+  override.** When Claude Code's auto-mode classifier denies a tool
+  call, Arai now (a) writes a `PermissionDenied` audit entry capturing
+  both classifiers' opinions so the unified record shows the
+  disagreement, and (b) returns `{retry: true}` to override the
+  auto-deny *iff* Arai's own matching for that tool call produces a
+  Warn-level severity. Block-level matches (Arai agrees with the deny)
+  and no-match cases (Arai has no opinion) both leave the auto-deny
+  in place. Honours `ARAI_DENY_MODE=off` — advise-only mode never
+  overrides another classifier. Part of [#110](https://github.com/taniwhaai/arai/issues/110).
 - *(audit)* **`arai audit --purge` for retention / deletion controls.**
   Drops day-bucket files (and their `.head.` sidecars) under
   `~/.taniwha/arai/audit/<project>/`. Two scoping forms:
@@ -43,6 +53,13 @@ All notable changes to this project will be documented in this file.
   pre-purge review. Refuses to run without an explicit scope so a bare
   `arai audit --purge` can't accidentally nuke history. Closes the
   deletion-on-demand gap flagged in #95 (item 5).
+- *(docs)* **HTTP hooks / Kete integration design doc**
+  ([`docs/design-http-hooks-kete-integration.md`](docs/design-http-hooks-kete-integration.md)).
+  Tier-3 deliverable from [#110](https://github.com/taniwhaai/arai/issues/110): the contract for how a developer-side Arai
+  install talks to an org-hosted Kete policy server via Claude Code's
+  new `type: "http"` hook handler. Captures the request/response
+  contract, auth, failure modes, and migration path. Design only —
+  no code changes; implementation gated on sign-off.
 
 ## [0.2.19] - 2026-05-14
 
