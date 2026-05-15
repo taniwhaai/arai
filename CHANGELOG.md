@@ -13,6 +13,42 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- *(hooks)* **Tier-1 hook event coverage — rule set stays live,
+  monorepo navigation works, parallel-tool compliance reconciled.**
+  Four new hook events wired in alongside `PreToolUse`/`PostToolUse`/
+  `UserPromptSubmit`. Part of [#110](https://github.com/taniwhaai/arai/issues/110).
+  - **`FileChanged` + `InstructionsLoaded`** — when `CLAUDE.md`,
+    `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`, any
+    `.claude/rules/*.md` or `.cursor/rules/*.md` file, or a per-project
+    Claude Code memory file changes on disk or is loaded into context,
+    Arai spawns an `arai scan` in the background. The next tool-call
+    hook sees the refreshed guardrails — no manual rescan, no stale
+    rules enforcing a previous wording.
+  - **`CwdChanged`** — monorepo fix. When Claude `cd`s into a
+    subpackage, Arai spawns a scan rooted at the *new* working
+    directory so the destination's per-project DB is populated. The
+    next tool-call hook in that dir matches against the correct rule
+    set. `arai audit --event=CwdChanged` shows the navigation history.
+  - **`PostToolBatch`** — parallel-tool compliance correlation. The
+    existing per-call PostToolUse correlator under-counts verdicts when
+    Claude does parallel tool calls (multi-Edit, parallel Bash). The
+    new handler iterates the batch's `tool_calls[]` / `tool_results[]`
+    pairs and feeds each through `compliance::record_post_compliance`,
+    so every tool in the batch gets its own
+    Obeyed/Ignored/Unclear verdict. Closes the per-rule-ratio gap
+    advertised on the marketing site.
+  - All four are observability-only — no `permissionDecision` surface,
+    no agentic-loop blocking. Gating still happens at PreToolUse.
+- *(hooks)* **`PermissionDenied` — unified audit + Warn-level retry
+  override.** When Claude Code's auto-mode classifier denies a tool
+  call, Arai now (a) writes a `PermissionDenied` audit entry capturing
+  both classifiers' opinions so the unified record shows the
+  disagreement, and (b) returns `{retry: true}` to override the
+  auto-deny *iff* Arai's own matching for that tool call produces a
+  Warn-level severity. Block-level matches (Arai agrees with the deny)
+  and no-match cases (Arai has no opinion) both leave the auto-deny
+  in place. Honours `ARAI_DENY_MODE=off` — advise-only mode never
+  overrides another classifier. Part of [#110](https://github.com/taniwhaai/arai/issues/110).
 - *(audit)* **`arai audit --purge` for retention / deletion controls.**
   Drops day-bucket files (and their `.head.` sidecars) under
   `~/.taniwha/arai/audit/<project>/`. Two scoping forms:
@@ -24,6 +60,13 @@ All notable changes to this project will be documented in this file.
   pre-purge review. Refuses to run without an explicit scope so a bare
   `arai audit --purge` can't accidentally nuke history. Closes the
   deletion-on-demand gap flagged in #95 (item 5).
+- *(docs)* **HTTP hooks / Kete integration design doc**
+  ([`docs/design-http-hooks-kete-integration.md`](docs/design-http-hooks-kete-integration.md)).
+  Tier-3 deliverable from [#110](https://github.com/taniwhaai/arai/issues/110): the contract for how a developer-side Arai
+  install talks to an org-hosted Kete policy server via Claude Code's
+  new `type: "http"` hook handler. Captures the request/response
+  contract, auth, failure modes, and migration path. Design only —
+  no code changes; implementation gated on sign-off.
 
 ## [0.2.19] - 2026-05-14
 

@@ -144,6 +144,40 @@ pub fn deinit() -> Result<(), String> {
     Ok(())
 }
 
+/// Hook events Arai registers itself into and the `matcher` pattern for
+/// each.  Tool-call events (`PreToolUse`/`PostToolUse`/`UserPromptSubmit`)
+/// use an empty matcher — Arai's own skip-tool list filters; Claude Code
+/// shouldn't pre-filter those.  `FileChanged` uses a narrow basename
+/// matcher so we don't spawn an Arai process on every unrelated file
+/// edit during a build; `InstructionsLoaded` uses an empty matcher
+/// because its payload already names a specific (and small) set of
+/// rule-related files Claude Code loaded into context.
+///
+/// Path-anchored rule files (`.claude/rules/*.md`, `.cursor/rules/*.md`)
+/// aren't expressible in Claude Code's literal-pipe-separated matcher
+/// syntax — `InstructionsLoaded` catches their reload via the
+/// in-process filter in `hooks::is_instruction_file`.
+const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
+    ("PreToolUse", ""),
+    ("PostToolUse", ""),
+    ("UserPromptSubmit", ""),
+    (
+        "FileChanged",
+        "CLAUDE.md|.cursorrules|.windsurfrules|copilot-instructions.md",
+    ),
+    ("InstructionsLoaded", ""),
+    // CwdChanged: monorepo navigation.  No matcher — every cd matters
+    // because we may be landing in a never-scanned subpackage.
+    ("CwdChanged", ""),
+    // PostToolBatch: parallel-tool compliance correlation.  No matcher
+    // — Arai's own skip-tool list filters per-tool inside the handler.
+    ("PostToolBatch", ""),
+    // PermissionDenied: classifier-disagreement audit + Warn-level
+    // retry override.  Empty matcher — the handler inspects the
+    // denied tool_input itself.
+    ("PermissionDenied", ""),
+];
+
 fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     let settings_path = cfg.claude_settings_path();
 
@@ -170,40 +204,8 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
 
     let hooks_obj = hooks.as_object_mut().ok_or("hooks is not an object")?;
 
-    // Inject arai hook into relevant hook events
-    for event in &["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
-        let event_arr = hooks_obj
-            .entry(*event)
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or(format!("{event} is not an array"))?;
-
-        let arai_exists = event_arr.iter().any(|entry| {
-            if let Some(hooks_arr) = entry.get("hooks").and_then(|v| v.as_array()) {
-                hooks_arr.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|v| v.as_str())
-                        .map(|cmd| cmd.contains("arai"))
-                        .unwrap_or(false)
-                })
-            } else {
-                false
-            }
-        });
-
-        if !arai_exists {
-            let arai_hook = serde_json::json!({
-                "matcher": "",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "arai guardrails --match-stdin",
-                        "timeout": 3
-                    }
-                ]
-            });
-            event_arr.push(arai_hook);
-        }
+    for (event, matcher) in ARAI_HOOK_REGISTRATIONS {
+        register_arai_hook(hooks_obj, event, matcher)?;
     }
 
     // Write back
@@ -212,6 +214,52 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     std::fs::write(&settings_path, output)
         .map_err(|e| format!("Failed to write settings.json: {e}"))?;
 
+    Ok(())
+}
+
+/// Idempotently register Arai's hook command under one event in the
+/// settings.json `hooks` map.  No-op if any existing entry under that
+/// event already points at an `arai`-containing command (handles the
+/// re-run case where `arai init` is invoked twice).  An event-specific
+/// matcher pre-filters which payloads reach Arai (see
+/// `ARAI_HOOK_REGISTRATIONS`).
+fn register_arai_hook(
+    hooks_obj: &mut serde_json::Map<String, Value>,
+    event: &str,
+    matcher: &str,
+) -> Result<(), String> {
+    let event_arr = hooks_obj
+        .entry(event.to_string())
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or(format!("{event} is not an array"))?;
+
+    let arai_exists = event_arr.iter().any(|entry| {
+        if let Some(hooks_arr) = entry.get("hooks").and_then(|v| v.as_array()) {
+            hooks_arr.iter().any(|h| {
+                h.get("command")
+                    .and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("arai"))
+                    .unwrap_or(false)
+            })
+        } else {
+            false
+        }
+    });
+
+    if !arai_exists {
+        let arai_hook = serde_json::json!({
+            "matcher": matcher,
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "arai guardrails --match-stdin",
+                    "timeout": 3
+                }
+            ]
+        });
+        event_arr.push(arai_hook);
+    }
     Ok(())
 }
 
