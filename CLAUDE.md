@@ -49,7 +49,7 @@ src/
 ├── parser.rs             # Rule extraction from markdown (7 layers of pattern matching); tracks layer + expiry
 ├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent); expired-rule filter
 ├── guardrails.rs         # Term extraction, subject matching, tool scope filtering; format_trace
-├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit; severity → deny/allow
+├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit + FileChanged/InstructionsLoaded auto-rescan; severity → deny/allow
 ├── init.rs               # `arai init` flow — discover → extract → classify → scan → hook inject
 ├── intent.rs             # Intent classification — action, timing, tool scope, severity
 ├── session.rs            # Session state — prerequisite tracking across tool calls
