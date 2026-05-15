@@ -63,6 +63,8 @@ fn known_hook_event(event: &str) -> Option<&'static str> {
         // match pipeline — they never produce a `permissionDecision`.
         "FileChanged" => Some("FileChanged"),
         "InstructionsLoaded" => Some("InstructionsLoaded"),
+        "CwdChanged" => Some("CwdChanged"),
+        "PostToolBatch" => Some("PostToolBatch"),
         _ => None,
     }
 }
@@ -107,28 +109,37 @@ pub(crate) fn is_instruction_file(path: &str) -> bool {
 }
 
 /// Spawn a detached `arai scan` so the rule set picks up the edited /
-/// loaded instruction file before the next tool call.  Best-effort: any
-/// failure (binary not found, fork EAGAIN) is silently dropped — the
-/// existing stale rule set is still better than a panic on the hook
-/// path.  Both stdout and stderr are nulled so the child's output
-/// doesn't leak into Claude Code's hook-stdout-as-context channel.
+/// loaded instruction file (or the new monorepo package after a `cd`)
+/// before the next tool call.  Best-effort: any failure (binary not
+/// found, fork EAGAIN) is silently dropped — the existing stale rule
+/// set is still better than a panic on the hook path.  Both stdout
+/// and stderr are nulled so the child's output doesn't leak into
+/// Claude Code's hook-stdout-as-context channel.
+///
+/// `cwd` lets the caller scope the scan to a specific directory (used
+/// by the `CwdChanged` handler so the per-project DB at the *new*
+/// working directory gets populated, not the hook's launch dir).
+/// `None` means "inherit the current process's CWD".
 ///
 /// Concurrent invocations (rapid CLAUDE.md saves; FileChanged plus
-/// InstructionsLoaded firing on the same edit) are safe — SQLite
-/// serialises writes, so the worst case is a wasted scan, not
-/// corruption.  Worth adding a debounce later if telemetry shows it
-/// matters.
-fn spawn_background_scan() {
+/// InstructionsLoaded firing on the same edit; CwdChanged on every
+/// tab-toggle in a monorepo) are safe — SQLite serialises writes, so
+/// the worst case is a wasted scan, not corruption.  Worth adding a
+/// debounce later if telemetry shows it matters.
+fn spawn_background_scan(cwd: Option<&str>) {
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(_) => return,
     };
-    let _ = std::process::Command::new(exe)
-        .arg("scan")
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("scan")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+        .stderr(std::process::Stdio::null());
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    let _ = cmd.spawn();
 }
 
 /// Highest severity among the matched rules, if any.  Used to pick between
@@ -440,7 +451,112 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                     "trigger": "instruction_file_touched",
                 }),
             );
-            spawn_background_scan();
+            spawn_background_scan(None);
+        }
+        return Ok(());
+    }
+
+    // CwdChanged: Claude Code's working directory moved (e.g. the model
+    // ran `cd packages/api`).  In a monorepo, the project_slug Arai
+    // derives from CWD is now wrong — the next tool-call hook would
+    // load guardrails for the new dir's slug, which may have never
+    // been scanned.  Trigger a scan rooted at `new_cwd` so the
+    // destination dir's per-project DB is populated.
+    //
+    // Observability-only: no permissionDecision surface.  Logs the
+    // transition into the audit trail so `arai audit --event=CwdChanged`
+    // shows the per-session navigation history.
+    if event == "CwdChanged" {
+        let new_cwd = hook.get("new_cwd").and_then(|v| v.as_str()).unwrap_or("");
+        if new_cwd.is_empty() {
+            return Ok(());
+        }
+        let old_cwd = hook.get("old_cwd").and_then(|v| v.as_str()).unwrap_or("");
+        if let Ok(cfg) = config::Config::load() {
+            audit::record_event(
+                &cfg,
+                "CwdChanged",
+                "",
+                session_id,
+                serde_json::json!({
+                    "old_cwd": old_cwd,
+                    "new_cwd": new_cwd,
+                }),
+            );
+            spawn_background_scan(Some(new_cwd));
+        }
+        return Ok(());
+    }
+
+    // PostToolBatch: fires once per batch of parallel tool calls (e.g.
+    // a multi-Edit or several parallel Bash invocations).  Today's
+    // PostToolUse correlator pairs single Pre/Post events, which under-
+    // counts compliance verdicts on parallel workloads — every tool in
+    // the batch shares the *batch* Post event, not individual ones.
+    //
+    // Strategy: iterate `tool_calls[] + tool_results[]` from the
+    // payload and feed each pair through the same compliance pipeline
+    // PostToolUse uses.  That way every parallel tool gets its own
+    // Obeyed/Ignored/Unclear verdict against any PreToolUse firings in
+    // the same session.  Observability-only — we don't block the loop
+    // here; gating happened at PreToolUse already.
+    if event == "PostToolBatch" {
+        if let Ok(cfg) = config::Config::load() {
+            let empty = Vec::new();
+            let tool_calls = hook
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&empty);
+            let tool_results = hook
+                .get("tool_results")
+                .and_then(|v| v.as_array())
+                .unwrap_or(&empty);
+            // Pair calls with results by index.  Both arrays come from
+            // Claude Code in the same order, one entry per concurrent
+            // tool invocation in the batch.
+            for (idx, call) in tool_calls.iter().enumerate() {
+                let tool_name = call.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+                if tool_name.is_empty() || guardrails::should_skip_tool(tool_name) {
+                    continue;
+                }
+                let tool_input = call
+                    .get("tool_input")
+                    .cloned()
+                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                let mut terms = guardrails::extract_terms(tool_name, &tool_input);
+                // Pull the corresponding result for content-sniffing
+                // (a `from alembic import op` written by tool N still
+                // needs to seed terms for tool N's compliance pass).
+                if let Some(res) = tool_results.get(idx) {
+                    if let Some(text) = res
+                        .get("output")
+                        .and_then(|o| o.get("content"))
+                        .and_then(|c| c.as_str())
+                    {
+                        guardrails::sniff_content_for_tools_pub(text, &mut terms);
+                    }
+                }
+                terms.sort();
+                terms.dedup();
+                if !session_id.is_empty() {
+                    session::record_tool_call(&cfg.arai_base_dir, session_id, tool_name, &terms);
+                }
+                let preview = summarize_tool_input(tool_name, &tool_input);
+                compliance::record_post_compliance(&cfg, session_id, tool_name, &terms, &preview);
+            }
+            // Single audit entry per batch — keeps the log readable
+            // when a batch contains dozens of tools.  Per-tool
+            // compliance verdicts already get their own entries via
+            // record_post_compliance.
+            audit::record_event(
+                &cfg,
+                "PostToolBatch",
+                "",
+                session_id,
+                serde_json::json!({
+                    "tool_count": tool_calls.len(),
+                }),
+            );
         }
         return Ok(());
     }
@@ -1194,14 +1310,16 @@ mod tests {
     fn test_known_hook_event_covers_new_observability_events() {
         // Regression guard: the fail-closed wrapper uses this allow-list
         // to decide whether to propagate the event name to `event_hint`.
-        // Dropping FileChanged or InstructionsLoaded from it would cause
-        // their stdouts to be treated as PreToolUse-default in the
-        // panic path, which is the wrong fail mode.
+        // Dropping any of these would cause their stdouts to be treated
+        // as PreToolUse-default in the panic path, which is the wrong
+        // fail mode for observability events.
         assert_eq!(known_hook_event("FileChanged"), Some("FileChanged"));
         assert_eq!(
             known_hook_event("InstructionsLoaded"),
             Some("InstructionsLoaded")
         );
+        assert_eq!(known_hook_event("CwdChanged"), Some("CwdChanged"));
+        assert_eq!(known_hook_event("PostToolBatch"), Some("PostToolBatch"));
         assert_eq!(known_hook_event("BogusEvent"), None);
     }
 }

@@ -66,12 +66,20 @@ block its tool calls. GitHub Copilot has no integration surface today; the
 file is ingested so its rules show up in `arai stats`, `arai diff`, and
 the audit log alongside the rest.
 
-Arai also hooks Claude Code's `FileChanged` and `InstructionsLoaded` events
-so the rule set stays live across an edit to `CLAUDE.md` (or any of the
-rules-dir / memory files). When one of those files changes on disk or is
-loaded into context mid-session, Arai spawns an `arai scan` in the
-background so the next tool-call hook sees the updated guardrails — no
-manual rescan required.
+Arai hooks four more Claude Code events alongside the standard tool-call
+trio so the rule set stays accurate to the live working tree:
+
+- **`FileChanged` + `InstructionsLoaded`** — when an instruction file
+  (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
+  into context, Arai spawns an `arai scan` in the background. The next
+  tool-call hook sees the updated guardrails — no manual rescan.
+- **`CwdChanged`** — when Claude `cd`s into a different directory
+  (monorepo navigation), Arai re-scans rooted at the new directory so
+  the next tool call matches against the right project's rules.
+- **`PostToolBatch`** — when Claude does a batch of parallel tool calls,
+  Arai correlates each call individually against any PreToolUse firings
+  in the same session, so per-rule compliance verdicts (Obeyed /
+  Ignored / Unclear) stay accurate on parallel workloads.
 
 ## Smart Matching
 

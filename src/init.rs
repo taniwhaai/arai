@@ -166,6 +166,12 @@ const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
         "CLAUDE.md|.cursorrules|.windsurfrules|copilot-instructions.md",
     ),
     ("InstructionsLoaded", ""),
+    // CwdChanged: monorepo navigation.  No matcher — every cd matters
+    // because we may be landing in a never-scanned subpackage.
+    ("CwdChanged", ""),
+    // PostToolBatch: parallel-tool compliance correlation.  No matcher
+    // — Arai's own skip-tool list filters per-tool inside the handler.
+    ("PostToolBatch", ""),
 ];
 
 fn inject_hooks(cfg: &config::Config) -> Result<(), String> {

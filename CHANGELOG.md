@@ -6,16 +6,32 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- *(hooks)* **`FileChanged` + `InstructionsLoaded` event coverage — rule
-  set stays live across mid-session edits.** Arai now registers itself
-  against Claude Code's two file-observation events. When `CLAUDE.md`,
-  `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`, any
-  `.claude/rules/*.md` or `.cursor/rules/*.md` file, or a per-project
-  Claude Code memory file changes on disk or is loaded into context,
-  Arai spawns an `arai scan` in the background. The next tool-call hook
-  sees the refreshed guardrails — no manual rescan, no stale rules
-  enforcing a previous wording. Observability-only by design (these
-  events have no `permissionDecision` surface). Part of [#110](https://github.com/taniwhaai/arai/issues/110).
+- *(hooks)* **Tier-1 hook event coverage — rule set stays live,
+  monorepo navigation works, parallel-tool compliance reconciled.**
+  Four new hook events wired in alongside `PreToolUse`/`PostToolUse`/
+  `UserPromptSubmit`. Part of [#110](https://github.com/taniwhaai/arai/issues/110).
+  - **`FileChanged` + `InstructionsLoaded`** — when `CLAUDE.md`,
+    `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`, any
+    `.claude/rules/*.md` or `.cursor/rules/*.md` file, or a per-project
+    Claude Code memory file changes on disk or is loaded into context,
+    Arai spawns an `arai scan` in the background. The next tool-call
+    hook sees the refreshed guardrails — no manual rescan, no stale
+    rules enforcing a previous wording.
+  - **`CwdChanged`** — monorepo fix. When Claude `cd`s into a
+    subpackage, Arai spawns a scan rooted at the *new* working
+    directory so the destination's per-project DB is populated. The
+    next tool-call hook in that dir matches against the correct rule
+    set. `arai audit --event=CwdChanged` shows the navigation history.
+  - **`PostToolBatch`** — parallel-tool compliance correlation. The
+    existing per-call PostToolUse correlator under-counts verdicts when
+    Claude does parallel tool calls (multi-Edit, parallel Bash). The
+    new handler iterates the batch's `tool_calls[]` / `tool_results[]`
+    pairs and feeds each through `compliance::record_post_compliance`,
+    so every tool in the batch gets its own
+    Obeyed/Ignored/Unclear verdict. Closes the per-rule-ratio gap
+    advertised on the marketing site.
+  - All four are observability-only — no `permissionDecision` surface,
+    no agentic-loop blocking. Gating still happens at PreToolUse.
 - *(audit)* **`arai audit --purge` for retention / deletion controls.**
   Drops day-bucket files (and their `.head.` sidecars) under
   `~/.taniwha/arai/audit/<project>/`. Two scoping forms:
