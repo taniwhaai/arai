@@ -1137,7 +1137,10 @@ mod tests {
 
         let _ = purge(&base, "proj-z", None, false).unwrap();
 
-        assert!(dir.join(".arai_acl_set").exists(), "ACL marker must survive");
+        assert!(
+            dir.join(".arai_acl_set").exists(),
+            "ACL marker must survive"
+        );
         assert!(dir.join("notes.txt").exists(), "stray file must survive");
         assert!(!dir.join(format!("{ancient}.jsonl")).exists());
         assert!(dir.join(format!("{today}.jsonl")).exists());
