@@ -562,6 +562,151 @@ pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIs
     Ok(issues)
 }
 
+/// Plan/result of a single `purge` invocation against one project's audit
+/// directory.  When `dry_run` was passed, `removed_files` is the list the
+/// run *would* have deleted; otherwise it's what was actually deleted.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PurgeReport {
+    pub project_slug: String,
+    pub removed_files: Vec<PathBuf>,
+    pub removed_bytes: u64,
+    /// Whether today's day-bucket existed in the directory and was
+    /// preserved.  Today's file is always kept — it's the one a live hook
+    /// is currently appending to.
+    pub kept_today: bool,
+    pub dry_run: bool,
+}
+
+/// Delete audit-log day-buckets (and their `.head.YYYYMMDD` sidecars) for
+/// a single project.  Today's day-bucket is *always* preserved — the
+/// running `arai` hook is appending to it, and the hash chain head is
+/// cached in the sidecar.  Whole files are deleted; never individual
+/// lines, so the chain integrity of any retained file is undisturbed.
+///
+/// Arguments:
+/// - `arai_base`: state root (e.g. `~/.taniwha/arai`).
+/// - `target_slug`: project slug whose audit dir to walk (under
+///   `{arai_base}/audit/{target_slug}/`).
+/// - `older_than_days`: when `Some(n)`, only delete day-buckets whose
+///   `YYYYMMDD` date is strictly older than today minus `n` days.
+///   `Some(0)` deletes every day-bucket older than today (today itself
+///   still preserved).  `None` is "no age filter" — every non-today
+///   file in the dir is removed (full project wipe, e.g. for offboarding
+///   or project decommission).
+/// - `dry_run`: when true, return the planned removals without touching
+///   the filesystem.
+///
+/// Returns a `PurgeReport` regardless of whether the project's audit
+/// directory existed (an absent directory yields an empty report — not
+/// an error, because a nothing-to-do purge should succeed quietly).
+pub fn purge(
+    arai_base: &Path,
+    target_slug: &str,
+    older_than_days: Option<u32>,
+    dry_run: bool,
+) -> Result<PurgeReport, String> {
+    let dir = arai_base.join("audit").join(target_slug);
+    if !dir.exists() {
+        return Ok(PurgeReport {
+            project_slug: target_slug.to_string(),
+            removed_files: Vec::new(),
+            removed_bytes: 0,
+            kept_today: false,
+            dry_run,
+        });
+    }
+
+    let today = today_yyyymmdd();
+    let cutoff: Option<String> = older_than_days.map(yyyymmdd_n_days_ago);
+
+    let mut removed_files: Vec<PathBuf> = Vec::new();
+    let mut removed_bytes: u64 = 0;
+    let mut kept_today = false;
+
+    for entry in fs::read_dir(&dir).map_err(|e| format!("read audit dir: {e}"))? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Two filename shapes carry the YYYYMMDD date: `YYYYMMDD.jsonl`
+        // (log) and `.head.YYYYMMDD` (sidecar).  Anything else
+        // (`.arai_acl_set` on Windows, future markers, stray garbage) is
+        // left alone — `purge` is not a recursive `rm`.
+        let day = if let Some(stem) = name.strip_suffix(".jsonl") {
+            stem.to_string()
+        } else if let Some(rest) = name.strip_prefix(".head.") {
+            rest.to_string()
+        } else {
+            continue;
+        };
+
+        // Validate it parses as YYYYMMDD (8 ASCII digits) before treating
+        // it as a date.  A non-conforming name is left untouched — same
+        // principle as the file-type filter above.
+        if day.len() != 8 || !day.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+
+        if day == today {
+            kept_today = true;
+            continue;
+        }
+
+        // String comparison on YYYYMMDD is correct lexicographically
+        // because the format is zero-padded and ordered.  `day < cutoff`
+        // means "this bucket is older than the cutoff date" — delete.
+        // `day >= cutoff` means "this bucket is the cutoff date or newer"
+        // — keep.
+        if let Some(cut) = &cutoff {
+            if day.as_str() >= cut.as_str() {
+                continue;
+            }
+        }
+
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        removed_bytes += size;
+        removed_files.push(path.clone());
+
+        if !dry_run {
+            // Best-effort: a removal that fails (read-only mount, race
+            // with another process) is surfaced in the report only as a
+            // path that's still on disk afterwards.  We don't unwind on
+            // partial failure — purging is idempotent and the next run
+            // will retry.
+            let _ = fs::remove_file(&path);
+        }
+    }
+
+    // Sort for deterministic output (and so tests don't need to sort).
+    removed_files.sort();
+
+    Ok(PurgeReport {
+        project_slug: target_slug.to_string(),
+        removed_files,
+        removed_bytes,
+        kept_today,
+        dry_run,
+    })
+}
+
+/// YYYYMMDD string for the calendar date `n` days before today (UTC).
+/// `n == 0` returns today's date.  Used by `purge` to compute the cutoff.
+fn yyyymmdd_n_days_ago(n: u32) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let then = now.saturating_sub((n as u64) * 86_400);
+    let (y, m, d, _, _, _) = epoch_to_civil(then);
+    format!("{:04}{:02}{:02}", y, m, d)
+}
+
 fn short(hash: &str) -> String {
     hash.chars().take(12).collect()
 }
@@ -857,6 +1002,179 @@ mod tests {
             mode, 0o700,
             "audit dir should be 0700 on Unix (got {mode:o})"
         );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Build a fresh audit dir under a unique temp base with the supplied
+    /// list of YYYYMMDD day-bucket dates (each as both `.jsonl` log and
+    /// `.head.` sidecar).  Returns the base path the caller hands to
+    /// `purge`.  Caller is responsible for cleanup.
+    fn make_purge_fixture(label: &str, slug: &str, days: &[&str]) -> std::path::PathBuf {
+        let base = fresh_tmp_base(label);
+        let dir = base.join("audit").join(slug);
+        std::fs::create_dir_all(&dir).unwrap();
+        for day in days {
+            std::fs::write(dir.join(format!("{day}.jsonl")), b"{}\n").unwrap();
+            std::fs::write(dir.join(format!(".head.{day}")), b"deadbeef\n").unwrap();
+        }
+        base
+    }
+
+    #[test]
+    fn test_purge_with_age_filter_keeps_recent_and_today() {
+        let today = today_yyyymmdd();
+        let yesterday = yyyymmdd_n_days_ago(1);
+        let ancient = yyyymmdd_n_days_ago(120);
+        let base = make_purge_fixture(
+            "purge_age",
+            "proj-x",
+            &[today.as_str(), yesterday.as_str(), ancient.as_str()],
+        );
+
+        // 90-day retention: today + yesterday survive, the 120-day-old
+        // bucket and its sidecar go.  Two files removed total.
+        let report = purge(&base, "proj-x", Some(90), false).unwrap();
+
+        assert!(report.kept_today, "today's bucket must always be preserved");
+        assert_eq!(
+            report.removed_files.len(),
+            2,
+            "expected log+sidecar for the ancient day, got {:?}",
+            report.removed_files
+        );
+        let dir = base.join("audit").join("proj-x");
+        assert!(dir.join(format!("{today}.jsonl")).exists());
+        assert!(dir.join(format!("{yesterday}.jsonl")).exists());
+        assert!(!dir.join(format!("{ancient}.jsonl")).exists());
+        assert!(!dir.join(format!(".head.{ancient}")).exists());
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_dry_run_does_not_delete() {
+        let today = today_yyyymmdd();
+        let ancient = yyyymmdd_n_days_ago(200);
+        let base = make_purge_fixture(
+            "purge_dryrun",
+            "proj-y",
+            &[today.as_str(), ancient.as_str()],
+        );
+
+        let report = purge(&base, "proj-y", Some(30), true).unwrap();
+        assert!(report.dry_run);
+        assert_eq!(
+            report.removed_files.len(),
+            2,
+            "dry-run still reports the plan"
+        );
+
+        let dir = base.join("audit").join("proj-y");
+        assert!(
+            dir.join(format!("{ancient}.jsonl")).exists(),
+            "dry-run must not delete the file"
+        );
+        assert!(
+            dir.join(format!(".head.{ancient}")).exists(),
+            "dry-run must not delete the sidecar"
+        );
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_without_age_filter_full_wipes_except_today() {
+        // Offboarding / decommission shape: no age filter, every
+        // day-bucket except today's goes.
+        let today = today_yyyymmdd();
+        let day_a = yyyymmdd_n_days_ago(3);
+        let day_b = yyyymmdd_n_days_ago(45);
+        let day_c = yyyymmdd_n_days_ago(400);
+        let base = make_purge_fixture(
+            "purge_wipe",
+            "old-employee",
+            &[
+                today.as_str(),
+                day_a.as_str(),
+                day_b.as_str(),
+                day_c.as_str(),
+            ],
+        );
+
+        let report = purge(&base, "old-employee", None, false).unwrap();
+        assert!(report.kept_today);
+        // 3 day-buckets * 2 files each = 6 paths removed.
+        assert_eq!(
+            report.removed_files.len(),
+            6,
+            "expected 3 logs + 3 sidecars; got {:?}",
+            report.removed_files
+        );
+        let dir = base.join("audit").join("old-employee");
+        assert!(dir.join(format!("{today}.jsonl")).exists());
+        for d in [&day_a, &day_b, &day_c] {
+            assert!(!dir.join(format!("{d}.jsonl")).exists());
+            assert!(!dir.join(format!(".head.{d}")).exists());
+        }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_ignores_non_audit_files_in_dir() {
+        // The Windows ACL marker (`.arai_acl_set`) and any stray file
+        // that doesn't match YYYYMMDD.jsonl or .head.YYYYMMDD must be
+        // left alone — purge is not a recursive `rm`.
+        let today = today_yyyymmdd();
+        let ancient = yyyymmdd_n_days_ago(500);
+        let base = make_purge_fixture(
+            "purge_ignores",
+            "proj-z",
+            &[today.as_str(), ancient.as_str()],
+        );
+        let dir = base.join("audit").join("proj-z");
+        std::fs::write(dir.join(".arai_acl_set"), b"").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"keep me").unwrap();
+
+        let _ = purge(&base, "proj-z", None, false).unwrap();
+
+        assert!(dir.join(".arai_acl_set").exists(), "ACL marker must survive");
+        assert!(dir.join("notes.txt").exists(), "stray file must survive");
+        assert!(!dir.join(format!("{ancient}.jsonl")).exists());
+        assert!(dir.join(format!("{today}.jsonl")).exists());
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_on_missing_project_dir_returns_empty_report() {
+        // Purging a project that has no audit dir at all is a no-op,
+        // not an error — covers fresh installs and slugs that were
+        // never written to.
+        let base = fresh_tmp_base("purge_missing");
+        let report = purge(&base, "nobody-here", None, false).unwrap();
+        assert!(report.removed_files.is_empty());
+        assert!(!report.kept_today);
+        assert_eq!(report.removed_bytes, 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_older_zero_keeps_only_today() {
+        // `--older=0` semantics: cutoff = today, so any day strictly
+        // less than today goes; today itself preserved.
+        let today = today_yyyymmdd();
+        let yesterday = yyyymmdd_n_days_ago(1);
+        let base = make_purge_fixture(
+            "purge_zero",
+            "proj-zero",
+            &[today.as_str(), yesterday.as_str()],
+        );
+        let report = purge(&base, "proj-zero", Some(0), false).unwrap();
+        assert!(report.kept_today);
+        assert_eq!(report.removed_files.len(), 2, "yesterday log + sidecar");
+        let dir = base.join("audit").join("proj-zero");
+        assert!(dir.join(format!("{today}.jsonl")).exists());
+        assert!(!dir.join(format!("{yesterday}.jsonl")).exists());
         std::fs::remove_dir_all(&base).ok();
     }
 }
