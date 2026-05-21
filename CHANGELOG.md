@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-05-21
+
+### Miscellaneous
+
+- Clean out four open issues — migrate cmd, compliance/severity integration tests, rules-file spec ([#114](https://github.com/taniwhaai/arai/pull/114))
+
+
 ## [0.2.20] - 2026-05-15
 
 ### Added
