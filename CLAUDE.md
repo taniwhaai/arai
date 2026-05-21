@@ -18,6 +18,7 @@ cargo run -- scan --enrich-llm # Enrich rules via LLM
 cargo run -- add "Never X"     # Add a manual rule
 cargo run -- audit             # Tail the local firing log (today)
 cargo run -- audit --json      # JSONL stream
+cargo run -- audit --verify    # Verify SHA-256 hash chain across all day-buckets
 cargo run -- audit --event=Compliance   # Compliance verdicts (Pre/Post correlation)
 cargo run -- audit --outcome=ignored    # Rules the model ran despite a Pre-firing
 cargo run -- audit --rule alembic       # Filter audit by rule subject/predicate/object
@@ -34,6 +35,8 @@ cargo run -- lint CLAUDE.md    # Parse a file and preview extracted rules, no DB
 cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scenario
 cargo run -- record --since=1h # Build scenarios from recent audit entries
 cargo run -- trust --add <url> # Approve a URL for arai:extends
+cargo run -- migrate           # Move legacy ~/.arai → ~/.taniwha/arai (prompted, default no)
+cargo run -- migrate --yes     # Non-interactive migration (for scripts)
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)
 echo '{"tool_name":"Bash","tool_input":{"command":"git push"}}' | cargo run -- guardrails --match-stdin
 ARAI_DENY_MODE=off cargo run -- guardrails --match-stdin  # Advise-only (no deny)
@@ -52,6 +55,7 @@ src/
 ├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit + FileChanged/InstructionsLoaded auto-rescan; severity → deny/allow
 ├── init.rs               # `arai init` flow — discover → extract → classify → scan → hook inject
 ├── intent.rs             # Intent classification — action, timing, tool scope, severity
+├── migrate.rs            # `arai migrate` — move legacy ~/.arai → ~/.taniwha/arai (prompted)
 ├── session.rs            # Session state — prerequisite tracking across tool calls
 ├── code_scanner.rs       # tree-sitter AST parsing — import extraction for 7 languages
 ├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)

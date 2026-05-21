@@ -10,6 +10,7 @@ mod hooks;
 mod init;
 mod intent;
 mod mcp;
+mod migrate;
 mod parser;
 mod scenarios;
 mod session;
@@ -265,6 +266,20 @@ enum Commands {
         /// triple-id of the rule to re-enable.
         triple_id: i64,
     },
+    /// Move data from the legacy `~/.arai` layout to the current
+    /// `~/.taniwha/arai` layout.  Prompts before moving anything; default
+    /// answer is "no".  If you decline, a `.migrate_declined` marker is
+    /// written so re-running this command (or any future auto-trigger)
+    /// won't re-prompt until you delete it.
+    ///
+    /// Examples:
+    ///   arai migrate           # interactive, default no
+    ///   arai migrate --yes     # non-interactive, proceed
+    Migrate {
+        /// Skip the interactive prompt and proceed.  Use in scripts.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Explain which guardrails would fire on a hypothetical tool call —
     /// useful for debugging "why did this rule fire?" without running the
     /// hook live.  Pass either a Bash command or `--tool Edit <path>`.
@@ -347,6 +362,7 @@ fn main() {
         Commands::Diff { file, json } => cmd_diff(&file, json),
         Commands::Disable { triple_id } => cmd_disable(triple_id),
         Commands::Enable { triple_id } => cmd_enable(triple_id),
+        Commands::Migrate { yes } => cmd_migrate(yes),
         Commands::Why {
             input,
             tool,
@@ -570,6 +586,20 @@ fn chrono_now() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}", now.as_secs())
+}
+
+fn cmd_migrate(yes: bool) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
+    // Resolve the project root the same way config::load does, so a
+    // repo-local `.arai` next to the cwd is detected.  Failing to find one
+    // (e.g. running `arai migrate` from outside any git repo) is fine — the
+    // migrate flow only needs the home dir.
+    let repo_root = std::env::current_dir().ok();
+    if yes {
+        migrate::run_with_confirm(&home, repo_root.as_deref(), |_| true)
+    } else {
+        migrate::run(&home, repo_root.as_deref())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -816,6 +846,7 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
                     "action": intent.action.as_str(),
                     "timing": format!("{:?}", intent.timing),
                     "tools": intent.tools,
+                    "severity": intent.severity.as_str(),
                 })
             })
             .collect();
