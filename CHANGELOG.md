@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-05-22
+
+### Miscellaneous
+
+- Update Cargo.lock dependencies
+
+
 ## [0.2.21] - 2026-05-21
 
 ### Miscellaneous
