@@ -1,5 +1,7 @@
 # Update: First-class Grok TUI Support (Core Implementation)
 
+**Current branch state (as of latest autonomous work):** Very strong core implementation + extensive practical dogfooding via `AGENTS.md` + clean CI + detailed PR description.
+
 This is a substantial update to the starter plan in PR #123.
 
 ## Summary
