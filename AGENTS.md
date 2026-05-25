@@ -60,5 +60,6 @@ Once the Grok TUI integration is merged and installed:
 - After landing changes to the Grok TUI integration, run `arai init` locally in the Grok TUI and verify that the new hooks are active and the rules in this file are being respected.
 - Use the Grok TUI + Arai combination to enforce the rules in this file on yourself during development of this project.
 - After making changes to the Grok TUI integration or AGENTS.md, actively verify (via `arai status`, `arai why`, etc.) that the rules are still being respected and look for opportunities to strengthen the dogfooding.
+- Do not allow the quality or test coverage of the Grok TUI integration to regress over time — treat it with the same rigor as the original Claude Code path.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
