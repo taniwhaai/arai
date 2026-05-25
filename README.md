@@ -58,17 +58,18 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
 
 Rules from every file are parsed, classified, and stored the same way — but
-enforcement strength depends on what surface the assistant exposes. Only
-Claude Code has PreToolUse hooks, so only Claude Code can `deny` a tool
-call. Cursor and Windsurf are MCP clients, so they get advisory enforcement
-via [`arai mcp`](#mcp-agent-authored-guardrails) — the agent can list
-guards, register new ones, and self-check recent decisions, but Arai cannot
-block its tool calls. GitHub Copilot has no integration surface today; the
-file is ingested so its rules show up in `arai stats`, `arai diff`, and
-the audit log alongside the rest.
+enforcement strength depends on what surface the assistant exposes.
 
-Arai hooks four more Claude Code events alongside the standard tool-call
-trio so the rule set stays accurate to the live working tree:
+- **Claude Code** and **Grok TUI** both support real PreToolUse hooks, so Arai
+  can issue `deny` decisions and actually block tool calls.
+- Cursor and Windsurf are MCP clients today — they get strong advisory
+  enforcement via the MCP server.
+- GitHub Copilot currently has no live enforcement surface; the file is
+  still ingested for `arai stats`, `arai diff`, and the audit log.
+
+Arai hooks several more events (on both Claude Code and Grok TUI) alongside
+the standard tool-call events so the rule set stays accurate to the live
+working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded

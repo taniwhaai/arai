@@ -388,7 +388,11 @@ fn cmd_status() -> Result<(), String> {
     println!("Arai status");
     println!("  Rules:      {count}");
     println!("  Sources:    {} file(s)", files.len());
-    println!("  Hook support: Claude Code + Grok TUI (native .grok/hooks + compatibility)");
+
+    println!("  Integration");
+    println!("    Hooks:    Claude Code + Grok TUI (native)");
+    println!("              • .claude/settings.json");
+    println!("              • .grok/hooks/arai.json");
     for f in &files {
         println!("    - {f}");
     }
