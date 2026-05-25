@@ -55,5 +55,6 @@ Once the Grok TUI integration is merged and installed:
 - When modifying host detection or response emission logic, ensure both Grok and Claude shapes are preserved and tested.
 - The `AGENTS.md` file itself should be treated as a first-class instruction file for Grok users of this repo.
 - Do not bypass Arai hooks when they are active in this environment (e.g., do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
+- When the Grok TUI integration is active, prefer using native `.grok/hooks/` registration over relying solely on the Claude compatibility layer for this project.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
