@@ -1,0 +1,10 @@
+event_id: 01KSF7WYEQ1NGGPDY4BJXWXG7X
+kind: subagent_returned
+actor:
+  kind: subagent
+  name: taniwha-design-doc:01KSF7MREA54S5FR12SHG14F5K
+timestamp:
+  iso: 2026-05-25T09:36:47.575Z
+  filename: 20260525T093647575Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KSF7MREA54S5FR12SHG14F5K", "outcome": "design_doc_produced", "design_version_proposed": 2, "re_raise": false, "summary": "Design doc v2 produced for prompt-collector module; 4 open questions resolved as decisions; module is pure (caller owns side effects); 9 ACs mapped with structural verification for AC5/AC6."}'

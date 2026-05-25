@@ -1,0 +1,15 @@
+event_id: 01KSGBAJ3FJES2A5DDCMQCHHN8
+kind: contract_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-25T19:55:53.839Z
+  filename: 20260525T195553839Z
+payload:
+  schema_version: 1
+  family: contract
+  module: prompt-collector
+  version: 1
+  parent_design_version: 2
+  parent_omitted: false

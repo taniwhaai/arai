@@ -1,37 +1,68 @@
 schema_version: 1
-as_of: "2026-05-10"
-invocation_count: 4  # fourth orchestrator invocation in this build cycle (brief v3)
+as_of: "2026-05-26"
+invocation_count: 9  # ninth orchestrator invocation
 
-build_phase: complete
+build_phase: awaiting-user-commit-approval
 tier: single_module
-brief_version: 3
-brief_scope: "GitHub issue #74 — docs sweep of README.md, llms-install.md, CHANGELOG.md"
+brief_version: 4
+brief_scope: "GitHub issue #113 — log-only prompt-text collector wired into UserPromptSubmit"
 
 artefact_status:
-  brief: "v3 — current (issue #74 docs sweep)"
+  brief: "v4 — current (issue #113 prompt collector)"
   project_context: "v1 — current (Rust/cargo/single_package)"
-  design_doc: "none — user approved skipping design-doc phase (decision 01KR8QVKDZPJHZ1VNJ5JYJ7ZQ7)"
-  contracts: "none — user approved skipping contract-derivation phase; brief v3 acts as contract"
-  implementation: "complete and verified — leaf handoff 01KR8QGC0HZ3TNMQET4PVT0HP3; verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass"
-  verification: "pass — all 8 ACs satisfied, 287/287 tests pass"
-  tree: "none — single-module tier, no tree needed"
+  design_doc: "v2 — current at kupu/design/v2.md"
+  contracts: "prompt-collector v1 — current at kupu/contracts/prompt-collector/v1.md"
+  implementation: "COMPLETE: handoff 01KSGB5549QPQDQMSH6B8NS077 — 367 tests passing, cargo exit 0"
+  verification: "PASS: verifier handoff 01KSGC4SR7NB7PVTJ75RXXSNKS — all 9 ACs passed"
+  tree: "none — single-module tier"
   open_re_raises: 0
 
 last_action: |
-  Emitted action: complete.
-  Verifier 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
-  All 8 ACs satisfied. 287/287 tests pass.
-  Only README.md, llms-install.md, CHANGELOG.md were touched (confirmed via git status).
-  Two minor brief-labeling inaccuracies noted (5 vs 4 README refs; v0.2.14 vs v0.2.13
-  historical section) — neither affected outcomes.
+  Invoked with reason subagent_returned:verifier:01KSGC4SR7NB7PVTJ75RXXSNKS.
+  Verifier report confirmed overall: pass.
+    - All 9 ACs (AC1-AC9) passed
+    - cargo_test_exit_code: 0
+    - 367 tests total (322 unit + 45 integration, includes 9 verifier-authored tests)
+    - No findings; no re-raise
+  Emitted:
+    - record_decision (verification pass, prompt-collector v1)
+    - surface_to_user (completion_review) asking user to approve commit + PR
 
 next_expected_event: |
-  Dispatcher surfaces build completion to the user.
-  User decides whether to open a PR for the docs sweep changes on branch paths/73-deprecation-shim.
+  RESUME HERE:
+    - User approves commit + PR (or holds for review)
+    - If approved: dispatcher runs
+        git add -A
+        git commit -m "feat: add prompt-collector module for UserPromptSubmit observation (#113)"
+        gh pr create --base main --title "feat: prompt-collector — log-only UserPromptSubmit observation (#113)"
+    - After PR opened: orchestrator emits complete action
+
+cascade_remaining:
+  - promote contract → done
+  - leaf-implementation → done (367 tests passing)
+  - verifier pass (AC1-AC9, cargo test) → DONE
+  - commit + PR on branch audit/113-prompt-collector ← NEXT (awaiting user approval)
 
 notes: |
-  This build cycle covered brief v3 / GitHub issue #74 (docs sweep).
-  The branch paths/73-deprecation-shim contains both:
-    - The deprecation shim (issue #73, brief v2 build cycle, already complete)
-    - The docs sweep (issue #74, brief v3 build cycle, now complete)
-  Both are ready for PR.
+  Contract v1 key decisions (already settled — do NOT re-open):
+  - Two-value return: (Vec<PromptMatchReceipt>, usize) — receipts + skipped_count
+  - did_any_tool_call_follow always null at collection time (PostToolUse caller's job)
+  - prompt_hash = SHA-256 hex lowercase of full, untruncated prompt_text
+  - Seed ruleset: static slice compiled into binary; labels are starter guesses not policy
+  - Pattern matching: substring/full-text; not implicitly anchored; regex only
+  - Concurrency: safe (no mutable shared state)
+  - Dependencies: existing regex + SHA-256 crates only; no new crate deps
+
+  Files changed in this build cycle:
+    - src/prompt_collector.rs (new module)
+    - src/hooks.rs (UserPromptSubmit gate + collector call)
+    - src/main.rs (mod declaration)
+    - tests/prompt_collector_integration.rs (integration tests)
+    - tests/prompt_collector_verifier.rs (verifier-authored tests, 9 ACs)
+    - CLAUDE.md (architecture section update per AC8)
+
+  Branch: audit/113-prompt-collector (already checked out).
+  Target: main branch via PR. No direct push to main.
+
+  Prior contracts that must NOT be amended this cycle:
+  - base-directory-resolution v1 (stable, cycle #73)

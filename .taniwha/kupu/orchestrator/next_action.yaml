@@ -1,19 +1,80 @@
 schema_version: 1
-decided_at: "2026-05-10"
-invocation_reason: "subagent_returned:verifier:01KR8R6DG5FY12C9PA32ZRFD8M"
+decided_at: "2026-05-26"
+invocation_reason: "subagent_returned:verifier:01KSGC4SR7NB7PVTJ75RXXSNKS"
 
 actions:
-  - action: complete
-    summary:
-      modules_implemented: 1
-      compositions_built: 0
-      contract_amendments: 0
-      re_raises_resolved: 0
-      re_raises_user_escalated: 0
-    notes: |
-      Build cycle for brief v3 (GitHub issue #74 — docs sweep) is complete.
-      Verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
-      All 8 ACs satisfied. 287/287 tests pass.
-      Files touched: README.md, llms-install.md, CHANGELOG.md (only).
-      Git branch: paths/73-deprecation-shim.
-      Ready for PR open or user-initiated commit/push.
+  - action: record_decision
+    decision:
+      kind: scope_change
+      triggered_by: "handoff:01KSGC4SR7NB7PVTJ75RXXSNKS"
+      affects:
+        - kind: contract
+          id: prompt-collector
+          from_version: null
+          to_version: 1
+      body: |
+        # Verification pass — prompt-collector v1
+
+        Verifier handoff 01KSGC4SR7NB7PVTJ75RXXSNKS returned `overall: pass`.
+
+        All 9 acceptance criteria (AC1–AC9) passed:
+        - AC1: Seed ruleset contains all 6 declared labels (deploy, production, secret,
+          password, kubectl apply, force push). Verified end-to-end via matching.
+        - AC2: UserPromptSubmit hook calls the collector; audit log contains PromptMatch
+          entries after a matching prompt is piped through.
+        - AC3: PromptMatchReceipt shape is exact — event literal, 64-char lowercase hex
+          hash, non-empty label, ISO-8601 timestamp, non-empty slug, did_any_tool_call_follow
+          = null.
+        - AC4: `arai audit --event=PromptMatch` returns only PromptMatch lines; fixture
+          Compliance entry in same file correctly excluded.
+        - AC5: Hook stdout not mutated by collector call — confirmed empty stdout with
+          PromptMatch audit entries present.
+        - AC6: No network identifiers (reqwest, ureq, hyper, etc.) in production source
+          outside test blocks.
+        - AC7: SEED_RULES annotated with doc comment stating labels are non-policy
+          starter guesses.
+        - AC8: CLAUDE.md updated with observation-only description referencing kete
+          charter boundary (4 sentences).
+        - AC9: `cargo test` exits 0; 322 unit + 45 integration tests = 367 total passing.
+
+        The verifier authored 9 independent tests in tests/prompt_collector_verifier.rs
+        (one per AC). No new dependencies were introduced.
+
+        Next step: commit all changes on branch audit/113-prompt-collector and open a
+        PR against main addressing GitHub issue #113.
+
+  - action: surface_to_user
+    prompt_kind: completion_review
+    mode: structured
+    context: |
+      The prompt-collector implementation for GitHub issue #113 has passed full
+      verification. All 9 acceptance criteria pass; cargo test exits 0 with 367
+      tests passing (322 unit + 45 integration, including 9 new verifier tests).
+
+      The dispatcher will now commit all staged changes on branch
+      audit/113-prompt-collector and open a PR against main.
+
+      Files changed:
+        - src/prompt_collector.rs (new module)
+        - src/hooks.rs (UserPromptSubmit gate + collector call)
+        - src/main.rs (mod declaration)
+        - tests/prompt_collector_integration.rs (integration tests)
+        - tests/prompt_collector_verifier.rs (verifier tests, 9 ACs)
+        - CLAUDE.md (architecture section update)
+
+      The dispatcher will run:
+        git add -A
+        git commit -m "feat: add prompt-collector module for UserPromptSubmit observation (#113)"
+        gh pr create --base main --title "feat: prompt-collector — log-only UserPromptSubmit observation (#113)" --body "..."
+    questions:
+      - header: Proceed with commit and PR
+        question: Should the dispatcher commit and open the PR now?
+        multi_select: false
+        options:
+          - label: "Yes, commit and open PR (Recommended)"
+            description: >
+              Commit all changes on audit/113-prompt-collector and open a PR against
+              main. All 9 ACs verified; cargo test passing.
+          - label: "No, hold — I want to review first"
+            description: >
+              Pause here. The dispatcher will not commit or push until you say go.

@@ -1,0 +1,197 @@
+schema_version: 1
+handoff_id: 01KSGC4SR7NB7PVTJ75RXXSNKS
+contract_module: prompt-collector
+contract_version: 1
+overall: pass
+
+findings: []
+
+cargo_test_exit_code: 0
+
+verifier_test_file: tests/prompt_collector_verifier.rs
+
+acceptance_criteria:
+  - ac: AC1
+    result: pass
+    criterion: >
+      The module exposes a seed ruleset that is non-empty and contains all six
+      contract-declared labels: deploy, production, secret, password, kubectl apply,
+      force push.
+    verifier_test: verifier_ac1_seed_labels_all_present_via_matching
+    rationale: >
+      Each of the six declared labels was verified end-to-end: a UserPromptSubmit
+      payload was piped containing a phrase that matches each label, and the
+      resulting audit log was queried for a PromptMatch entry with that matched_label.
+      All six fired. The static SEED_RULES constant in src/prompt_collector.rs
+      contains exactly six entries mapping to the declared labels.
+    evidence: >
+      src/prompt_collector.rs lines 57-64: SEED_RULES constant.
+      verifier test: verifier_ac1_seed_labels_all_present_via_matching — all 6 labels
+      produced PromptMatch audit entries. cargo test exit code 0.
+
+  - ac: AC2
+    result: pass
+    criterion: >
+      The UserPromptSubmit hook handler must invoke the collector and the audit log
+      must contain at least one PromptMatch entry after a matching prompt is piped
+      through the full handler path.
+    verifier_test: verifier_ac2_userpromptsubmit_calls_collector
+    rationale: >
+      The verifier piped a UserPromptSubmit JSON payload containing "deploy" text
+      through `arai guardrails --match-stdin`, then queried `arai audit
+      --event=PromptMatch --json`. At least one PromptMatch entry was returned with
+      the correct top-level event field. The hook call site in src/hooks.rs lines
+      686-713 shows the collector is called before the db_path guard, so it fires
+      even on fresh projects.
+    evidence: >
+      src/hooks.rs lines 686-713: UserPromptSubmit collector call block.
+      verifier test: verifier_ac2_userpromptsubmit_calls_collector — audit log
+      contained PromptMatch entry with event="PromptMatch". cargo test exit code 0.
+
+  - ac: AC3
+    result: pass
+    criterion: >
+      Each returned PromptMatchReceipt has: event = literal "PromptMatch";
+      prompt_hash = exactly 64 lowercase hex chars; matched_label non-empty;
+      timestamp_iso in ISO-8601 format; project_slug non-empty;
+      did_any_tool_call_follow = null.
+    verifier_test: verifier_ac3_receipt_shape_is_exact
+    rationale: >
+      The verifier inspected every PromptMatch audit entry returned after piping
+      "deploy to production" through the handler. All field constraints from the
+      contract were asserted: event literal, hash length (64), lowercase hex
+      alphabet, non-empty label, ISO-8601 timestamp shape, non-empty slug, and
+      did_any_tool_call_follow = null (JSON null, not absent).
+    evidence: >
+      verifier test: verifier_ac3_receipt_shape_is_exact — all assertions passed.
+      src/prompt_collector.rs lines 29-44: PromptMatchReceipt struct definition,
+      did_any_tool_call_follow typed as Option<bool>, initialised to None.
+      cargo test exit code 0.
+
+  - ac: AC4
+    result: pass
+    criterion: >
+      `arai audit --event=PromptMatch` must return only PromptMatch lines and must
+      exclude lines with other event kinds present in the same JSONL audit file.
+    verifier_test: verifier_ac4_audit_event_filter_returns_only_prompt_match
+    rationale: >
+      The verifier (1) piped a matching UserPromptSubmit payload to write PromptMatch
+      entries, (2) directly appended a fixture Compliance-event JSONL line to the
+      same day-bucket file, (3) ran `arai audit --event=PromptMatch --json` and
+      asserted every returned entry has event="PromptMatch", and (4) ran `arai audit
+      --json` without the filter and confirmed the Compliance entry is present —
+      proving the filter is doing real work, not vacuously passing.
+    evidence: >
+      verifier test: verifier_ac4_audit_event_filter_returns_only_prompt_match —
+      all assertions passed. cargo test exit code 0.
+
+  - ac: AC5
+    result: pass
+    criterion: >
+      The hook-response bytes (stdout) must not be mutated by the collector call.
+      Capturing stdout before and after the collector call must yield byte-identical
+      sequences.
+    verifier_test: verifier_ac5_collector_does_not_mutate_hook_response
+    rationale: >
+      On a fresh project with no domain rules loaded, the domain-rules path exits
+      early with no stdout. The collector fires (PromptMatch entries confirmed in
+      audit) but the binary stdout is empty bytes. This proves the collector wrote
+      nothing to stdout. The comment in src/hooks.rs lines 683-685 explicitly
+      states "The hook response (stdout) is built separately below and is NOT
+      mutated here." The verifier confirmed this empirically: stdout == b"".
+    evidence: >
+      verifier test: verifier_ac5_collector_does_not_mutate_hook_response —
+      stdout was b"" and PromptMatch entries were present. cargo test exit code 0.
+      src/hooks.rs lines 683-713: collector call block, no println! or stdout write.
+
+  - ac: AC6
+    result: pass
+    criterion: >
+      The collector source file must contain none of the following identifiers
+      outside test-only blocks: reqwest, ureq, hyper, http::, Client::, connect,
+      bind, TcpStream, UdpSocket.
+    verifier_test: verifier_ac6_no_network_identifiers_in_production_source
+    rationale: >
+      The verifier test reads src/prompt_collector.rs at compile time via
+      include_str!, strips everything from the first #[cfg(test)] block onward,
+      and scans the remaining production code for each forbidden identifier. None
+      were found. The production code uses only regex and sha2 — both already in
+      the project's dependency set per the contract.
+    evidence: >
+      verifier test: verifier_ac6_no_network_identifiers_in_production_source —
+      all 9 forbidden identifiers absent from production source. cargo test exit code 0.
+
+  - ac: AC7
+    result: pass
+    criterion: >
+      The source defining SEED_RULES must have a comment indicating the labels are
+      starter guesses, not policy decisions.
+    verifier_test: verifier_ac7_seed_rules_annotated_as_non_policy
+    rationale: >
+      The verifier searches the 600 chars before the SEED_RULES identifier plus
+      200 chars after for the presence of annotation language. The doc comment at
+      src/prompt_collector.rs lines 50-56 reads "These are informed guesses about
+      prompt patterns that operators commonly want to observe — they are NOT policy
+      decisions." This satisfies the contract's requirement.
+    evidence: >
+      src/prompt_collector.rs lines 50-56: doc comment above SEED_RULES constant.
+      verifier test: verifier_ac7_seed_rules_annotated_as_non_policy — passed.
+      cargo test exit code 0.
+
+  - ac: AC8
+    result: pass
+    criterion: >
+      The project's CLAUDE.md must contain a note of 2-4 sentences, framed as
+      observation-only, referencing the kete charter boundary.
+    verifier_test: verifier_ac8_claude_md_has_prompt_collector_note
+    rationale: >
+      CLAUDE.md contains a "## Prompt-collector module" section with exactly 4
+      sentences. The text is framed as observation-only ("observation points, not
+      policy decisions", "performs no enforcement (no block, no warn, no response
+      mutation)") and explicitly references "the kete charter boundary for
+      local-only, read-only observation of prompt content." All three contract
+      sub-requirements (2-4 sentences, observation framing, kete reference) are met.
+    evidence: >
+      CLAUDE.md: "## Prompt-collector module (`src/prompt_collector.rs`)" section.
+      verifier test: verifier_ac8_claude_md_has_prompt_collector_note — passed.
+      cargo test exit code 0.
+
+  - ac: AC9
+    result: pass
+    criterion: >
+      `cargo test` exits with code 0 after all new tests are added. No existing
+      test may be removed or have its assertion weakened.
+    verifier_test: verifier_ac9_binary_runs_and_exits_ok (plus full suite run)
+    rationale: >
+      The full `cargo test` invocation completed with exit code 0. The run produced
+      322 unit tests + 45 integration tests = 367 total, all passing. The verifier's
+      own 9 tests are included in that count.
+    evidence: >
+      cargo test output: "322 tests ... ok" (unit), plus 45 across all integration
+      test files. Exit code 0. No test removals detected relative to the reported
+      baseline of 322 unit + 36 integration (implementor manifest). The count grew
+      by 9 (verifier tests added in this run).
+
+notes: |
+  The verifier wrote 9 independent tests in tests/prompt_collector_verifier.rs,
+  one per AC, reading the contract independently before inspecting the source.
+
+  One observation not rising to the level of a finding: AC5 is verified indirectly.
+  The contract asks for byte-equality "before and after the collector call" at the
+  hook call site, but the binary is a single executable and cannot expose a split
+  observation point externally. The verifier's approach — fresh project, no domain
+  rules, assert stdout == b"" while confirming audit entries exist — provides strong
+  empirical evidence the collector does not write to stdout, which is the invariant
+  the AC requires. The contract acknowledges this pattern implicitly ("This test must
+  be located at the hook call site" — the integration test IS at the call site).
+
+  AC4 fixture strategy: the verifier directly appended a Compliance-event JSONL line
+  to the day-bucket file rather than driving a PostToolUse path. This avoids needing
+  a pre-existing rule store while still placing a non-PromptMatch entry in the same
+  log file. The audit reader correctly parses and filters it.
+
+  No new dependencies were introduced by the implementation (regex and sha2 were
+  already in Cargo.toml). The implementation correctly compiles with the existing
+  dependency set.
+
+  Implementation is faithful to the contract. All 9 ACs pass.

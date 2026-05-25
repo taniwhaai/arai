@@ -1,0 +1,11 @@
+event_id: 01KSGCHAERPY3MWQ3J2KR2GR8B
+kind: metrics_recorded
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-25T20:17:03.960Z
+  filename: 20260525T201703960Z
+payload:
+  handoff_id: 01KSGC4SR7NB7PVTJ75RXXSNKS
+  schema_version: 1

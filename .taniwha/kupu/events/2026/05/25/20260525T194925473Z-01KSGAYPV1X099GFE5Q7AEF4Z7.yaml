@@ -1,0 +1,10 @@
+event_id: 01KSGAYPV1X099GFE5Q7AEF4Z7
+kind: handoff_created
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-25T19:49:25.473Z
+  filename: 20260525T194925473Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"handoff_id": "01KSGAM39G4C62XDNPW8M17E7V", "role": "contract-derivation", "model": "sonnet", "target_node": "prompt-collector", "inputs": ["task.md", "design_v2.md", "project_context.yaml"]}'

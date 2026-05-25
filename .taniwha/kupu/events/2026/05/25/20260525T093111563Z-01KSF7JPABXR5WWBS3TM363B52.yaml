@@ -1,0 +1,10 @@
+event_id: 01KSF7JPABXR5WWBS3TM363B52
+kind: brief_written
+actor:
+  kind: dispatcher
+  name: main-session-2026-05-25
+timestamp:
+  iso: 2026-05-25T09:31:11.563Z
+  filename: 20260525T093111563Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"version": 4, "parent_version": 3, "source": "github_issue", "authoritative_spec": "github.com/taniwhaai/arai/issues/113", "issue_number": 113, "scope": "single_module", "summary": "Log-only prompt-text collector. UserPromptSubmit emits PromptMatch receipts to local audit log. No enforcement, no remote aggregation. Data-collection-first per issue author''s 2026-05-19 reframing."}'

@@ -1,0 +1,41 @@
+schema_version: 1
+handoff_id: 01KSF7MREA54S5FR12SHG14F5K
+role: design-doc
+target_node: prompt-collector  # single_module tier; no tree
+parent_brief_version: 4
+model: sonnet  # taniwha-design-doc default
+status: returned
+created_at:
+  iso: "2026-05-25T09:31:11.563Z"
+  filename: "20260525T093111563Z"
+dispatched_at:
+  iso: "2026-05-25T09:35:00.000Z"
+  filename: "20260525T093500000Z"
+returned_at:
+  iso: "2026-05-25T09:36:00.000Z"
+  filename: "20260525T093600000Z"
+outcome:
+  produced: [design_doc.md]
+  re_raise: false
+  decisions_recorded:
+    - "OQ1: receipt storage = same JSONL log, additive PromptMatch event kind"
+    - "OQ2: did_any_tool_call_follow = null at creation, populated at PostToolUse via session-state"
+    - "OQ3: prompt-text retention = hash-only (no prompt_preview)"
+    - "OQ4: rule storage = static slice, TODO for file-loaded path"
+  summary: "Design doc v2 produced; single_module tier; module = prompt-collector (pure, no side effects — caller owns audit writes); 9 ACs mapped; out-of-scope preserves brief + 4 implied prohibitions."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: brief.md
+    kind: brief
+    source_path: .taniwha/kupu/brief/v4.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - design_doc.md
+  - re_raise.yaml  # only if brief is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1
+  decided_at: "2026-05-25"
