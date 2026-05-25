@@ -65,5 +65,6 @@ Once the Grok TUI integration is merged and installed:
 - When under high context pressure, treat the rules in this file as even more important, not less — use `arai why` and short sessions to stay compliant.
 - When Arai fires a rule (via `arai why`, audit, or a block), treat it as valuable feedback and update AGENTS.md, lessons, or the integration as needed.
 - When developing the Grok TUI integration, use the integration (once active) to catch your own mistakes in real time rather than relying only on manual review.
+- Treat the new Grok TUI integration as a tool for better real-time self-correction during long or high-pressure sessions, not just as an external enforcement layer.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
