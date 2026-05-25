@@ -1,0 +1,10 @@
+event_id: 01KSF5G2RQGWB3JBFEKXJXNVYF
+kind: subagent_dispatched
+actor:
+  kind: dispatcher
+  name: main-session-2026-05-25
+timestamp:
+  iso: 2026-05-25T08:54:48.855Z
+  filename: 20260525T085448855Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "leaf-implementation", "handoff_id": "01KSF5LEAF72IMPLEMENT00001", "module": "legacy-path-migration", "contract_version": 1, "expected_source_files": ["src/legacy_path_migration.rs", "src/config.rs (additive)", "src/init.rs (additive)", "src/lib.rs or src/main.rs (mod decl)"], "summary": "Implement legacy-path-migration against contract v1; AC9 requires cargo test passing with no regression."}'

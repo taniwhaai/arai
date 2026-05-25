@@ -1,0 +1,10 @@
+event_id: 01KSF4GQ3ER56WH6XWHQBBKECQ
+kind: user_input_received
+actor:
+  kind: user
+  name: matt@mustard.co.nz
+timestamp:
+  iso: 2026-05-25T08:37:41.102Z
+  filename: 20260525T083741102Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "open_questions", "handoff_id": "user-input-01KSF4FR0K5WA75HJC167JKM1J", "response_path": ".taniwha/kupu/orchestrator/handoff/user-input-01KSF4FR0K5WA75HJC167JKM1J/inputs/response.yaml", "source_invocation": "subagent_returned:design-doc:01KR905FTA5WAAQTX53TKSE2KV", "source_sequence": 2, "questions_answered": [{"header": "Post-migration behaviour", "selected_label": "Print hint and exit"}], "summary": "User selected ''Print hint and exit'' for post-migration behaviour in arai init."}'

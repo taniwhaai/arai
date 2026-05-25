@@ -1,0 +1,53 @@
+schema_version: 1
+handoff_id: 01KSF5LEAF72IMPLEMENT00001
+role: leaf-implementation
+target_node: legacy-path-migration  # single_module tier; no tree
+parent_contract_version: 1
+model: sonnet  # routing not specified in project.yaml
+status: returned
+created_at:
+  iso: "2026-05-25T08:53:18.320Z"
+  filename: "20260525T085318320Z"
+dispatched_at:
+  iso: "2026-05-25T08:55:00.000Z"
+  filename: "20260525T085500000Z"
+returned_at:
+  iso: "2026-05-25T09:02:00.000Z"
+  filename: "20260525T090200000Z"
+outcome:
+  produced: [manifest.yaml, notes.md]
+  source_files_written:
+    - src/legacy_path_migration.rs   # new (15 tests)
+    - src/config.rs                  # additive: pub deprecation_notice field
+    - src/init.rs                    # additive: migration call in pub fn run()
+    - src/main.rs                    # additive: mod legacy_path_migration;
+  cargo_test_count: 302
+  cargo_test_pass: true
+  re_raise: false
+  summary: "Implementation complete; cargo test 302 passing; AC9 met."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/legacy-path-migration/v1.md
+  - filename: prior_contract_base_directory_resolution.md
+    kind: prior_contract
+    source_path: .taniwha/kupu/contracts/base-directory-resolution/v1.md
+    note: "READ-ONLY reference; must not be amended."
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - manifest.yaml
+  - notes.md
+  - re_raise.yaml  # only if implementation cannot proceed
+source_files_expected:
+  - src/legacy_path_migration.rs  # new file
+  - src/config.rs                  # additive: pub deprecation_notice field
+  - src/init.rs                    # additive: migration call inside run()
+  - src/lib.rs or src/main.rs      # additive: pub mod declaration
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-25"

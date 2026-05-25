@@ -1,37 +1,55 @@
 schema_version: 1
-as_of: "2026-05-10"
-invocation_count: 4  # fourth orchestrator invocation in this build cycle (brief v3)
+as_of: "2026-05-25"
+invocation_count: 5  # fifth orchestrator invocation — leaf-implementation returned
 
-build_phase: complete
+build_phase: building
 tier: single_module
-brief_version: 3
-brief_scope: "GitHub issue #74 — docs sweep of README.md, llms-install.md, CHANGELOG.md"
+brief_version: 4
+brief_scope: "GitHub issue #72 — migration prompt offering to move ~/.arai/ to ~/.taniwha/arai/"
 
 artefact_status:
-  brief: "v3 — current (issue #74 docs sweep)"
+  brief: "v4 — current (issue #72 migration prompt)"
   project_context: "v1 — current (Rust/cargo/single_package)"
-  design_doc: "none — user approved skipping design-doc phase (decision 01KR8QVKDZPJHZ1VNJ5JYJ7ZQ7)"
-  contracts: "none — user approved skipping contract-derivation phase; brief v3 acts as contract"
-  implementation: "complete and verified — leaf handoff 01KR8QGC0HZ3TNMQET4PVT0HP3; verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass"
-  verification: "pass — all 8 ACs satisfied, 287/287 tests pass"
-  tree: "none — single-module tier, no tree needed"
+  design_doc: "v2 — current"
+  contracts:
+    base-directory-resolution: "v1 — STABLE; must NOT be amended this cycle"
+    legacy-path-migration: "v1 — current (written to .taniwha/kupu/contracts/legacy-path-migration/v1.md)"
+  implementation: "complete — 302 tests passing; handoff 01KSF5LEAF72IMPLEMENT00001"
+  verification: "pending — verifier dispatched (handoff 01KSF5VERIF72VERIFY000001)"
+  tree: "none — single_module tier"
   open_re_raises: 0
 
 last_action: |
-  Emitted action: complete.
-  Verifier 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
-  All 8 ACs satisfied. 287/287 tests pass.
-  Only README.md, llms-install.md, CHANGELOG.md were touched (confirmed via git status).
-  Two minor brief-labeling inaccuracies noted (5 vs 4 README refs; v0.2.14 vs v0.2.13
-  historical section) — neither affected outcomes.
+  Leaf-implementation subagent returned (handoff 01KSF5LEAF72IMPLEMENT00001).
+  Implementation is complete: 302 tests pass (287 pre-existing + 15 new), no re-raise.
+  next_action.yaml contains one action:
+    1. dispatch_subagent: verifier for legacy-path-migration (handoff 01KSF5VERIF72VERIFY000001)
+
+implementation_summary:
+  module: legacy-path-migration
+  source_files:
+    - src/legacy_path_migration.rs   # new; 302 - 287 = 15 unit tests
+    - src/config.rs                  # additive: pub deprecation_notice field
+    - src/init.rs                    # additive: offer_migration call in pub fn run()
+    - src/main.rs                    # additive: mod legacy_path_migration;
+  cargo_test_count: 302
+  cargo_test_pass: true
+  re_raise: false
 
 next_expected_event: |
-  Dispatcher surfaces build completion to the user.
-  User decides whether to open a PR for the docs sweep changes on branch paths/73-deprecation-shim.
+  1. Dispatcher dispatches verifier subagent (handoff 01KSF5VERIF72VERIFY000001).
+  2. Verifier reads contract v1 and implementation files, checks all ACs.
+  3. Verifier returns verifier_report.yaml with overall: pass | fail | partial.
+  4. Orchestrator is re-invoked with reason: subagent_returned:verifier:01KSF5VERIF72VERIFY000001.
+  5. If overall: pass → emit complete action. Build done.
+  6. If overall: fail → re-dispatch leaf-implementation with verifier_report as additional input.
+  7. If overall: partial → surface_to_user for user to decide on known debt vs re-implement.
 
 notes: |
-  This build cycle covered brief v3 / GitHub issue #74 (docs sweep).
-  The branch paths/73-deprecation-shim contains both:
-    - The deprecation shim (issue #73, brief v2 build cycle, already complete)
-    - The docs sweep (issue #74, brief v3 build cycle, now complete)
-  Both are ready for PR.
+  single_module tier: no composition phase.
+  After verifier passes, mark build complete and surface to user.
+
+  The 15 new tests cover ACs: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC9,
+  AC-noninteractive, AC-statsfail, AC-determinism.
+  No new crate dependency (AC8).
+  cargo test 302/302 passing (AC9 met: 287 + 15).

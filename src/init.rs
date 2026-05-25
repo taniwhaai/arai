@@ -1,8 +1,121 @@
-use crate::{code_scanner, config, discovery, parser, store};
+use crate::{code_scanner, config, discovery, legacy_path_migration, parser, store};
+use legacy_path_migration::{MigrationCapabilities, MigrationOutcome};
 use serde_json::Value;
 
 pub fn run() -> Result<(), String> {
     let cfg = config::Config::load()?;
+
+    // ── Migration offer ──────────────────────────────────────────────────────
+    // Build a synthetic ResolvedBaseDir from the information persisted in
+    // Config after load.  The path comes from arai_base_dir; the notice
+    // comes from the additive deprecation_notice field.
+    let home_str = cfg.home_dir.to_string_lossy().to_string();
+    let home_trimmed = home_str.trim_end_matches('/');
+    let dest_path = format!("{home_trimmed}/.taniwha/arai");
+
+    let resolved_for_migration = config::ResolvedBaseDir {
+        path: cfg.arai_base_dir.to_string_lossy().to_string(),
+        notice: cfg.deprecation_notice.clone(),
+    };
+
+    let live_caps = MigrationCapabilities {
+        path_exists: Box::new(|p: &str| std::path::Path::new(p).exists()),
+        dir_stats: Box::new(|src: &str| {
+            let mut file_count: u64 = 0;
+            let mut total_bytes: u64 = 0;
+            let mut stack = vec![std::path::PathBuf::from(src)];
+            while let Some(dir) = stack.pop() {
+                let entries = std::fs::read_dir(&dir)
+                    .map_err(|e| format!("cannot read directory {}: {e}", dir.display()))?;
+                for entry in entries {
+                    let entry = entry
+                        .map_err(|e| format!("directory entry error: {e}"))?;
+                    let meta = entry
+                        .metadata()
+                        .map_err(|e| format!("metadata error: {e}"))?;
+                    if meta.is_dir() {
+                        stack.push(entry.path());
+                    } else if meta.is_file() {
+                        file_count = file_count.saturating_add(1);
+                        total_bytes = total_bytes.saturating_add(meta.len());
+                    }
+                }
+            }
+            Ok(legacy_path_migration::MigrationSummaryStats {
+                file_count,
+                total_bytes,
+            })
+        }),
+        move_dir: Box::new(|src: &str, dst: &str| {
+            match std::fs::rename(src, dst) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+                    // Cross-device move: copy recursively then delete the source.
+                    copy_dir_recursive(src, dst)?;
+                    std::fs::remove_dir_all(src)
+                        .map_err(|e| format!("failed to remove source after copy: {e}"))
+                }
+                Err(e) => Err(format!("rename failed: {e}")),
+            }
+        }),
+        create_marker: Box::new(|path: &str| {
+            std::fs::File::create(path)
+                .map(|_| ())
+                .map_err(|e| format!("failed to create marker: {e}"))
+        }),
+        read_line: Box::new(|| {
+            use std::io::BufRead;
+            std::io::stdin()
+                .lock()
+                .lines()
+                .next()
+                .unwrap_or_else(|| Err(std::io::Error::other("no input")))
+                .map_err(|e| format!("read error: {e}"))
+        }),
+        write_output: Box::new(|s: &str| {
+            print!("{s}");
+        }),
+        is_interactive: Box::new(|| {
+            use std::io::IsTerminal;
+            std::io::stdin().is_terminal()
+        }),
+    };
+
+    let migration_outcome =
+        legacy_path_migration::offer_migration(&resolved_for_migration, &dest_path, live_caps);
+
+    match migration_outcome {
+        // Normal init continues for all skip/decline variants.
+        MigrationOutcome::SkippedNoNotice
+        | MigrationOutcome::SkippedEnvVarNotice
+        | MigrationOutcome::SkippedMarkerPresent
+        | MigrationOutcome::SkippedNonInteractive
+        | MigrationOutcome::PromptedDeclined => {}
+
+        MigrationOutcome::SkippedSummaryFailed(desc) => {
+            // Non-fatal; log to stderr and continue.
+            eprintln!("arai: migration stats probe failed (continuing init): {desc}");
+        }
+
+        MigrationOutcome::PromptedDeclineMarkerFailed(desc) => {
+            // Non-fatal; log to stderr and continue.
+            eprintln!("arai: could not write decline marker (continuing init): {desc}");
+        }
+
+        MigrationOutcome::PromptedAccepted { .. } => {
+            // Migration succeeded.  Print confirmation hint and exit cleanly.
+            // Do NOT continue normal init — the data directory has moved;
+            // the user must re-run `arai init` so Config::load resolves the
+            // new path.
+            println!("Migration complete. Run 'arai init' again to finish initialisation.");
+            return Ok(());
+        }
+
+        MigrationOutcome::PromptedAcceptFailed(desc) => {
+            // Migration attempted but failed.  Surface the error and abort.
+            return Err(format!("migration failed: {desc}"));
+        }
+    }
 
     println!("  Scanning for instruction files...");
     let files = discovery::discover(&cfg)?;
@@ -205,6 +318,38 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     std::fs::write(&settings_path, output)
         .map_err(|e| format!("Failed to write settings.json: {e}"))?;
 
+    Ok(())
+}
+
+/// Recursively copy a directory tree from `src` to `dst`.
+///
+/// Used as the fallback in `move_dir` when `std::fs::rename` fails with
+/// `CrossesDevices` (source and destination are on different filesystems).
+fn copy_dir_recursive(src: &str, dst: &str) -> Result<(), String> {
+    let src_path = std::path::Path::new(src);
+    let dst_path = std::path::Path::new(dst);
+    std::fs::create_dir_all(dst_path)
+        .map_err(|e| format!("failed to create destination directory: {e}"))?;
+    let entries = std::fs::read_dir(src_path)
+        .map_err(|e| format!("failed to read source directory: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("directory entry error: {e}"))?;
+        let file_name = entry.file_name();
+        let child_src = src_path.join(&file_name);
+        let child_dst = dst_path.join(&file_name);
+        let meta = entry
+            .metadata()
+            .map_err(|e| format!("metadata error: {e}"))?;
+        if meta.is_dir() {
+            copy_dir_recursive(
+                child_src.to_str().unwrap_or_default(),
+                child_dst.to_str().unwrap_or_default(),
+            )?;
+        } else {
+            std::fs::copy(&child_src, &child_dst)
+                .map_err(|e| format!("failed to copy file: {e}"))?;
+        }
+    }
     Ok(())
 }
 

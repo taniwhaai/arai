@@ -1,0 +1,12 @@
+schema_version: 1
+event_id: 01KSF5DECISION72POSTMIGR001
+kind: decision_recorded
+timestamp_iso: "2026-05-25T08:40:00.000Z"
+payload:
+  kind: user_intervention
+  triggered_by: "01KSF4GQ3ER56WH6XWHQBBKECQ"
+  decision_id: "01KSF5DECISION72POSTMIGR001"
+  summary: "Post-migration behaviour resolved: print hint and exit (user confirmed 2026-05-25)"
+  affects:
+    - kind: contract
+      id: legacy-path-migration

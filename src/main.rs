@@ -9,6 +9,7 @@ mod guardrails;
 mod hooks;
 mod init;
 mod intent;
+mod legacy_path_migration;
 mod mcp;
 mod parser;
 mod scenarios;

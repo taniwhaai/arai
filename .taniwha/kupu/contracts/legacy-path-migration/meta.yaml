@@ -1,0 +1,12 @@
+schema_version: 1
+family: contract
+module: legacy-path-migration
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-25T08:49:16.172Z
+    filename: 20260525T084916172Z
+  parent_design_version: 2
+  parent_omitted: false
+  schema_version: 1

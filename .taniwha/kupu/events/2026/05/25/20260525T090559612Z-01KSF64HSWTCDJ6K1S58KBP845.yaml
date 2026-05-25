@@ -1,0 +1,10 @@
+event_id: 01KSF64HSWTCDJ6K1S58KBP845
+kind: subagent_dispatched
+actor:
+  kind: dispatcher
+  name: main-session-2026-05-25
+timestamp:
+  iso: 2026-05-25T09:05:59.612Z
+  filename: 20260525T090559612Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "handoff_id": "01KSF5VERIF72VERIFY000001", "module": "legacy-path-migration", "contract_version": 1, "summary": "Verify implementation against contract v1; verifier writes own tests under tests/verifier_legacy_path_migration.rs and reports per-AC verdicts."}'

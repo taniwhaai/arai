@@ -13,6 +13,12 @@ pub struct Config {
     pub api_url: Option<String>,
     pub api_key_env: Option<String>,
     pub api_model: Option<String>,
+    /// The deprecation notice (if any) produced by [`resolve_base_dir`]
+    /// during [`Config::load`].  Persisted here so the `arai init` entry
+    /// point can pass it to the migration module without re-running the
+    /// resolver.  The stderr-warning behaviour in `Config::load` is
+    /// unchanged; this field is additive.
+    pub deprecation_notice: Option<DeprecationNotice>,
 }
 
 /// A deprecation notice produced by [`resolve_base_dir`] when the chosen
@@ -168,6 +174,11 @@ impl Config {
             }
         }
 
+        // Persist the notice before `resolved.path` is moved into
+        // `arai_base_dir`.  The stderr-warning behaviour above is
+        // unchanged; this clone is additive.
+        let deprecation_notice = resolved.notice.clone();
+
         let arai_base_dir = PathBuf::from(resolved.path);
 
         let llm_command = std::env::var("ARAI_LLM_CMD").ok();
@@ -189,6 +200,7 @@ impl Config {
             api_url,
             api_key_env,
             api_model,
+            deprecation_notice,
         };
 
         // Load optional config file
@@ -329,6 +341,7 @@ mod tests {
             api_url: None,
             api_key_env: None,
             api_model: None,
+            deprecation_notice: None,
         };
         assert_eq!(cfg.claude_memory_slug(), "-usr-src-myproject");
     }
@@ -345,6 +358,7 @@ mod tests {
             api_url: None,
             api_key_env: None,
             api_model: None,
+            deprecation_notice: None,
         };
         let db = cfg.db_path();
         let db_str = db.to_string_lossy();

@@ -1,0 +1,50 @@
+schema_version: 1
+handoff_id: 01KSF5VERIF72VERIFY000001
+role: verifier
+target_node: legacy-path-migration
+parent_contract_version: 1
+parent_implementation_handoff: 01KSF5LEAF72IMPLEMENT00001
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-25T09:03:19.591Z"
+  filename: "20260525T090319591Z"
+dispatched_at:
+  iso: "2026-05-25T09:05:00.000Z"
+  filename: "20260525T090500000Z"
+returned_at:
+  iso: "2026-05-25T09:12:00.000Z"
+  filename: "20260525T091200000Z"
+outcome:
+  produced: [verifier_report.yaml]
+  source_files_written: [tests/verifier_legacy_path_migration.rs]
+  overall: pass
+  per_ac_summary: "All 13 ACs pass (AC1, AC2, AC2-accept, AC3, AC4, AC5, AC6, AC7, AC8, AC9, AC-noninteractive, AC-statsfail, AC-determinism, AC-noambient)."
+  total_tests: 317
+  cargo_test_pass: true
+  re_raise: false
+  notes: "Contract prose says 'eight capabilities' but the struct has 7 fields — typo in contract prose, struct matches implementation."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/legacy-path-migration/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+  - filename: implementation_manifest.yaml
+    kind: implementation_manifest
+    source_path: .taniwha/kupu/orchestrator/handoff/01KSF5LEAF72IMPLEMENT00001/outputs/manifest.yaml
+  - filename: implementor_notes.md
+    kind: implementor_notes
+    source_path: .taniwha/kupu/orchestrator/handoff/01KSF5LEAF72IMPLEMENT00001/outputs/notes.md
+expected_outputs:
+  - verifier_report.yaml
+  - re_raise.yaml  # only if verification cannot proceed
+expected_source_writes:
+  - tests/verifier_legacy_path_migration.rs
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1
+  decided_at: "2026-05-25"

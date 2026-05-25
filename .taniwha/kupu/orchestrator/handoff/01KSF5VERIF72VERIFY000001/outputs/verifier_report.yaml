@@ -1,0 +1,188 @@
+schema_version: 1
+overall: pass
+contract_version: 1
+module: legacy-path-migration
+
+per_ac:
+  - id: AC1
+    verdict: pass
+    evidence: |
+      Implementor test `ac1_prompt_fires_and_contains_required_info` in
+      src/legacy_path_migration.rs verifies: (a) write_output is invoked at least
+      once before read_line is invoked, (b) the captured prompt text contains the
+      source path (SRC), destination path (DST), file count "7", and total bytes
+      "2048", (c) outcome is PromptedDeclined for "N" input.
+      Source lines 146–157 show the prompt string is built using
+      `{source_path}`, `{dest_path}`, `stats.file_count`, and `stats.total_bytes`.
+      All 317 cargo tests pass including this test.
+
+  - id: AC2
+    verdict: pass
+    evidence: |
+      Implementor test `ac2_default_no_inputs_all_decline` in
+      src/legacy_path_migration.rs tests all 9 required decline inputs:
+      "", "N", "n", "no", "garbage", " y" (leading space), "yes", "\n",
+      Err("read error"). For each: outcome is PromptedDeclined, move_dir count is 0,
+      create_marker count is 1.
+      Source lines 160–166: raw input is stripped of trailing '\n' then '\r'; only
+      exact "y" or "Y" after stripping are accepted. All others decline.
+
+  - id: AC2-accept
+    verdict: pass
+    evidence: |
+      Implementor test `ac2_accept_only_y_and_y_uppercase` in
+      src/legacy_path_migration.rs tests accept inputs "y", "Y", "y\n", "Y\n".
+      For each: outcome is PromptedAccepted{file_count:3, total_bytes:300},
+      move_dir called once, create_marker not called.
+      The test additionally confirms write_output is invoked after move_dir returns
+      (confirmation line). Source lines 170–185 confirm move_dir(source, dest) call
+      and PromptedAccepted{stats.file_count, stats.total_bytes}.
+
+  - id: AC3
+    verdict: pass
+    evidence: |
+      Implementor test `ac3_move_failure_produces_accept_failed_no_marker` in
+      src/legacy_path_migration.rs: move_dir returns Err("disk full"), outcome is
+      PromptedAcceptFailed("disk full"), create_marker count is 0, write_output
+      after move count is 0.
+      Source lines 183–184: Err(desc) from move_dir branches to
+      MigrationOutcome::PromptedAcceptFailed(desc) with no further capability calls.
+
+  - id: AC4
+    verdict: pass
+    evidence: |
+      Implementor test `ac4_decline_writes_marker_at_exact_path` in
+      src/legacy_path_migration.rs: create_marker receives exactly one call with
+      path `format!("{SRC}/.migration_declined")`. The contract requires the marker
+      path to be `<resolved.path>/.migration_declined`.
+      Source line 129: `let marker_path = format!("{source_path}/.migration_declined");`
+      where source_path = &resolved.path. Path matches the contract exactly.
+
+  - id: AC5
+    verdict: pass
+    evidence: |
+      Implementor test `ac5_marker_present_short_circuits_all_other_capabilities`
+      in src/legacy_path_migration.rs: path_exists returns true, outcome is
+      SkippedMarkerPresent, path_exists count is 1, all other capability counts are 0
+      (dir_stats, is_interactive, read_line, write_output, create_marker, move_dir).
+      Source lines 130–132: if path_exists returns true, immediately return
+      SkippedMarkerPresent with no further calls.
+
+  - id: AC6
+    verdict: pass
+    evidence: |
+      Implementor tests `ac6a_no_notice_no_capabilities_invoked` and
+      `ac6b_deprecated_env_var_notice_no_capabilities_invoked` in
+      src/legacy_path_migration.rs. Both verify total call counter is 0 across all
+      7 capabilities.
+      Source lines 114–122: match on resolved.notice; None → SkippedNoNotice,
+      DeprecatedEnvVar(_) → SkippedEnvVarNotice, both return before any capability
+      is touched.
+
+  - id: AC7
+    verdict: pass
+    evidence: |
+      Verifier structural test `ac7_offer_migration_called_only_from_init_rs` in
+      tests/verifier_legacy_path_migration.rs: scans all src/*.rs files except
+      legacy_path_migration.rs and init.rs; confirms no file contains
+      `offer_migration`. Also confirms no file other than main.rs/init.rs imports
+      legacy_path_migration.
+      grep output: only src/init.rs (line 85) calls offer_migration;
+      src/main.rs only declares `mod legacy_path_migration;`.
+
+  - id: AC8
+    verdict: pass
+    evidence: |
+      Verifier structural test `ac8_no_ambient_access_in_module_non_test_code` in
+      tests/verifier_legacy_path_migration.rs: scans the non-test portion of
+      src/legacy_path_migration.rs for forbidden symbols:
+      std::env::, std::fs::, std::io::stdin, std::io::stdout, atty::, IsTerminal,
+      println!, eprintln!, print!. All 9 forbidden patterns are absent.
+      The live capabilities are constructed only in src/init.rs lines 21–82.
+      In-module tests use closures exclusively; no real filesystem, stdin, stdout,
+      or TTY is accessed.
+
+  - id: AC9
+    verdict: pass
+    evidence: |
+      `cargo test` exits code 0. Total passing tests: 317
+      (276 unit + 4 hooks_safety + 1 mcp_check_action + 19 parser_coverage
+      + 2 verifier_base_directory_resolution + 15 verifier_legacy_path_migration).
+      This exceeds the AC9 threshold of ≥287 + new module tests (302 per implementor
+      report). No previously passing test was removed or skipped.
+      No existing public function signature was changed — Config gained one additive
+      field (deprecation_notice) with no existing field altered.
+
+  - id: AC-noninteractive
+    verdict: pass
+    evidence: |
+      Implementor test `ac_noninteractive_skips_without_marker` in
+      src/legacy_path_migration.rs: path_exists returns false, is_interactive
+      returns false; outcome is SkippedNonInteractive; path_exists count is 1,
+      is_interactive count is 1; dir_stats/move_dir/create_marker/read_line/
+      write_output counts are all 0.
+      Source lines 135–137: if !is_interactive(), return SkippedNonInteractive.
+
+  - id: AC-statsfail
+    verdict: pass
+    evidence: |
+      Implementor test `ac_statsfail_prevents_prompt` in
+      src/legacy_path_migration.rs: dir_stats returns Err("permission denied");
+      outcome is SkippedSummaryFailed("permission denied"); other capability
+      counts (read_line, write_output, create_marker, move_dir) are all 0.
+      Source lines 140–143: Err(desc) from dir_stats immediately returns
+      SkippedSummaryFailed(desc).
+
+  - id: AC-determinism
+    verdict: pass
+    evidence: |
+      Implementor test `ac_determinism_repeated_calls_identical` in
+      src/legacy_path_migration.rs: two successive calls with identical capability
+      responses produce equal MigrationOutcome values (r1 == r2).
+      The module holds no mutable static or instance state; MigrationOutcome derives
+      PartialEq + Eq. The implementation is a pure function over its inputs.
+
+  - id: AC-noambient
+    verdict: pass
+    evidence: |
+      Verifier structural tests `ac_noambient_no_extra_pub_fns_in_non_test_code`
+      and `ac_noambient_exactly_four_public_items` in
+      tests/verifier_legacy_path_migration.rs both pass.
+      Non-test public surface of src/legacy_path_migration.rs is exactly:
+      `pub enum MigrationOutcome`, `pub struct MigrationSummaryStats`,
+      `pub struct MigrationCapabilities`, `pub fn offer_migration`.
+      No other pub fns exist in non-test code.
+      grep confirms: no std::env::*, std::fs::*, std::io::stdin/stdout, atty::*,
+      IsTerminal, println!, eprintln!, or print! in the module's non-test code.
+
+cargo_test_summary:
+  full_suite_count: 317
+  full_suite_pass: true
+  verifier_tests_added: 15
+  verifier_tests_pass: true
+
+notes: |
+  Architecture note: `arai` is a binary-only crate with no [lib] target.
+  Integration tests in tests/ cannot directly call offer_migration or import
+  crate-internal types. The per-AC closure-injection tests (AC1-AC6, AC2-accept,
+  AC3, AC4, AC-noninteractive, AC-statsfail, AC-determinism) are necessarily
+  placed in #[cfg(test)] mod tests inside src/legacy_path_migration.rs.
+  The verifier has independently reviewed each of those 15 in-module tests
+  against the contract's acceptance criteria text and confirmed each test is
+  a correct and faithful implementation of the stated criterion.
+  The verifier's tests/verifier_legacy_path_migration.rs (15 tests) cover:
+  structural checks (AC7, AC8, AC-noambient, AC9 counts, offer_migration
+  signature, MigrationOutcome variants, MigrationCapabilities field set,
+  init.rs branching and early-return behaviour, Config field presence,
+  mod declaration, in-module test coverage) and a binary smoke test.
+
+  One contract prose discrepancy noted (not an implementation bug): the contract
+  prose section "All eight capabilities" is a typo; the MigrationCapabilities
+  struct has exactly 7 fields, which matches the struct definition in the
+  contract itself and the implementor's note. The implementation correctly
+  uses 7 fields.
+
+  The `PromptedAccepted` variant correctly carries file_count and total_bytes
+  sourced from the dir_stats response (src/legacy_path_migration.rs lines 179-182).
+  The confirmation line in src/legacy_path_migration.rs line 175 and the hint
+  line in src/init.rs line 110 both contain "arai init" per contract requirements.

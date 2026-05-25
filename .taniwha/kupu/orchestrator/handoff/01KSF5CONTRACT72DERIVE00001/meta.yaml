@@ -1,0 +1,44 @@
+schema_version: 1
+handoff_id: 01KSF5CONTRACT72DERIVE00001
+role: contract-derivation
+target_node: legacy-path-migration  # single_module tier; no tree node
+parent_brief_version: 4
+parent_design_version: 2
+model: sonnet  # default for derivation; routing not specified in project.yaml
+status: returned
+created_at:
+  iso: "2026-05-25T08:37:11.230Z"
+  filename: "20260525T083711230Z"
+dispatched_at:
+  iso: "2026-05-25T08:41:00.000Z"
+  filename: "20260525T084100000Z"
+returned_at:
+  iso: "2026-05-25T08:49:16.172Z"
+  filename: "20260525T084916172Z"
+outcome:
+  produced: [contract.md]
+  re_raise: false
+  summary: "Contract derived for legacy-path-migration; 8 capabilities grouped as MigrationCapabilities struct (Box<dyn Fn>); EXDEV via std::io::ErrorKind::CrossesDevices; caller-site control flow per MigrationOutcome variant."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: design_v2.md
+    kind: design_doc
+    source_path: .taniwha/kupu/design/v2.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+  - filename: prior_contract_base_directory_resolution_v1.md
+    kind: prior_contract
+    source_path: .taniwha/kupu/contracts/base-directory-resolution/v1.md
+    note: "READ-ONLY reference; must not be amended."
+  - filename: decision_post_migration_behaviour.md
+    kind: decision
+    source_path: .taniwha/kupu/decisions/01KSF5DECISION72POSTMIGR001.md
+expected_outputs:
+  - contract.md  # primary
+  - re_raise.yaml  # only if derivation cannot proceed
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-25"

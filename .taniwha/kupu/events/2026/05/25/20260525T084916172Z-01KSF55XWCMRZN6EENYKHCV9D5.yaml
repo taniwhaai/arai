@@ -1,0 +1,10 @@
+event_id: 01KSF55XWCMRZN6EENYKHCV9D5
+kind: subagent_returned
+actor:
+  kind: subagent
+  name: taniwha-contract-derivation:01KSF5CONTRACT72DERIVE00001
+timestamp:
+  iso: 2026-05-25T08:49:16.172Z
+  filename: 20260525T084916172Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KSF5CONTRACT72DERIVE00001", "module": "legacy-path-migration", "outcome": "contract_produced", "output_paths": [".taniwha/kupu/orchestrator/handoff/01KSF5CONTRACT72DERIVE00001/outputs/contract.md"], "re_raise": false, "summary": "Contract derived; 8 injected capabilities grouped as MigrationCapabilities struct with Box<dyn Fn> fields, std::io::ErrorKind::CrossesDevices for EXDEV detection, caller-site control flow table per MigrationOutcome variant, decline marker at <legacy_base_dir>/.migration_declined."}'

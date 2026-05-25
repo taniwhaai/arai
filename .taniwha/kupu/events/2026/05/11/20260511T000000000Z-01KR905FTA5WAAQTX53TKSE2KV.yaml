@@ -1,0 +1,26 @@
+event_id: 01KR905FTA5WAAQTX53TKSE2KV
+kind: subagent_dispatched
+actor:
+  kind: orchestrator
+timestamp:
+  iso: 2026-05-11T00:00:00.000Z
+  filename: 20260511T000000000Z
+payload:
+  schema_version: 1
+  role: design-doc
+  handoff_id: 01KR905FTA5WAAQTX53TKSE2KV
+  brief_version: 4
+  invocation_reason: build_kickoff
+  inputs:
+    - kind: brief
+      path: .taniwha/kupu/brief/v4.md
+    - kind: project_context
+      path: .taniwha/kupu/project_context.yaml
+    - kind: prior_design_version
+      path: .taniwha/kupu/design/v1.md
+  expected_outputs:
+    - design_doc
+  notes: |
+    First orchestrator invocation for brief v4 (issue #72 migration prompt).
+    Dispatching design-doc subagent to produce design/v2.md.
+    Stable contract base-directory-resolution/v1.md must not be redefined.

@@ -1,0 +1,10 @@
+schema_version: 1
+event_id: 01KSF5DISPATCH72CONTRACT001
+kind: subagent_dispatched
+timestamp_iso: "2026-05-25T08:41:00.000Z"
+payload:
+  role: contract-derivation
+  handoff_id: "01KSF5CONTRACT72DERIVE00001"
+  module: legacy-path-migration
+  design_version: 2
+  notes: "Contract derivation for issue #72 migration prompt; post-migration hint-and-exit decision incorporated"

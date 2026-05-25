@@ -1,0 +1,22 @@
+schema_version: 1
+prompt_kind: open_questions
+received_at:
+  iso: "2026-05-25T08:37:11.230Z"
+  filename: "20260525T083711230Z"
+source_action:
+  invocation_reason: "subagent_returned:design-doc:01KR905FTA5WAAQTX53TKSE2KV"
+  sequence: 2
+responses:
+  - header: "Post-migration behaviour"
+    question: |
+      After the user accepts and ~/.arai/ is moved successfully, what should
+      "arai init" do for the rest of the current invocation?
+    selected_label: "Print hint and exit"
+    selected_summary: |
+      Emit a short message such as "Migration complete. Run 'arai init' again
+      to complete initialisation." and exit with success (exit code 0). No
+      re-resolution or second Config::load needed. The user runs "arai init"
+      once more and everything operates against the new path.
+    notes: |
+      Recommended option per the design doc; minimal-surprise path. Confirmed
+      by the user (matt@mustard.co.nz) on 2026-05-25 in dispatcher session.

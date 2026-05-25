@@ -1,0 +1,10 @@
+event_id: 01KSF5DABG016APXME55R8TK33
+kind: contract_written
+actor:
+  kind: dispatcher
+  name: main-session-2026-05-25
+timestamp:
+  iso: 2026-05-25T08:53:18.320Z
+  filename: 20260525T085318320Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"module": "legacy-path-migration", "version": 1, "parent_design_version": 2, "path": ".taniwha/kupu/contracts/legacy-path-migration/v1.md", "source_handoff": "01KSF5CONTRACT72DERIVE00001", "summary": "Contract v1 promoted from contract-derivation handoff outputs."}'

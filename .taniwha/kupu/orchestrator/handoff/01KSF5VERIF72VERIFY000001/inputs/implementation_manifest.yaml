@@ -1,0 +1,37 @@
+---
+leaf: legacy-path-migration
+cargo_test_count: 302
+new_tests_in_module: 15
+all_tests_pass: true
+no_new_clippy_warnings: true
+
+files:
+  - path: src/legacy_path_migration.rs
+    status: new
+    description: >
+      New module implementing offer_migration, MigrationOutcome, MigrationSummaryStats,
+      and MigrationCapabilities per the contract. Contains 15 unit tests covering all
+      AC1–AC9, AC-noninteractive, AC-statsfail, AC-determinism, AC-noambient criteria.
+
+  - path: src/config.rs
+    status: additive_edit
+    description: >
+      Added pub deprecation_notice: Option<DeprecationNotice> field to Config struct.
+      Populated from resolved.notice.clone() in Config::load before resolved.path is
+      moved into arai_base_dir. Updated both test Config literals to include
+      deprecation_notice: None. No existing behaviour changed.
+
+  - path: src/init.rs
+    status: additive_edit
+    description: >
+      Added migration call in pub fn run() immediately after Config::load() returns,
+      before any normal init work. Constructs dest_path from cfg.home_dir, builds live
+      MigrationCapabilities with real filesystem/stdin/stdout/TTY closures, calls
+      offer_migration, and branches on all MigrationOutcome variants per the control-flow
+      table. Added private copy_dir_recursive helper for cross-device move fallback.
+
+  - path: src/main.rs
+    status: additive_edit
+    description: >
+      Added mod legacy_path_migration; declaration in alphabetical position among the
+      other mod declarations.
