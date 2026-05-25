@@ -37,4 +37,11 @@ These rules exist because mistakes here are expensive (corrupting Taniwha build 
 - Feature work for the Grok TUI integration lives on `feat/grok-tui-support`.
 - Keep the main integration changes focused. Large new features (deeper parser improvements, full dogfooding guardrails, etc.) should be discussed before expanding scope.
 
+## Using Arai (Dogfooding)
+
+Once the Grok TUI integration is merged and installed:
+- Run `arai init` in this repo to start enforcing these rules via native Grok hooks.
+- Treat violations of the rules in this file as high-severity (many are `never` / `must` style).
+- Use `arai why`, `arai status`, and `arai audit` to inspect and improve compliance.
+
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
