@@ -49,4 +49,10 @@ Once the Grok TUI integration is merged and installed:
 - Any change that touches hook handling, tool name normalization, response formats, matching logic, or discovery **must** include or update tests (especially in `tests/hooks_safety.rs`).
 - When adding new instruction file support (new basenames or directories), update both `discovery.rs` and `hooks.rs::is_instruction_file`.
 
+## Grok TUI Integration
+
+- The Grok TUI support (normalization, dual response formats, native `.grok/hooks` registration) must remain fully functional and low-regression for Claude Code.
+- When modifying host detection or response emission logic, ensure both Grok and Claude shapes are preserved and tested.
+- The `AGENTS.md` file itself should be treated as a first-class instruction file for Grok users of this repo.
+
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
