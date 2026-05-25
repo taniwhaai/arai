@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-05-25
+
+### Added
+
+- *(prompt-collector)* Log-only UserPromptSubmit observation ([#113](https://github.com/taniwhaai/arai/pull/113))
+
+### Style
+
+- Rustfmt prompt-collector files ([#113](https://github.com/taniwhaai/arai/pull/113))
+
+
 ## [0.2.22] - 2026-05-22
 
 ### Miscellaneous
