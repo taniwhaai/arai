@@ -231,10 +231,7 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse")
         .to_string();
-    let raw_tool_name = hook
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let raw_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
     // Sanitize session_id at the boundary — anything that wouldn't survive
     // path-traversal validation is treated as no-session (session features
@@ -874,12 +871,10 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 _ => emit_claude_decision(false, Some(&reason), &context),
             }
         }
-        ("PreToolUse", false) => {
-            match host {
-                Host::Grok => emit_grok_decision(true, None, &context),
-                _ => emit_claude_decision(true, None, &context),
-            }
-        }
+        ("PreToolUse", false) => match host {
+            Host::Grok => emit_grok_decision(true, None, &context),
+            _ => emit_claude_decision(true, None, &context),
+        },
         ("PostToolUse", _) => serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
@@ -932,7 +927,11 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
 }
 
 /// Emit a Grok TUI compatible decision response.
-fn emit_grok_decision(allow: bool, reason: Option<&str>, additional_context: &str) -> serde_json::Value {
+fn emit_grok_decision(
+    allow: bool,
+    reason: Option<&str>,
+    additional_context: &str,
+) -> serde_json::Value {
     if allow {
         serde_json::json!({
             "decision": "allow",
@@ -948,7 +947,11 @@ fn emit_grok_decision(allow: bool, reason: Option<&str>, additional_context: &st
 }
 
 /// Emit a Claude Code compatible decision response (preserves original shape exactly).
-fn emit_claude_decision(allow: bool, reason: Option<&str>, additional_context: &str) -> serde_json::Value {
+fn emit_claude_decision(
+    allow: bool,
+    reason: Option<&str>,
+    additional_context: &str,
+) -> serde_json::Value {
     if allow {
         serde_json::json!({
             "hookSpecificOutput": {

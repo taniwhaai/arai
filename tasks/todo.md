@@ -106,13 +106,25 @@ Core Grok TUI support implemented and verified on `feat/grok-tui-support`:
 - `arai init` / `deinit` now handle both `.claude/settings.json` and `.grok/hooks/arai.json`.
 - AGENTS.md family discovery (project + global `~/.grok/`) + `is_instruction_file` updates.
 - New Grok smoke test in `tests/hooks_safety.rs`.
-- `arai status` and init output now mention Grok TUI support.
-- README.md and CLAUDE.md lightly updated.
-- Full `cargo test` + all three hot-path benchmarks (`hot_path.sh`, `skip_path.sh`, `nomatch_path.sh`) pass with no regression (hot path median ~2.1 ms).
+- `arai status` now has a clean structured "Integration" section.
+- Init messages improved.
+- README.md and CLAUDE.md updated with accurate Grok hook support language.
+- Full `cargo test` + benchmarks green.
+- Dead code warnings handled.
+- Two focused commits pushed to the feature branch.
+- Small CLI about text update for clarity.
+- Created real `AGENTS.md` at root with high-value, enforceable rules for AI agents working on this codebase (strong Taniwha/plan mode discipline, protecting build state, etc.). Real dogfooding.
+- Added explicit "Using Arai (Dogfooding)" section so agents know to enable the guardrails once the Grok integration lands.
+- Added "Changes That Affect Guardrails" section requiring test coverage for hook/matching/discovery changes.
+- Added dedicated "Grok TUI Integration" section in AGENTS.md (including rule against casually disabling Arai and preference for native .grok/hooks).
+- Further polished the PR description file with status and next steps.
+- Continuing full autonomous shipping without pausing for confirmation.
+
+User has explicitly requested autonomous continuation ("continue without asking me").
 
 All changes follow minimal impact + zero regression for existing Claude users.
 
-Next: Light polish on `arai status` messaging if needed, then focused PR update to #123.
+Next: Focused PR update to #123 + any final polish.
 
 ---
 *This plan follows the repo's CLAUDE.md workflow: plan first in tasks/todo.md, verify before deep changes, use Kupu (fallback) for mechanical state, minimal impact, no laziness on root cause (dual host support + normalization).*

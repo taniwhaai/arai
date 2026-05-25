@@ -11,8 +11,18 @@ const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
 /// These are the names that appear in SKIP_TOOLS, extract_terms dispatch, etc.
 /// This list serves as the single source of truth for tool names coming from
 /// any supported coding agent hook (Claude Code, Grok TUI, etc.).
+#[allow(dead_code)]
 pub const CANONICAL_TOOLS: &[&str] = &[
-    "Bash", "Edit", "Write", "Read", "Glob", "Agent", "ToolSearch", "Grep", "NotebookEdit", "MultiEdit",
+    "Bash",
+    "Edit",
+    "Write",
+    "Read",
+    "Glob",
+    "Agent",
+    "ToolSearch",
+    "Grep",
+    "NotebookEdit",
+    "MultiEdit",
 ];
 
 /// Normalizes raw `tool_name` values from any supported coding agent's hook payload

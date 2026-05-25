@@ -293,6 +293,7 @@ impl Config {
     }
 
     /// Path to the global Grok hooks directory (~/.grok/hooks).
+    #[allow(dead_code)]
     pub fn grok_global_hooks_dir(&self) -> PathBuf {
         self.home_dir.join(".grok").join("hooks")
     }

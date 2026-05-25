@@ -23,7 +23,11 @@ mod upgrade;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "arai", version, about = "Instruction files that actually work (Claude + Grok TUI).")]
+#[command(
+    name = "arai",
+    version,
+    about = "Instruction files that actually work (Claude + Grok TUI)."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
