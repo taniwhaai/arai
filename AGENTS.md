@@ -62,5 +62,6 @@ Once the Grok TUI integration is merged and installed:
 - After making changes to the Grok TUI integration or AGENTS.md, actively verify (via `arai status`, `arai why`, etc.) that the rules are still being respected and look for opportunities to strengthen the dogfooding.
 - Do not allow the quality or test coverage of the Grok TUI integration to regress over time — treat it with the same rigor as the original Claude Code path.
 - When the Grok TUI integration is active, use `arai status` and the Grok hooks modal regularly to confirm the integration is healthy and the project's rules are being enforced.
+- When under high context pressure, treat the rules in this file as even more important, not less — use `arai why` and short sessions to stay compliant.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
