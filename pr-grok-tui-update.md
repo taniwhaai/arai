@@ -47,10 +47,11 @@ Arai now has working first-class support for the Grok Build TUI (supergrok), in 
 
 ## How to Test (as a Grok TUI user)
 
-1. `arai init`
-2. Check that `.grok/hooks/arai.json` was created (or hooks appear in the Grok `/hooks` modal via the compatibility layer).
-3. Add a simple prohibitive rule to your `AGENTS.md` (e.g. "never force push to main").
-4. Trigger a matching tool call — it should be blocked with a clear reason.
+1. `arai init` — it should create `.grok/hooks/arai.json` (or register via the Claude compatibility layer).
+2. In the Grok TUI, open the hooks modal (`/hooks` or Ctrl+L) and confirm Arai appears.
+3. Add a clear prohibitive rule to an `AGENTS.md` or `CLAUDE.md` in your project (e.g. "never force push to main").
+4. Attempt a matching action (e.g. `git push --force`). Arai should block it with a clear reason from the rule.
+5. Use `arai status`, `arai why`, and `arai audit` to inspect the integration.
 
 ## Next (out of scope for this PR)
 
