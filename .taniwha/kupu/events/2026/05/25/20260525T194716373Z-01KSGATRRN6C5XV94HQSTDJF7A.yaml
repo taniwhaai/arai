@@ -1,0 +1,10 @@
+event_id: 01KSGATRRN6C5XV94HQSTDJF7A
+kind: design_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-25T19:47:16.373Z
+  filename: 20260525T194716373Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"version": 2, "parent_brief_version": 4, "source_handoff": "01KSF7MREA54S5FR12SHG14F5K", "promoted_from": "kupu/orchestrator/handoff/01KSF7MREA54S5FR12SHG14F5K/outputs/design_doc.md", "promoted_to": "kupu/design/v2.md"}'

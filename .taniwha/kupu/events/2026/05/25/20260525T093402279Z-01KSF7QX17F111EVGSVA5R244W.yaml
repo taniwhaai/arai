@@ -1,0 +1,10 @@
+event_id: 01KSF7QX17F111EVGSVA5R244W
+kind: subagent_dispatched
+actor:
+  kind: dispatcher
+  name: main-session-2026-05-25
+timestamp:
+  iso: 2026-05-25T09:34:02.279Z
+  filename: 20260525T093402279Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KSF7MREA54S5FR12SHG14F5K", "parent_brief_version": 4, "issue_number": 113, "summary": "Design-doc v2 for prompt-text collector; resolve 4 open questions from brief; single_module tier."}'

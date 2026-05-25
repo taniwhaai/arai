@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_id: 01KSGAM39G4C62XDNPW8M17E7V
+role: contract-derivation
+target_node: prompt-collector  # single_module tier; no tree
+parent_design_version: 2
+model: sonnet  # taniwha-contract-derivation default
+status: returned
+created_at:
+  iso: "2026-05-25T19:48:50.846Z"
+  filename: "20260525T194850846Z"
+dispatched_at:
+  iso: "2026-05-25T19:49:25.473Z"
+  filename: "20260525T194925473Z"
+returned_at:
+  iso: "2026-05-25T19:52:00.000Z"
+  filename: "20260525T195200000Z"
+outcome:
+  produced: [contract.md]
+  re_raise: false
+  summary: "Contract v1 for prompt-collector module produced. Language-neutral, derived directly from design v2. No vocabulary file (single_module tier). Hardened with named two-tuple return value (receipts + skipped_count); did_any_tool_call_follow pinned as always-null at collection time."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: design_v2.md
+    kind: design_doc
+    source_path: .taniwha/kupu/design/v2.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - contract.md
+  - re_raise.yaml  # only if design is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-26"

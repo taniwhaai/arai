@@ -1,0 +1,10 @@
+event_id: 01KSGCQ161HSD1K6SK19G4J7X3
+kind: user_input_received
+actor:
+  kind: user
+  name: matt
+timestamp:
+  iso: 2026-05-25T20:20:11.073Z
+  filename: 20260525T202011073Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "completion_review", "handoff": "user-input-01KSGCQ-completion-review", "selected": "Yes, commit and open PR"}'

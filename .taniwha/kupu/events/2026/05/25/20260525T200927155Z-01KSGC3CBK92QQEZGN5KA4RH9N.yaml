@@ -1,0 +1,10 @@
+event_id: 01KSGC3CBK92QQEZGN5KA4RH9N
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main_session
+timestamp:
+  iso: 2026-05-25T20:09:27.155Z
+  filename: 20260525T200927155Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"handoff_id": "01KSGB5549QPQDQMSH6B8NS077", "role": "leaf-implementation", "module": "prompt-collector", "contract_version": 1, "outcome": "implementation_bundle", "cargo_test_exit_code": 0, "total_tests_passed": 358}'

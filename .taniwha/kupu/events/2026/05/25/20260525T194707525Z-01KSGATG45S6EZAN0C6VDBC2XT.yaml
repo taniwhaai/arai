@@ -1,0 +1,14 @@
+event_id: 01KSGATG45S6EZAN0C6VDBC2XT
+kind: design_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-25T19:47:07.525Z
+  filename: 20260525T194707525Z
+payload:
+  schema_version: 1
+  family: design
+  version: 2
+  parent_brief_version: 4
+  parent_omitted: false

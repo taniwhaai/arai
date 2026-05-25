@@ -1,0 +1,8 @@
+schema_version: 1
+prompt_kind: completion_review
+mode: structured
+captured_at:
+  iso: 2026-05-26T00:00:00.000Z
+responses:
+  - header: Commit and PR
+    selected: "Yes, commit and open PR"

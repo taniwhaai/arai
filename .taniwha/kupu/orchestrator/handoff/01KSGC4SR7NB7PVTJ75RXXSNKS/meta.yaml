@@ -1,0 +1,30 @@
+schema_version: 1
+handoff_id: 01KSGC4SR7NB7PVTJ75RXXSNKS
+role: verifier
+target_node: prompt-collector
+status: returned
+created_at:
+  iso: 2026-05-26T00:00:00.000Z
+inputs:
+- filename: contract.md
+  kind: contract
+  source: kupu/contracts/prompt-collector/v1.md
+- filename: project_context.yaml
+  kind: project_context
+  source: kupu/project_context.yaml
+- filename: implementation_manifest.yaml
+  kind: implementation_manifest
+  source: kupu/orchestrator/handoff/01KSGB5549QPQDQMSH6B8NS077/outputs/manifest.yaml
+expected_outputs:
+- verifier_report
+metrics:
+  schema_version: 1
+  recorded_at:
+    iso: 2026-05-25T20:17:03.960Z
+    filename: 20260525T201703960Z
+  parse_failure: false
+  tokens_used: 74006
+  wall_clock_ms: 256992
+  tool_call_count: 19
+  model: claude-opus-4-7
+  phase: 1

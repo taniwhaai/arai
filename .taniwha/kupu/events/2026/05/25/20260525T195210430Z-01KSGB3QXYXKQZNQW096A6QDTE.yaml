@@ -1,0 +1,10 @@
+event_id: 01KSGB3QXYXKQZNQW096A6QDTE
+kind: subagent_returned
+actor:
+  kind: subagent
+  name: taniwha-contract-derivation:01KSGAM39G4C62XDNPW8M17E7V
+timestamp:
+  iso: 2026-05-25T19:52:10.430Z
+  filename: 20260525T195210430Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KSGAM39G4C62XDNPW8M17E7V", "outcome": "contract_produced", "re_raise": false, "produced": ["contract.md"], "summary": "Contract v1 for prompt-collector module derived from design v2. Language-neutral, 127 lines. Hardened: named two-tuple return (receipts + skipped_count); did_any_tool_call_follow pinned as always-null; pattern-matching semantics quoted verbatim from design to lock anchoring default. No vocabulary file (single_module tier). No re-raise."}'

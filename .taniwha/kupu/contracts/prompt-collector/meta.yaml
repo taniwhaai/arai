@@ -1,0 +1,12 @@
+schema_version: 1
+family: contract
+module: prompt-collector
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-25T19:55:53.839Z
+    filename: 20260525T195553839Z
+  parent_design_version: 2
+  parent_omitted: false
+  schema_version: 1

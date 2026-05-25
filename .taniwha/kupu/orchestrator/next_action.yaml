@@ -1,6 +1,6 @@
 schema_version: 1
-decided_at: "2026-05-10"
-invocation_reason: "subagent_returned:verifier:01KR8R6DG5FY12C9PA32ZRFD8M"
+decided_at: "2026-05-26"
+invocation_reason: "user_input_received:completion_review"
 
 actions:
   - action: complete
@@ -10,10 +10,9 @@ actions:
       contract_amendments: 0
       re_raises_resolved: 0
       re_raises_user_escalated: 0
-    notes: |
-      Build cycle for brief v3 (GitHub issue #74 — docs sweep) is complete.
-      Verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
-      All 8 ACs satisfied. 287/287 tests pass.
-      Files touched: README.md, llms-install.md, CHANGELOG.md (only).
-      Git branch: paths/73-deprecation-shim.
-      Ready for PR open or user-initiated commit/push.
+      notes: |
+        GitHub issue #113 — prompt-collector module.
+        Commit 2cfd194 on branch audit/113-prompt-collector.
+        PR #119 open against main: https://github.com/taniwhaai/arai/pull/119
+        All 9 acceptance criteria verified (cargo test, 367 tests passing).
+        User approved commit + PR; commit_landed event recorded.

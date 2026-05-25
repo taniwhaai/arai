@@ -1,0 +1,10 @@
+event_id: 01KSGCH50XWMN654RKS1S5C0TT
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main_session
+timestamp:
+  iso: 2026-05-25T20:16:58.397Z
+  filename: 20260525T201658397Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"handoff_id": "01KSGC4SR7NB7PVTJ75RXXSNKS", "role": "verifier", "module": "prompt-collector", "contract_version": 1, "outcome": "verifier_report", "overall": "pass", "acs_passed": 9, "acs_failed": 0, "cargo_test_exit_code": 0}'

@@ -1,37 +1,41 @@
 schema_version: 1
-as_of: "2026-05-10"
-invocation_count: 4  # fourth orchestrator invocation in this build cycle (brief v3)
+as_of: "2026-05-26"
+invocation_count: 10  # tenth orchestrator invocation
 
 build_phase: complete
 tier: single_module
-brief_version: 3
-brief_scope: "GitHub issue #74 — docs sweep of README.md, llms-install.md, CHANGELOG.md"
+brief_version: 4
+brief_scope: "GitHub issue #113 — log-only prompt-text collector wired into UserPromptSubmit"
 
 artefact_status:
-  brief: "v3 — current (issue #74 docs sweep)"
+  brief: "v4 — current (issue #113 prompt collector)"
   project_context: "v1 — current (Rust/cargo/single_package)"
-  design_doc: "none — user approved skipping design-doc phase (decision 01KR8QVKDZPJHZ1VNJ5JYJ7ZQ7)"
-  contracts: "none — user approved skipping contract-derivation phase; brief v3 acts as contract"
-  implementation: "complete and verified — leaf handoff 01KR8QGC0HZ3TNMQET4PVT0HP3; verifier handoff 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass"
-  verification: "pass — all 8 ACs satisfied, 287/287 tests pass"
-  tree: "none — single-module tier, no tree needed"
+  design_doc: "v2 — current at kupu/design/v2.md"
+  contracts: "prompt-collector v1 — current at kupu/contracts/prompt-collector/v1.md"
+  implementation: "COMPLETE: handoff 01KSGB5549QPQDQMSH6B8NS077 — 367 tests passing, cargo exit 0"
+  verification: "PASS: verifier handoff 01KSGC4SR7NB7PVTJ75RXXSNKS — all 9 ACs passed"
+  commit: "2cfd194 on branch audit/113-prompt-collector"
+  pr: "PR #119 open against main — https://github.com/taniwhaai/arai/pull/119"
+  tree: "none — single-module tier"
   open_re_raises: 0
 
 last_action: |
-  Emitted action: complete.
-  Verifier 01KR8R6DG5FY12C9PA32ZRFD8M returned overall: pass.
-  All 8 ACs satisfied. 287/287 tests pass.
-  Only README.md, llms-install.md, CHANGELOG.md were touched (confirmed via git status).
-  Two minor brief-labeling inaccuracies noted (5 vs 4 README refs; v0.2.14 vs v0.2.13
-  historical section) — neither affected outcomes.
+  Invoked with reason user_input_received:completion_review.
+  User approved commit + PR.
+  Dispatcher executed: commit 2cfd194 landed (59 files, +8210/-46), branch pushed.
+  PR #119 opened against main.
+  commit_landed event recorded.
+  Emitted: complete action.
 
-next_expected_event: |
-  Dispatcher surfaces build completion to the user.
-  User decides whether to open a PR for the docs sweep changes on branch paths/73-deprecation-shim.
-
-notes: |
-  This build cycle covered brief v3 / GitHub issue #74 (docs sweep).
-  The branch paths/73-deprecation-shim contains both:
-    - The deprecation shim (issue #73, brief v2 build cycle, already complete)
-    - The docs sweep (issue #74, brief v3 build cycle, now complete)
-  Both are ready for PR.
+build_outcome: |
+  BUILD COMPLETE.
+  Issue #113 delivered end-to-end:
+    - src/prompt_collector.rs: new log-only UserPromptSubmit collector
+    - src/hooks.rs: UserPromptSubmit gate + collector call wired in
+    - src/main.rs: mod declaration
+    - tests/prompt_collector_integration.rs: integration tests
+    - tests/prompt_collector_verifier.rs: verifier-authored tests (9 ACs)
+    - CLAUDE.md: architecture section updated (AC8)
+  No new crate dependencies.
+  367 tests passing (322 unit + 45 integration).
+  PR #119 awaiting review/merge.

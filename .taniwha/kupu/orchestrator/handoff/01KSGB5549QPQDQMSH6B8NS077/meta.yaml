@@ -1,0 +1,27 @@
+schema_version: 1
+handoff_id: 01KSGB5549QPQDQMSH6B8NS077
+role: leaf-implementation
+target_node: prompt-collector
+status: returned
+created_at:
+  iso: 2026-05-26T00:00:00.000Z
+inputs:
+- filename: contract.md
+  kind: contract
+  source: kupu/contracts/prompt-collector/v1.md
+- filename: project_context.yaml
+  kind: project_context
+  source: kupu/project_context.yaml
+expected_outputs:
+- implementation_bundle
+metrics:
+  schema_version: 1
+  recorded_at:
+    iso: 2026-05-25T20:09:32.881Z
+    filename: 20260525T200932881Z
+  parse_failure: false
+  tokens_used: 118384
+  wall_clock_ms: 546271
+  tool_call_count: 52
+  model: claude-opus-4-7
+  phase: 1

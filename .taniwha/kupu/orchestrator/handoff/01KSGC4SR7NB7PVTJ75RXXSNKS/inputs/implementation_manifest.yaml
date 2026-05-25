@@ -1,0 +1,46 @@
+handoff: 01KSGB5549QPQDQMSH6B8NS077
+module: prompt-collector
+contract_version: 1
+
+cargo_test_exit_code: 0
+total_tests_passed: 358   # 322 unit + 36 integration (compliance, hooks_safety,
+                           # intent_severity, mcp_check_action, parser_coverage,
+                           # prompt_collector_integration x3, verifier x2)
+
+files_created_or_modified:
+  - path: src/prompt_collector.rs
+    status: created
+    description: >
+      Pure computation module — PromptRule, PromptMatchReceipt, SEED_RULES
+      constant, seed_rules() loader, collect_prompt_matches() function,
+      unit tests for AC1/AC3/AC6/AC7 and all required correctness cases.
+
+  - path: src/hooks.rs
+    status: modified
+    description: >
+      Added `use crate::prompt_collector;` import.  Added prompt_event_timestamp()
+      helper (local UTC formatter, no new crates).  Added collector call block in
+      handle_stdin_impl immediately after `config::Config::load()`, gated on
+      event == "UserPromptSubmit", before the db_path.exists() gate — so the
+      collector fires even on fresh projects with no DB.  Removed the duplicate
+      collector block that was erroneously placed inside `if result.is_prompt_summary`.
+
+  - path: src/main.rs
+    status: modified
+    description: >
+      Added `mod prompt_collector;` declaration to the module list.
+
+  - path: tests/prompt_collector_integration.rs
+    status: created
+    description: >
+      Integration tests for AC2, AC4, AC5.  Drives the live arai binary with
+      temp project/arai_base dirs.  AC2: UserPromptSubmit with matching prompt
+      writes PromptMatch audit entry.  AC4: fixture JSONL + arai audit --event=PromptMatch
+      filter returns only PromptMatch lines.  AC5: hook stdout is empty (not mutated)
+      while collector still writes audit entries.
+
+  - path: CLAUDE.md
+    status: modified
+    description: >
+      Added prompt_collector.rs to the Architecture module listing and a new
+      "Prompt-collector module" section with 4 observation-only sentences (AC8).

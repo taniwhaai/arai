@@ -1,0 +1,10 @@
+event_id: 01KSGBASS8AGC9DDS73WAVGYWW
+kind: contract_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-25T19:56:01.704Z
+  filename: 20260525T195601704Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"module": "prompt-collector", "version": 1, "parent_design_version": 2, "source_handoff": "01KSGAM39G4C62XDNPW8M17E7V", "promoted_to": "kupu/contracts/prompt-collector/v1.md"}'
