@@ -56,5 +56,6 @@ Once the Grok TUI integration is merged and installed:
 - The `AGENTS.md` file itself should be treated as a first-class instruction file for Grok users of this repo.
 - Do not bypass Arai hooks when they are active in this environment (e.g., do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
 - When the Grok TUI integration is active, prefer using native `.grok/hooks/` registration over relying solely on the Claude compatibility layer for this project.
+- When using `arai why` or `arai audit` during development, treat the output as authoritative for understanding why a rule fired.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
