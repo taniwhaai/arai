@@ -215,7 +215,9 @@ mod tests {
         // prompt_hash: exactly 64 lowercase hex chars
         assert_eq!(r.prompt_hash.len(), 64);
         assert!(
-            r.prompt_hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+            r.prompt_hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
             "prompt_hash must be lowercase hex: {:?}",
             r.prompt_hash
         );
@@ -238,7 +240,10 @@ mod tests {
     fn empty_rules_list_produces_no_receipts() {
         let (receipts, skipped) =
             collect_prompt_matches("some prompt text", &[], "slug", "2026-01-01T00:00:00Z");
-        assert!(receipts.is_empty(), "expected empty receipts for empty rules");
+        assert!(
+            receipts.is_empty(),
+            "expected empty receipts for empty rules"
+        );
         assert_eq!(skipped, 0);
     }
 
@@ -255,8 +260,12 @@ mod tests {
     #[test]
     fn single_non_matching_rule_produces_no_receipts() {
         let rules = vec![one_rule(r"deploy", "deploy")];
-        let (receipts, skipped) =
-            collect_prompt_matches("nothing relevant here", &rules, "slug", "2026-01-01T00:00:00Z");
+        let (receipts, skipped) = collect_prompt_matches(
+            "nothing relevant here",
+            &rules,
+            "slug",
+            "2026-01-01T00:00:00Z",
+        );
         assert_eq!(skipped, 0);
         assert!(receipts.is_empty());
     }
@@ -269,8 +278,12 @@ mod tests {
             one_rule(r"gamma", "gamma"),
         ];
         // Only alpha and gamma match.
-        let (receipts, skipped) =
-            collect_prompt_matches("alpha and gamma here", &rules, "slug", "2026-01-01T00:00:00Z");
+        let (receipts, skipped) = collect_prompt_matches(
+            "alpha and gamma here",
+            &rules,
+            "slug",
+            "2026-01-01T00:00:00Z",
+        );
         assert_eq!(skipped, 0);
         assert_eq!(receipts.len(), 2);
         // Order must mirror input rule order: alpha first, then gamma.
@@ -313,10 +326,7 @@ mod tests {
 
     #[test]
     fn invalid_regex_is_skipped_without_error_and_increments_skipped_count() {
-        let rules = vec![
-            one_rule(r"[invalid", "bad"),
-            one_rule(r"deploy", "deploy"),
-        ];
+        let rules = vec![one_rule(r"[invalid", "bad"), one_rule(r"deploy", "deploy")];
         let (receipts, skipped) = collect_prompt_matches(
             "please deploy to staging",
             &rules,
@@ -380,7 +390,9 @@ mod tests {
         // The comment above SEED_RULES must reference that these are starter
         // guesses / not policy.
         assert!(
-            source.contains("NOT policy") || source.contains("not policy") || source.contains("not policy decisions"),
+            source.contains("NOT policy")
+                || source.contains("not policy")
+                || source.contains("not policy decisions"),
             "SEED_RULES must have a comment stating labels are not policy decisions"
         );
     }

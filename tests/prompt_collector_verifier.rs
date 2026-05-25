@@ -173,8 +173,11 @@ fn verifier_ac2_userpromptsubmit_calls_collector() {
     let _ = pipe_hook(&payload, &project, &arai_base);
 
     // Audit log must contain at least one PromptMatch entry.
-    let (out, err, code) =
-        run_arai(&["audit", "--event=PromptMatch", "--json", "--limit=50"], &project, &arai_base);
+    let (out, err, code) = run_arai(
+        &["audit", "--event=PromptMatch", "--json", "--limit=50"],
+        &project,
+        &arai_base,
+    );
     assert_eq!(code, 0, "arai audit failed: {err}");
 
     let entries: Vec<Value> = out
@@ -220,8 +223,11 @@ fn verifier_ac3_receipt_shape_is_exact() {
     let payload = user_prompt_payload(prompt, "verifier-ac3-session");
     let _ = pipe_hook(&payload, &project, &arai_base);
 
-    let (out, err, code) =
-        run_arai(&["audit", "--event=PromptMatch", "--json", "--limit=50"], &project, &arai_base);
+    let (out, err, code) = run_arai(
+        &["audit", "--event=PromptMatch", "--json", "--limit=50"],
+        &project,
+        &arai_base,
+    );
     assert_eq!(code, 0, "arai audit --event=PromptMatch failed: {err}");
 
     let entries: Vec<Value> = out
@@ -386,11 +392,7 @@ fn verifier_ac4_audit_event_filter_returns_only_prompt_match() {
 
     // Step 5: confirm the full log contains the Compliance entry (validates
     // that the filter is actually exercising non-trivial filtering).
-    let (all_out, _, _) = run_arai(
-        &["audit", "--json", "--limit=500"],
-        &project,
-        &arai_base,
-    );
+    let (all_out, _, _) = run_arai(&["audit", "--json", "--limit=500"], &project, &arai_base);
     let all: Vec<Value> = all_out
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -599,7 +601,11 @@ fn verifier_ac8_claude_md_has_prompt_collector_note() {
     // Use '. ' or '.\n' or '."' patterns for a more reliable count.
     let sentence_count = snippet.matches(". ").count()
         + snippet.matches(".\n").count()
-        + if snippet.trim_end().ends_with('.') { 1 } else { 0 };
+        + if snippet.trim_end().ends_with('.') {
+            1
+        } else {
+            0
+        };
 
     assert!(
         sentence_count >= 2,

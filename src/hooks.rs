@@ -684,10 +684,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     // The hook response (stdout) is built separately below and is NOT mutated
     // here.
     if event == "UserPromptSubmit" {
-        let prompt_text = hook
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let prompt_text = hook.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
         if !prompt_text.is_empty() {
             let ts = prompt_event_timestamp();
             let slug = cfg.project_slug();

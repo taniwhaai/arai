@@ -26,11 +26,8 @@ fn fresh_env(label: &str) -> (PathBuf, PathBuf) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!(
-        "arai_pc_{label}_{}_{}",
-        std::process::id(),
-        nanos,
-    ));
+    let root =
+        std::env::temp_dir().join(format!("arai_pc_{label}_{}_{}", std::process::id(), nanos,));
     let project = root.join("project");
     let arai_base = root.join("arai_base");
     std::fs::create_dir_all(project.join(".git")).expect("create project");
@@ -103,8 +100,7 @@ fn read_prompt_match_entries(project: &Path, arai_base: &Path) -> Vec<Value> {
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
-            serde_json::from_str::<Value>(l)
-                .unwrap_or_else(|e| panic!("non-JSON line: {e}\n{l}"))
+            serde_json::from_str::<Value>(l).unwrap_or_else(|e| panic!("non-JSON line: {e}\n{l}"))
         })
         .collect()
 }
@@ -160,7 +156,9 @@ fn ac2_userpromptsubmit_handler_invokes_collector_and_writes_audit_entry() {
         "prompt_hash must be 64 chars: {prompt_hash:?}"
     );
     assert!(
-        prompt_hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+        prompt_hash
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
         "prompt_hash must be lowercase hex: {prompt_hash:?}"
     );
 
@@ -277,19 +275,15 @@ fn ac4_audit_event_filter_shows_only_prompt_match_lines() {
 
     // Step 5: confirm the full audit log DOES contain a non-PromptMatch entry
     // (validates the fixture write and that the filter is actually doing work).
-    let (all_stdout, _, _) = run(
-        &["audit", "--json", "--limit=200"],
-        &project,
-        &arai_base,
-    );
+    let (all_stdout, _, _) = run(&["audit", "--json", "--limit=200"], &project, &arai_base);
     let all_entries: Vec<Value> = all_stdout
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .collect();
-    let has_non_prompt_match = all_entries.iter().any(|e| {
-        e.get("event").and_then(|v| v.as_str()).unwrap_or("") != "PromptMatch"
-    });
+    let has_non_prompt_match = all_entries
+        .iter()
+        .any(|e| e.get("event").and_then(|v| v.as_str()).unwrap_or("") != "PromptMatch");
     assert!(
         has_non_prompt_match,
         "audit log should contain non-PromptMatch entries after fixture write; \
@@ -346,12 +340,14 @@ fn ac5_collector_does_not_mutate_hook_response_bytes() {
     // When no domain rules are loaded, the hook response must be empty.
     // The collector must not add anything to stdout.
     assert_eq!(
-        response_bytes_1, b"",
+        response_bytes_1,
+        b"",
         "hook response must be empty (no domain rules): got {:?}",
         String::from_utf8_lossy(&response_bytes_1)
     );
     assert_eq!(
-        response_bytes_2, b"",
+        response_bytes_2,
+        b"",
         "hook response must be empty on second call too: got {:?}",
         String::from_utf8_lossy(&response_bytes_2)
     );

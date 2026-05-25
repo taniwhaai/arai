@@ -1,8 +1,8 @@
 schema_version: 1
 as_of: "2026-05-26"
-invocation_count: 9  # ninth orchestrator invocation
+invocation_count: 10  # tenth orchestrator invocation
 
-build_phase: awaiting-user-commit-approval
+build_phase: complete
 tier: single_module
 brief_version: 4
 brief_scope: "GitHub issue #113 — log-only prompt-text collector wired into UserPromptSubmit"
@@ -14,55 +14,28 @@ artefact_status:
   contracts: "prompt-collector v1 — current at kupu/contracts/prompt-collector/v1.md"
   implementation: "COMPLETE: handoff 01KSGB5549QPQDQMSH6B8NS077 — 367 tests passing, cargo exit 0"
   verification: "PASS: verifier handoff 01KSGC4SR7NB7PVTJ75RXXSNKS — all 9 ACs passed"
+  commit: "2cfd194 on branch audit/113-prompt-collector"
+  pr: "PR #119 open against main — https://github.com/taniwhaai/arai/pull/119"
   tree: "none — single-module tier"
   open_re_raises: 0
 
 last_action: |
-  Invoked with reason subagent_returned:verifier:01KSGC4SR7NB7PVTJ75RXXSNKS.
-  Verifier report confirmed overall: pass.
-    - All 9 ACs (AC1-AC9) passed
-    - cargo_test_exit_code: 0
-    - 367 tests total (322 unit + 45 integration, includes 9 verifier-authored tests)
-    - No findings; no re-raise
-  Emitted:
-    - record_decision (verification pass, prompt-collector v1)
-    - surface_to_user (completion_review) asking user to approve commit + PR
+  Invoked with reason user_input_received:completion_review.
+  User approved commit + PR.
+  Dispatcher executed: commit 2cfd194 landed (59 files, +8210/-46), branch pushed.
+  PR #119 opened against main.
+  commit_landed event recorded.
+  Emitted: complete action.
 
-next_expected_event: |
-  RESUME HERE:
-    - User approves commit + PR (or holds for review)
-    - If approved: dispatcher runs
-        git add -A
-        git commit -m "feat: add prompt-collector module for UserPromptSubmit observation (#113)"
-        gh pr create --base main --title "feat: prompt-collector — log-only UserPromptSubmit observation (#113)"
-    - After PR opened: orchestrator emits complete action
-
-cascade_remaining:
-  - promote contract → done
-  - leaf-implementation → done (367 tests passing)
-  - verifier pass (AC1-AC9, cargo test) → DONE
-  - commit + PR on branch audit/113-prompt-collector ← NEXT (awaiting user approval)
-
-notes: |
-  Contract v1 key decisions (already settled — do NOT re-open):
-  - Two-value return: (Vec<PromptMatchReceipt>, usize) — receipts + skipped_count
-  - did_any_tool_call_follow always null at collection time (PostToolUse caller's job)
-  - prompt_hash = SHA-256 hex lowercase of full, untruncated prompt_text
-  - Seed ruleset: static slice compiled into binary; labels are starter guesses not policy
-  - Pattern matching: substring/full-text; not implicitly anchored; regex only
-  - Concurrency: safe (no mutable shared state)
-  - Dependencies: existing regex + SHA-256 crates only; no new crate deps
-
-  Files changed in this build cycle:
-    - src/prompt_collector.rs (new module)
-    - src/hooks.rs (UserPromptSubmit gate + collector call)
-    - src/main.rs (mod declaration)
-    - tests/prompt_collector_integration.rs (integration tests)
-    - tests/prompt_collector_verifier.rs (verifier-authored tests, 9 ACs)
-    - CLAUDE.md (architecture section update per AC8)
-
-  Branch: audit/113-prompt-collector (already checked out).
-  Target: main branch via PR. No direct push to main.
-
-  Prior contracts that must NOT be amended this cycle:
-  - base-directory-resolution v1 (stable, cycle #73)
+build_outcome: |
+  BUILD COMPLETE.
+  Issue #113 delivered end-to-end:
+    - src/prompt_collector.rs: new log-only UserPromptSubmit collector
+    - src/hooks.rs: UserPromptSubmit gate + collector call wired in
+    - src/main.rs: mod declaration
+    - tests/prompt_collector_integration.rs: integration tests
+    - tests/prompt_collector_verifier.rs: verifier-authored tests (9 ACs)
+    - CLAUDE.md: architecture section updated (AC8)
+  No new crate dependencies.
+  367 tests passing (322 unit + 45 integration).
+  PR #119 awaiting review/merge.
