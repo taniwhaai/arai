@@ -55,8 +55,12 @@ Arai now has working first-class support for the Grok Build TUI (supergrok), in 
 ## Next (out of scope for this PR)
 
 - More sophisticated parser improvements for agent-frequent rule patterns.
-- Dogfooding: adding a small set of high-value guardrails to the Arai repo itself.
+- Further dogfooding of the integration on this repo (we've already started with a strong `AGENTS.md` containing real, enforceable rules for AI agents).
 - Optional MCP/skill surface for arai commands.
+
+## Current Status
+
+Core implementation + tests + benchmarks + meaningful dogfooding via `AGENTS.md` are complete on the branch. Ready for review and merge of the first-class Grok TUI support.
 
 Refs: #122
 
