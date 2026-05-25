@@ -57,6 +57,6 @@ Once the Grok TUI integration is merged and installed:
 - Do not bypass Arai hooks when they are active in this environment (e.g., do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
 - When the Grok TUI integration is active, prefer using native `.grok/hooks/` registration over relying solely on the Claude compatibility layer for this project.
 - When using `arai why` or `arai audit` during development, treat the output as authoritative for understanding why a rule fired.
-- After landing changes to the Grok TUI integration, run `arai init` (or the equivalent) locally with the Grok TUI to dogfood the new paths before relying on them in CI or for others.
+- After landing changes to the Grok TUI integration, run `arai init` locally in the Grok TUI and verify that the new hooks are active and the rules in this file are being respected.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
