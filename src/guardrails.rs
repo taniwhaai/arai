@@ -7,6 +7,49 @@ use std::sync::OnceLock;
 /// Tools that never need guardrails — fast exit, no DB query.
 const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
 
+/// Canonical internal tool names used throughout Arai's matching and intent logic.
+/// These are the names that appear in SKIP_TOOLS, extract_terms dispatch, etc.
+/// This list serves as the single source of truth for tool names coming from
+/// any supported coding agent hook (Claude Code, Grok TUI, etc.).
+pub const CANONICAL_TOOLS: &[&str] = &[
+    "Bash", "Edit", "Write", "Read", "Glob", "Agent", "ToolSearch", "Grep", "NotebookEdit", "MultiEdit",
+];
+
+/// Normalizes raw `tool_name` values from any supported coding agent's hook payload
+/// into Arai's canonical internal names.
+///
+/// This is the single place that knows about provider-specific naming (e.g. Grok's
+/// `run_terminal_cmd` vs Claude's `Bash`). Call this immediately after reading
+/// `tool_name` from JSON, before passing the value anywhere else.
+///
+/// Designed for minimal impact: all existing match arms, `.contains()`, and `==`
+/// checks continue to work unchanged after normalization.
+pub fn normalize_tool_name(raw: &str) -> String {
+    match raw {
+        // Grok TUI / supergrok names (from docs and hook samples)
+        "run_terminal_cmd" | "bash" => "Bash".to_string(),
+        "search_replace" => "Edit".to_string(),
+        "read_file" => "Read".to_string(),
+        "list_dir" => "Glob".to_string(),
+        "grep_search" => "Grep".to_string(),
+
+        // Claude Code + existing canonical names (pass-through for idempotency)
+        "Bash" | "Edit" | "Write" | "Read" | "Glob" | "Agent" | "ToolSearch" | "Grep"
+        | "NotebookEdit" | "MultiEdit" => raw.to_string(),
+
+        // Future-proof fallback for common variants
+        other => {
+            let lower = other.to_ascii_lowercase();
+            match lower.as_str() {
+                "write" | "notebookedit" | "notebook_edit" => "Write".to_string(),
+                "multiedit" | "multi_edit" => "MultiEdit".to_string(),
+                "tool_search" | "toolsearch" => "ToolSearch".to_string(),
+                _ => other.to_string(),
+            }
+        }
+    }
+}
+
 /// Noise words to skip when extracting terms from Bash commands.
 const NOISE_WORDS: &[&str] = &[
     "run", "sudo", "cd", "echo", "python", "bash", "sh", "cat", "head", "tail", "ls", "mkdir",

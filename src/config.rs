@@ -285,6 +285,17 @@ impl Config {
     pub fn claude_settings_path(&self) -> PathBuf {
         self.project_root.join(".claude").join("settings.json")
     }
+
+    /// Path to the project's .grok/hooks directory (for native Grok TUI hook registration).
+    /// We prefer writing arai.json here when the user has a .grok/ project layout.
+    pub fn grok_hooks_dir(&self) -> PathBuf {
+        self.project_root.join(".grok").join("hooks")
+    }
+
+    /// Path to the global Grok hooks directory (~/.grok/hooks).
+    pub fn grok_global_hooks_dir(&self) -> PathBuf {
+        self.home_dir.join(".grok").join("hooks")
+    }
 }
 
 fn find_project_root() -> Result<PathBuf, String> {

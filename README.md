@@ -15,11 +15,11 @@ cd your-project
 arai init
 ```
 
-That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up Claude Code hooks so guardrails fire at the right moment.
+That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up hooks (Claude Code + native Grok TUI) so guardrails fire at the right moment.
 
 ## What It Does
 
-When Claude Code is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
+When your AI coding assistant (Claude Code or Grok TUI) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
 
 ```
 You: "Create a new database migration"
@@ -50,8 +50,9 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | File | Tool | Enforcement |
 |------|------|-------------|
 | `CLAUDE.md` | Claude Code | Hooks (block + advise) |
+| `AGENTS.md` / `Agents.md` | Grok TUI (native) | Hooks (block + advise) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
-| `~/.claude/projects/*/memory/*.md` | Claude Code memory | Hooks (block + advise) |
+| `~/.grok/` AGENTS.* files | Grok TUI (global) | Hooks (block + advise) |
 | `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |

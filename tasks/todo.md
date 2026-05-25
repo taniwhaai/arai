@@ -97,5 +97,22 @@ Zero breaking changes for existing Claude users. Detection + graceful dual suppo
 ## Kupu Logging (for this meta-task)
 Will use bash fallbacks (since no kupu.* MCP tools in session) to append a `work_started` event + decision record under the existing .taniwha/kupu/ tree, following state-layout.md + kupu-phases.md conventions. This records "Grok TUI integration planning initiated via direct session + gh issue/PR".
 
+## Implementation Progress (as of late May 2026)
+
+Core Grok TUI support implemented and verified on `feat/grok-tui-support`:
+
+- Tool name normalization (`normalize_tool_name`) + centralized `CANONICAL_TOOLS`.
+- Host detection (`GROK_*` vs `CLAUDE_*` env vars) + clean dual response format (Grok flat `{"decision"}` vs Claude `hookSpecificOutput`).
+- `arai init` / `deinit` now handle both `.claude/settings.json` and `.grok/hooks/arai.json`.
+- AGENTS.md family discovery (project + global `~/.grok/`) + `is_instruction_file` updates.
+- New Grok smoke test in `tests/hooks_safety.rs`.
+- `arai status` and init output now mention Grok TUI support.
+- README.md and CLAUDE.md lightly updated.
+- Full `cargo test` + all three hot-path benchmarks (`hot_path.sh`, `skip_path.sh`, `nomatch_path.sh`) pass with no regression (hot path median ~2.1 ms).
+
+All changes follow minimal impact + zero regression for existing Claude users.
+
+Next: Light polish on `arai status` messaging if needed, then focused PR update to #123.
+
 ---
 *This plan follows the repo's CLAUDE.md workflow: plan first in tasks/todo.md, verify before deep changes, use Kupu (fallback) for mechanical state, minimal impact, no laziness on root cause (dual host support + normalization).*

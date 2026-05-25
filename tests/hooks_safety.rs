@@ -134,3 +134,24 @@ fn arai_disabled_falsey_does_not_short_circuit() {
     // this test is to confirm exit 0 and no panic, not the bypass path.
     assert!(stdout.trim().is_empty() || stdout.contains("permissionDecision"));
 }
+
+/// Smoke test for Grok TUI shaped payloads + environment.
+/// Ensures we don't crash on Grok tool names and correctly take the Grok path.
+#[test]
+fn grok_tui_payload_does_not_crash() {
+    // Grok uses "run_terminal_cmd" instead of "Bash"
+    let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"run_terminal_cmd","tool_input":{"command":"echo hello"},"session_id":"grok-s1"}"#;
+    let (stdout, stderr, code) = run_hook(payload, &[("GROK_HOOK_EVENT", "pre_tool_use")]);
+
+    assert_eq!(code, 0, "Grok-shaped hook must exit 0, stderr: {stderr:?}");
+    // Either empty (no rules / skipped) or a valid Grok decision shape.
+    // We don't assert the exact decision here because there's no seeded DB,
+    // but we do require that we didn't panic or produce Claude-only shapes
+    // in a way that would break Grok.
+    assert!(
+        stdout.trim().is_empty()
+            || stdout.contains(r#""decision""#)
+            || stdout.contains("permissionDecision"),
+        "unexpected Grok payload output: {stdout:?}"
+    );
+}

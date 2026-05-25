@@ -72,6 +72,15 @@ pub fn run() -> Result<(), String> {
     inject_hooks(&cfg)?;
     println!("    \u{2713} .claude/settings.json updated");
 
+    // Also register for native Grok TUI support (if possible).
+    if let Err(e) = inject_grok_hooks(&cfg) {
+        // Non-fatal for now — many users will still get value via the
+        // .claude/settings.json compatibility layer that Grok loads.
+        eprintln!("    \u{26a0} Grok native hook registration skipped: {e}");
+    } else {
+        println!("    \u{2713} .grok/hooks/arai.json updated (native Grok TUI)");
+    }
+
     // Track init event + flush queued telemetry
     let enrichment = if model_dir.join("model.onnx").exists() {
         "model"
@@ -87,7 +96,7 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
-    println!("\n  Done. Arai is now watching your rules.");
+    println!("\n  Done. Arai is now watching your rules (Claude + Grok TUI).");
     Ok(())
 }
 
@@ -138,6 +147,15 @@ pub fn deinit() -> Result<(), String> {
         println!("  Removed {removed} Arai hook(s) from .claude/settings.json");
     } else {
         println!("  No Arai hooks found in .claude/settings.json");
+    }
+
+    // Best-effort cleanup of native Grok registration
+    let grok_hook_file = cfg.grok_hooks_dir().join("arai.json");
+    if grok_hook_file.exists() {
+        match std::fs::remove_file(&grok_hook_file) {
+            Ok(_) => println!("  Removed Arai native hook file from .grok/hooks/"),
+            Err(e) => eprintln!("  Warning: could not remove Grok hook file: {e}"),
+        }
     }
 
     println!("  Arai is no longer watching this project.");
@@ -213,6 +231,67 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
         .map_err(|e| format!("Failed to serialize settings: {e}"))?;
     std::fs::write(&settings_path, output)
         .map_err(|e| format!("Failed to write settings.json: {e}"))?;
+
+    Ok(())
+}
+
+/// Register Arai hooks into the Grok TUI native location (.grok/hooks/arai.json).
+/// This is the preferred path for users who primarily use the Grok TUI.
+fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
+    let hooks_dir = cfg.grok_hooks_dir();
+
+    // Ensure the directory exists
+    std::fs::create_dir_all(&hooks_dir)
+        .map_err(|e| format!("Failed to create .grok/hooks directory: {e}"))?;
+
+    let hook_file = hooks_dir.join("arai.json");
+
+    // Build the same hook registrations we use for Claude.
+    let mut grok_hooks: Value = serde_json::json!({ "hooks": {} });
+    let hooks_obj = grok_hooks
+        .get_mut("hooks")
+        .and_then(|v| v.as_object_mut())
+        .ok_or("Failed to create hooks object")?;
+
+    for (event, matcher) in ARAI_HOOK_REGISTRATIONS {
+        let event_arr = hooks_obj
+            .entry(event.to_string())
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or(format!("{event} is not an array"))?;
+
+        // Only add if not already present (idempotent)
+        let arai_exists = event_arr.iter().any(|entry| {
+            if let Some(hooks_arr) = entry.get("hooks").and_then(|v| v.as_array()) {
+                hooks_arr.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|v| v.as_str())
+                        .map(|cmd| cmd.contains("arai"))
+                        .unwrap_or(false)
+                })
+            } else {
+                false
+            }
+        });
+
+        if !arai_exists {
+            event_arr.push(serde_json::json!({
+                "matcher": matcher,
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "arai guardrails --match-stdin",
+                        "timeout": 3
+                    }
+                ]
+            }));
+        }
+    }
+
+    let output = serde_json::to_string_pretty(&grok_hooks)
+        .map_err(|e| format!("Failed to serialize Grok hook file: {e}"))?;
+    std::fs::write(&hook_file, output)
+        .map_err(|e| format!("Failed to write .grok/hooks/arai.json: {e}"))?;
 
     Ok(())
 }
