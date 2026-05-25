@@ -36,7 +36,7 @@ Arai now has working first-class support for the Grok Build TUI (supergrok), in 
   - `arai status` now has a clean "Integration" section showing Claude + Grok TUI support.
   - Init success message improved.
   - README.md and CLAUDE.md updated with accurate language about Grok hook support (both now first-class for blocking).
-  - Created real `AGENTS.md` at project root with high-value, enforceable rules for AI agents working on this codebase (Taniwha discipline, mandatory plan mode, protecting `.taniwha/` state, subagent patterns, etc.). This is real dogfooding of the Grok TUI integration — the file is written so that once Arai is installed, an AI agent will actually be guarded by these rules.
+  - Created real `AGENTS.md` at project root with high-value, enforceable rules for AI agents working on this codebase (Taniwha discipline, mandatory plan mode, protecting `.taniwha/` state, subagent patterns, changes affecting guardrails, etc.). This is real dogfooding of the Grok TUI integration — the file is written so that once Arai is installed, an AI agent will actually be guarded by these rules.
 
 ## Design Principles Followed
 
