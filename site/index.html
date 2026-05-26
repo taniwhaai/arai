@@ -135,6 +135,39 @@
         }
         .feature p { font-size: 0.9rem; color: var(--text-secondary); }
 
+        /* Supported Environments */
+        .supported {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+            background: var(--bg-light);
+        }
+        .supported h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 0.75rem;
+        }
+        .supported-intro {
+            text-align: center; color: var(--text-secondary);
+            max-width: 620px; margin: 0 auto 1.5rem; font-size: 0.95rem;
+        }
+        .supported-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem 1.25rem; max-width: 680px; margin: 0 auto;
+        }
+        .supported-item {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.65rem 0.9rem;
+            font-size: 0.85rem;
+            line-height: 1.35;
+        }
+        .supported-item strong {
+            display: block; color: var(--primary); font-weight: 600; margin-bottom: 0.15rem;
+        }
+        .supported-item span {
+            color: var(--text-secondary);
+        }
+
         /* Install methods */
         .install-methods {
             padding: 4rem 0;
@@ -230,6 +263,7 @@
             .feature-grid { grid-template-columns: 1fr; }
             .methods-grid { grid-template-columns: 1fr; }
             .install-box { font-size: 0.8rem; }
+            .supported-grid { grid-template-columns: 1fr; }
         }
     </style>
     <script>
@@ -255,11 +289,36 @@
 <section class="hero">
     <div class="container">
         <h1>Instruction files that actually block.</h1>
-        <p>Enforce your AI coding assistant instruction files via native hooks. Rules marked <code>never</code> can deny the tool call. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
+        <p>Enforce your AI coding assistant instruction files via hooks. Claude Code and Grok TUI currently provide the strongest support, including the ability to block tool calls for rules marked <code>never</code>. Other tools receive advisory enforcement via MCP. Every firing is audited and correlated with what the model actually did. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
             <span class="copy-hint">click to copy</span>
+        </div>
+    </div>
+</section>
+
+<section class="supported">
+    <div class="container">
+        <h2>Supported Environments</h2>
+        <p class="supported-intro">Enforcement strength depends on the assistant's integration surface:</p>
+        <div class="supported-grid">
+            <div class="supported-item">
+                <strong>Claude Code</strong>
+                <span>Native PreToolUse hooks — full blocking support</span>
+            </div>
+            <div class="supported-item">
+                <strong>Grok TUI</strong>
+                <span>Native hooks — full blocking support</span>
+            </div>
+            <div class="supported-item">
+                <strong>Cursor, Windsurf, Cline &amp; others</strong>
+                <span>MCP integration — strong advisory enforcement</span>
+            </div>
+            <div class="supported-item">
+                <strong>GitHub Copilot</strong>
+                <span>Instruction file ingestion only</span>
+            </div>
         </div>
     </div>
 </section>
@@ -313,7 +372,7 @@
             </div>
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in assistants that expose a hook surface. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Advisory enforcement is available for other tools via MCP.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok TUI (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule rollout</h3>
@@ -325,7 +384,7 @@
             </div>
             <div class="feature">
                 <h3>Derivation trace</h3>
-                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
+                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[CLAUDE.md:42 layer-1]</code> or <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
             </div>
             <div class="feature">
                 <h3>Explain before you commit</h3>
@@ -385,7 +444,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call. <code>arai_recent_decisions</code> lets the agent self-check what it was just denied for &mdash; no more looping on the same refused action. MCP is also how Cursor and Windsurf integrate: same rule set, advisory only.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
