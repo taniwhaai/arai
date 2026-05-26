@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-05-26
+
+### Added
+
+- First-class Grok TUI (supergrok) support (core)
+
+### Documentation
+
+- Improve Grok TUI visibility in README, CLAUDE.md, and status output
+- Add AGENTS.md with high-value guardrails for AI agents
+- Strengthen AGENTS.md with Arai dogfooding section + update PR description
+- Polish PR description with dogfooding status and next steps
+- Add guardrail-change rule to AGENTS.md + PR description update
+- Add Grok TUI Integration section to AGENTS.md
+- Add rule against casually disabling Arai in AGENTS.md + PR desc update
+- Add preference for native Grok hooks registration in AGENTS.md
+- Add rule about using arai why/audit output as authoritative in AGENTS.md
+- Add dogfooding rule for the new Grok TUI integration in AGENTS.md
+- Improve testing instructions in PR description for Grok TUI users
+- Tighten dogfooding rule in AGENTS.md after plan approval
+- Add self-enforcement rule in AGENTS.md
+- Add continuous dogfooding improvement rule in AGENTS.md
+- Update PR description to reflect latest AGENTS.md strengthening
+- Add anti-regression rule for Grok TUI integration in AGENTS.md
+- Add current branch state summary to PR description
+- Add rule for regularly verifying the Grok TUI integration health in AGENTS.md
+- Add high-context-pressure rule in AGENTS.md
+- Add rule about treating Arai firings as feedback in AGENTS.md
+- Add rule about using the integration for real-time self-correction in AGENTS.md
+- Add rule about using the integration for real-time self-correction during high-pressure sessions in AGENTS.md
+- Add cross-path quality rule in AGENTS.md
+
+### Miscellaneous
+
+- Minor CLI about text update for multi-assistant reality
+
+### Style
+
+- Apply cargo fmt to Grok TUI integration changes
+
+
 ## [0.2.23] - 2026-05-25
 
 ### Added
