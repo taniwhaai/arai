@@ -708,6 +708,42 @@ docker run --rm -i -v "$(pwd)/.taniwha/arai:/home/arai/.taniwha/arai" arai
 docker compose run --rm arai
 ```
 
+### Verifying release binaries with cosign
+
+Every release binary is signed in CI using [cosign](https://docs.sigstore.dev/cosign/overview/)
+keyless signing via the GitHub OIDC token. The signing certificate is
+issued by Fulcio and bound to this repo's release workflow, so verifiers
+pin to the workflow identity instead of a long-lived public key. No
+private keys, no key rotation.
+
+The `install.sh` and `npm` paths verify SHA-256 checksums by default,
+which is enough to catch a corrupted download but not a substituted one.
+For higher-assurance environments, verify the cosign signature before
+running the binary:
+
+```bash
+# 1. Download the binary, its .cosign.bundle, and (optionally) checksums.txt
+VERSION=v0.2.24
+FILE=arai-linux-x86_64
+curl -fL -o "$FILE"               "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
+curl -fL -o "${FILE}.cosign.bundle" "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}.cosign.bundle"
+
+# 2. Verify the signature is bound to this repo's release workflow
+cosign verify-blob \
+  --bundle "${FILE}.cosign.bundle" \
+  --certificate-identity-regexp '^https://github\.com/taniwhaai/arai/\.github/workflows/ci\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$FILE"
+```
+
+A successful verification prints `Verified OK` and exits 0. Failure
+exits non-zero — do not run the binary.
+
+The `--certificate-identity-regexp` and `--certificate-oidc-issuer`
+flags are the load-bearing ones: they assert that the signing
+certificate was issued to *this* repo's CI workflow on a tag push, not
+to some attacker's fork. Loosening either flag defeats the point.
+
 ## Performance
 
 | Operation | Median | p95 |
