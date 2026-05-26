@@ -46,6 +46,31 @@ fn is_disabled_via_env() -> bool {
     }
 }
 
+/// Supported coding agent hosts that can invoke Arai's hook handler.
+/// Detection is best-effort via environment variables injected by the host
+/// (Grok TUI sets GROK_* vars; Claude Code sets CLAUDE_* vars).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Host {
+    Claude,
+    Grok,
+    Unknown,
+}
+
+fn detect_host(hook: &Value) -> Host {
+    // Grok TUI (supergrok) injects these on hook invocations.
+    if std::env::var("GROK_HOOK_EVENT").is_ok() || std::env::var("GROK_SESSION_ID").is_ok() {
+        return Host::Grok;
+    }
+    // Claude Code compatibility / native path.
+    if std::env::var("CLAUDE_PROJECT_DIR").is_ok()
+        || hook.get("hook_event_name").is_some()
+        || std::env::var("CLAUDE_PLUGIN_ROOT").is_ok()
+    {
+        return Host::Claude;
+    }
+    Host::Unknown
+}
+
 /// Allow-list for hook event names that are safe to propagate from the
 /// inner JSON to the outer fail-closed gate's `event_hint`.  Any other
 /// string (typo, spoofed input, future-event-we-don't-know-yet) leaves
@@ -89,9 +114,17 @@ pub(crate) fn is_instruction_file(path: &str) -> bool {
         .and_then(|s| s.to_str())
         .unwrap_or("");
     // Exact basenames Arai's discovery layer picks up.
+    // Includes both Claude-centric and Grok-native (AGENTS.md family) files.
     if matches!(
         file_name,
-        "CLAUDE.md" | ".cursorrules" | ".windsurfrules" | "copilot-instructions.md"
+        "CLAUDE.md"
+            | "AGENTS.md"
+            | "Agents.md"
+            | "AGENT.md"
+            | "agents.md"
+            | ".cursorrules"
+            | ".windsurfrules"
+            | "copilot-instructions.md"
     ) {
         return true;
     }
@@ -198,11 +231,8 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse")
         .to_string();
-    let tool_name = hook
-        .get("tool_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let raw_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let tool_name = guardrails::normalize_tool_name(raw_tool_name);
     // Sanitize session_id at the boundary — anything that wouldn't survive
     // path-traversal validation is treated as no-session (session features
     // silently disable, the rest of the hook still works).  See
@@ -377,7 +407,8 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     let hook: Value =
         serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
 
-    let tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let tool_name = guardrails::normalize_tool_name(raw_tool_name);
     let event = hook
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -410,7 +441,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     // were installed.
     if is_disabled_via_env() {
         match config::Config::load() {
-            Ok(cfg) => audit::record_bypass(&cfg, event, tool_name, session_id),
+            Ok(cfg) => audit::record_bypass(&cfg, event, &tool_name, session_id),
             // Surface the config failure to stderr so an operator can
             // correlate "Arai was off but stats has no bypass entry".  The
             // hook still exits 0 — the user explicitly chose `ARAI_DISABLED`
@@ -423,7 +454,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     }
 
     // Fast exit mirrors match_hook — avoids loading config/db for skipped tools
-    if !tool_name.is_empty() && guardrails::should_skip_tool(tool_name) {
+    if !tool_name.is_empty() && guardrails::should_skip_tool(&tool_name) {
         return Ok(());
     }
 
@@ -514,7 +545,8 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         // we run through the exact same match pipeline as a normal
         // pre-call gate.  Lets us reuse extract_terms, code-graph
         // enrichment, severity-from-rule logic without forking.
-        let denied_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+        let raw_denied_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+        let denied_tool_name = guardrails::normalize_tool_name(raw_denied_tool_name);
         let synthesized = serde_json::json!({
             "hook_event_name": "PreToolUse",
             "tool_name": denied_tool_name,
@@ -550,7 +582,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         audit::record_event(
             &cfg,
             "PermissionDenied",
-            denied_tool_name,
+            &denied_tool_name,
             session_id,
             serde_json::json!({
                 "denial_reason": denial_reason,
@@ -602,15 +634,16 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             // Claude Code in the same order, one entry per concurrent
             // tool invocation in the batch.
             for (idx, call) in tool_calls.iter().enumerate() {
-                let tool_name = call.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
-                if tool_name.is_empty() || guardrails::should_skip_tool(tool_name) {
+                let raw_tool_name = call.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+                let tool_name = guardrails::normalize_tool_name(raw_tool_name);
+                if tool_name.is_empty() || guardrails::should_skip_tool(&tool_name) {
                     continue;
                 }
                 let tool_input = call
                     .get("tool_input")
                     .cloned()
                     .unwrap_or(Value::Object(serde_json::Map::new()));
-                let mut terms = guardrails::extract_terms(tool_name, &tool_input);
+                let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
                 // Pull the corresponding result for content-sniffing
                 // (a `from alembic import op` written by tool N still
                 // needs to seed terms for tool N's compliance pass).
@@ -626,10 +659,10 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 terms.sort();
                 terms.dedup();
                 if !session_id.is_empty() {
-                    session::record_tool_call(&cfg.arai_base_dir, session_id, tool_name, &terms);
+                    session::record_tool_call(&cfg.arai_base_dir, session_id, &tool_name, &terms);
                 }
-                let preview = summarize_tool_input(tool_name, &tool_input);
-                compliance::record_post_compliance(&cfg, session_id, tool_name, &terms, &preview);
+                let preview = summarize_tool_input(&tool_name, &tool_input);
+                compliance::record_post_compliance(&cfg, session_id, &tool_name, &terms, &preview);
             }
             // Single audit entry per batch — keeps the log readable
             // when a batch contains dozens of tools.  Per-tool
@@ -657,20 +690,20 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 .get("tool_input")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new()));
-            let mut terms = guardrails::extract_terms(tool_name, &tool_input);
+            let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
             if let Some(result) = hook.get("tool_result").and_then(|v| v.as_str()) {
                 guardrails::sniff_content_for_tools_pub(result, &mut terms);
             }
             terms.sort();
             terms.dedup();
-            session::record_tool_call(&cfg.arai_base_dir, session_id, tool_name, &terms);
+            session::record_tool_call(&cfg.arai_base_dir, session_id, &tool_name, &terms);
 
             // Compliance tracking: correlate this PostToolUse against any
             // recent PreToolUse firings in the same session and emit one
             // Compliance audit entry per rule.  Done here (not in match_hook)
             // because scenario replays should not pollute the audit log.
-            let preview = summarize_tool_input(tool_name, &tool_input);
-            compliance::record_post_compliance(&cfg, session_id, tool_name, &terms, &preview);
+            let preview = summarize_tool_input(&tool_name, &tool_input);
+            compliance::record_post_compliance(&cfg, session_id, &tool_name, &terms, &preview);
         }
     }
 
@@ -825,31 +858,33 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     if !unseen.is_empty() {
         session::mark_rules_seen(&cfg.arai_base_dir, &result.session_id, &unseen);
     }
+    // Detect the calling host so we can emit the correct response format.
+    // Grok TUI expects a flat {"decision", "reason"} shape; Claude Code expects
+    // the hookSpecificOutput + permissionDecision shape.
+    let host = detect_host(&hook); // `hook` is in scope from handle_stdin_impl
+
     let response = match (result.event.as_str(), blocking) {
         ("PreToolUse", true) => {
             let reason = deny_reason(&result.matched);
-            serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                    "additionalContext": context,
-                }
-            })
+            match host {
+                Host::Grok => emit_grok_decision(false, Some(&reason), &context),
+                _ => emit_claude_decision(false, Some(&reason), &context),
+            }
         }
+        ("PreToolUse", false) => match host {
+            Host::Grok => emit_grok_decision(true, None, &context),
+            _ => emit_claude_decision(true, None, &context),
+        },
         ("PostToolUse", _) => serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
                 "additionalContext": format!("[Post-action review] {context}")
             }
         }),
-        _ => serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "additionalContext": context
-            }
-        }),
+        _ => {
+            // Default / unknown events fall back to Claude shape for safety
+            emit_claude_decision(true, None, &context)
+        }
     };
 
     println!(
@@ -889,6 +924,52 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
     // Shouldn't reach here if highest_severity returned Block, but guard for
     // robustness.
     "Arai: blocking rule matched".to_string()
+}
+
+/// Emit a Grok TUI compatible decision response.
+fn emit_grok_decision(
+    allow: bool,
+    reason: Option<&str>,
+    additional_context: &str,
+) -> serde_json::Value {
+    if allow {
+        serde_json::json!({
+            "decision": "allow",
+            "additionalContext": additional_context
+        })
+    } else {
+        serde_json::json!({
+            "decision": "deny",
+            "reason": reason.unwrap_or("Arai: blocking rule matched"),
+            "additionalContext": additional_context
+        })
+    }
+}
+
+/// Emit a Claude Code compatible decision response (preserves original shape exactly).
+fn emit_claude_decision(
+    allow: bool,
+    reason: Option<&str>,
+    additional_context: &str,
+) -> serde_json::Value {
+    if allow {
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "additionalContext": additional_context
+            }
+        })
+    } else {
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason.unwrap_or("Arai: blocking rule matched"),
+                "additionalContext": additional_context
+            }
+        })
+    }
 }
 
 /// True when a Bash `tool_input` invokes the `arai` CLI itself.  Matches the

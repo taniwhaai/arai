@@ -1,6 +1,6 @@
 # CLAUDE.md — Arai
 
-Arai is a Rust CLI that enforces AI coding assistant instruction files (CLAUDE.md, .cursorrules, etc.) via Claude Code hooks.
+Arai is a Rust CLI that enforces AI coding assistant instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) via hooks (Claude Code + native Grok TUI).
 
 ## Commands
 

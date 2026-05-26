@@ -23,7 +23,11 @@ mod upgrade;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "arai", version, about = "CLAUDE.md that actually works.")]
+#[command(
+    name = "arai",
+    version,
+    about = "Instruction files that actually work (Claude + Grok TUI)."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -388,6 +392,11 @@ fn cmd_status() -> Result<(), String> {
     println!("Arai status");
     println!("  Rules:      {count}");
     println!("  Sources:    {} file(s)", files.len());
+
+    println!("  Integration");
+    println!("    Hooks:    Claude Code + Grok TUI (native)");
+    println!("              • .claude/settings.json");
+    println!("              • .grok/hooks/arai.json");
     for f in &files {
         println!("    - {f}");
     }
@@ -1333,9 +1342,10 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
         }
         _ => serde_json::json!({ "preview": joined }),
     };
+    let canonical_tool = crate::guardrails::normalize_tool_name(&tool);
     let hook = serde_json::json!({
         "hook_event_name": event,
-        "tool_name": tool,
+        "tool_name": canonical_tool,
         "tool_input": tool_input,
         "session_id": "",
     });

@@ -39,6 +39,13 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
             "claude_md_project",
             0.92,
         ),
+        // Grok TUI native project rules (AGENTS.md family). These are high
+        // value for Grok users and are checked by Grok in this approximate
+        // priority order.
+        (cfg.project_root.join("AGENTS.md"), "agents_md", 0.91),
+        (cfg.project_root.join("Agents.md"), "agents_md", 0.91),
+        (cfg.project_root.join("AGENT.md"), "agents_md", 0.91),
+        (cfg.project_root.join("agents.md"), "agents_md", 0.90),
         (
             cfg.project_root.join(".cursor").join("rules"),
             "cursor_rules",
@@ -71,6 +78,15 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
     if let Some(mut file) = try_read_file(&global_claude, "claude_md_global", 0.88) {
         file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
         files.push(file);
+    }
+
+    // Global Grok AGENTS.md family (in ~/.grok/)
+    for name in ["AGENTS.md", "Agents.md", "AGENT.md", "agents.md"] {
+        let path = cfg.home_dir.join(".grok").join(name);
+        if let Some(mut file) = try_read_file(&path, "agents_md_global", 0.87) {
+            file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
+            files.push(file);
+        }
     }
 
     // Claude Code memory files
