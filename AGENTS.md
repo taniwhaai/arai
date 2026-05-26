@@ -66,5 +66,6 @@ Once the Grok TUI integration is merged and installed:
 - When Arai fires a rule (via `arai why`, audit, or a block), treat it as valuable feedback and update AGENTS.md, lessons, or the integration as needed.
 - When developing the Grok TUI integration, use the integration (once active) to catch your own mistakes in real time rather than relying only on manual review.
 - Treat the new Grok TUI integration as a tool for better real-time self-correction during long or high-pressure sessions, not just as an external enforcement layer.
+- Do not let the existence of Grok TUI support cause any reduction in quality or test coverage for the Claude Code path (or vice versa).
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.
