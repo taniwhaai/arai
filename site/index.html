@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arai — CLAUDE.md that actually works</title>
+    <title>Arai — Instruction files that actually work</title>
     <meta name="description" content="Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
@@ -135,6 +135,39 @@
         }
         .feature p { font-size: 0.9rem; color: var(--text-secondary); }
 
+        /* Supported Environments */
+        .supported {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+            background: var(--bg-light);
+        }
+        .supported h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 0.75rem;
+        }
+        .supported-intro {
+            text-align: center; color: var(--text-secondary);
+            max-width: 620px; margin: 0 auto 1.5rem; font-size: 0.95rem;
+        }
+        .supported-grid {
+            display: grid; grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem 1.25rem; max-width: 680px; margin: 0 auto;
+        }
+        .supported-item {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.65rem 0.9rem;
+            font-size: 0.85rem;
+            line-height: 1.35;
+        }
+        .supported-item strong {
+            display: block; color: var(--primary); font-weight: 600; margin-bottom: 0.15rem;
+        }
+        .supported-item span {
+            color: var(--text-secondary);
+        }
+
         /* Install methods */
         .install-methods {
             padding: 4rem 0;
@@ -230,6 +263,7 @@
             .feature-grid { grid-template-columns: 1fr; }
             .methods-grid { grid-template-columns: 1fr; }
             .install-box { font-size: 0.8rem; }
+            .supported-grid { grid-template-columns: 1fr; }
         }
     </style>
     <script>
@@ -254,12 +288,37 @@
 
 <section class="hero">
     <div class="container">
-        <h1><span>CLAUDE.md</span> that actually blocks.</h1>
-        <p>Enforce AI coding assistant instruction files via Claude Code hooks &mdash; or advisory MCP for Cursor and Windsurf. Rules marked <code>never</code> deny the tool call in Claude Code. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
+        <h1>Instruction files that actually block.</h1>
+        <p>Enforce your AI coding assistant instruction files via hooks. Claude Code and Grok TUI currently provide the strongest support, including the ability to block tool calls for rules marked <code>never</code>. Other tools receive advisory enforcement via MCP. Every firing is audited and correlated with what the model actually did. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
             <span class="copy-hint">click to copy</span>
+        </div>
+    </div>
+</section>
+
+<section class="supported">
+    <div class="container">
+        <h2>Supported Environments</h2>
+        <p class="supported-intro">Enforcement strength depends on the assistant's integration surface:</p>
+        <div class="supported-grid">
+            <div class="supported-item">
+                <strong>Claude Code</strong>
+                <span>Native PreToolUse hooks — full blocking support</span>
+            </div>
+            <div class="supported-item">
+                <strong>Grok TUI</strong>
+                <span>Native hooks — full blocking support</span>
+            </div>
+            <div class="supported-item">
+                <strong>Cursor, Windsurf, Cline &amp; others</strong>
+                <span>MCP integration — strong advisory enforcement</span>
+            </div>
+            <div class="supported-item">
+                <strong>GitHub Copilot</strong>
+                <span>Instruction file ingestion only</span>
+            </div>
         </div>
     </div>
 </section>
@@ -272,8 +331,8 @@
             <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
             <span class="warm">&rarr; Arai: <strong>deny</strong></span><br>
             <span class="warm">&nbsp;&nbsp;reason: "Alembic never: hand-write migration files"</span><br>
-            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from CLAUDE.md:12, layer-1 imperative]</span><br><br>
-            <span class="dim">Claude: "I should use alembic revision --autogenerate instead..."</span>
+            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from your rules:12, layer-1 imperative]</span><br><br>
+            <span class="dim">Assistant: "I should use alembic revision --autogenerate instead..."</span>
         </div>
     </div>
 </section>
@@ -313,7 +372,7 @@
             </div>
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code> in Claude Code. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor and Windsurf get advisory enforcement via MCP &mdash; no other assistant exposes a deny hook today.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok TUI (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule rollout</h3>
@@ -325,7 +384,7 @@
             </div>
             <div class="feature">
                 <h3>Derivation trace</h3>
-                <p>Every firing carries source file, line, and parser layer. Hook output shows <code>[CLAUDE.md:42 layer-1]</code> — no more guessing why a rule fired.</p>
+                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[CLAUDE.md:42 layer-1]</code> or <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
             </div>
             <div class="feature">
                 <h3>Explain before you commit</h3>
@@ -373,11 +432,11 @@
             </div>
             <div class="feature">
                 <h3>Preview before commit</h3>
-                <p><code>arai lint CLAUDE.md</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
+                <p><code>arai lint</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
             </div>
             <div class="feature">
                 <h3>Diff before save</h3>
-                <p><code>arai diff CLAUDE.md</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
+                <p><code>arai diff</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
             </div>
             <div class="feature">
                 <h3>Shared policies</h3>
@@ -385,11 +444,11 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session ("never touch /etc", "always run tests first") and Arai enforces them on the next tool call. <code>arai_recent_decisions</code> lets the agent self-check what it was just denied for &mdash; no more looping on the same refused action. MCP is also how Cursor and Windsurf integrate: same rule set, advisory only.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
-                <p>Only fires domain-specific rules. Principles already in CLAUDE.md stay silent.</p>
+                <p>Only fires domain-specific rules. Principles already in your instruction files stay silent.</p>
             </div>
             <div class="feature">
                 <h3>Any LLM enrichment</h3>
