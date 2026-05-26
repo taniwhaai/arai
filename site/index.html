@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arai — CLAUDE.md that actually works</title>
+    <title>Arai — Instruction files that actually work</title>
     <meta name="description" content="Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
@@ -254,8 +254,8 @@
 
 <section class="hero">
     <div class="container">
-        <h1><span>CLAUDE.md</span> that actually blocks.</h1>
-        <p>Enforce AI coding assistant instruction files via Claude Code hooks &mdash; or advisory MCP for Cursor and Windsurf. Rules marked <code>never</code> deny the tool call in Claude Code. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
+        <h1>Instruction files that actually block.</h1>
+        <p>Enforce your AI coding assistant instruction files via native hooks. Rules marked <code>never</code> can deny the tool call. Every firing is audited and correlated with the action the model actually took. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -272,8 +272,8 @@
             <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
             <span class="warm">&rarr; Arai: <strong>deny</strong></span><br>
             <span class="warm">&nbsp;&nbsp;reason: "Alembic never: hand-write migration files"</span><br>
-            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from CLAUDE.md:12, layer-1 imperative]</span><br><br>
-            <span class="dim">Claude: "I should use alembic revision --autogenerate instead..."</span>
+            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from your rules:12, layer-1 imperative]</span><br><br>
+            <span class="dim">Assistant: "I should use alembic revision --autogenerate instead..."</span>
         </div>
     </div>
 </section>
@@ -313,7 +313,7 @@
             </div>
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> emit <code>permissionDecision: "deny"</code> in Claude Code. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor and Windsurf get advisory enforcement via MCP &mdash; no other assistant exposes a deny hook today.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in assistants that expose a hook surface. <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Advisory enforcement is available for other tools via MCP.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule rollout</h3>
@@ -325,7 +325,7 @@
             </div>
             <div class="feature">
                 <h3>Derivation trace</h3>
-                <p>Every firing carries source file, line, and parser layer. Hook output shows <code>[CLAUDE.md:42 layer-1]</code> — no more guessing why a rule fired.</p>
+                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
             </div>
             <div class="feature">
                 <h3>Explain before you commit</h3>
@@ -373,11 +373,11 @@
             </div>
             <div class="feature">
                 <h3>Preview before commit</h3>
-                <p><code>arai lint CLAUDE.md</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
+                <p><code>arai lint</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
             </div>
             <div class="feature">
                 <h3>Diff before save</h3>
-                <p><code>arai diff CLAUDE.md</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
+                <p><code>arai diff</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
             </div>
             <div class="feature">
                 <h3>Shared policies</h3>
@@ -389,7 +389,7 @@
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
-                <p>Only fires domain-specific rules. Principles already in CLAUDE.md stay silent.</p>
+                <p>Only fires domain-specific rules. Principles already in your instruction files stay silent.</p>
             </div>
             <div class="feature">
                 <h3>Any LLM enrichment</h3>

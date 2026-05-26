@@ -1,6 +1,6 @@
 # Arai
 
-**CLAUDE.md that actually works.** One command. Runs locally. Zero cost.
+**Instruction files that actually work.** One command. Runs locally. Zero cost.
 
 Arai makes your AI coding assistant instruction files structurally enforceable — not just suggestions that get forgotten as context grows.
 
@@ -15,7 +15,7 @@ cd your-project
 arai init
 ```
 
-That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up hooks (Claude Code + native Grok TUI) so guardrails fire at the right moment.
+That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up native hooks so guardrails fire at the right moment.
 
 ## What It Does
 
@@ -27,12 +27,12 @@ You: "Create a new database migration"
   PreToolUse: Write migrations/versions/001_add_users.py
   → Arai: deny
     reason: "Alembic never: hand-write migration files"
-            [from CLAUDE.md:12, layer-1 imperative]
+            [from your rules:12, layer-1 imperative]
 
-Claude: "I should use alembic revision --autogenerate instead..."
+Assistant: "I should use alembic revision --autogenerate instead..."
 ```
 
-Rules only fire when relevant. No noise on `ls`. No repeating principles already in CLAUDE.md.
+Rules only fire when relevant. No noise on `ls`. No repeating principles already in your instruction files.
 
 Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
 
@@ -43,7 +43,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 3. **Classifies** each rule's intent — what action it governs, which tools it applies to, when it should fire
 4. **Scans** your codebase with tree-sitter to understand which tools own which directories
 5. **Tracks** session state — knows if you've already run tests before pushing
-6. **Fires** only relevant rules at the right moment via Claude Code hooks
+6. **Fires** only relevant rules at the right moment via native hooks (where supported)
 
 ## Supported Instruction Files
 
@@ -67,8 +67,8 @@ enforcement strength depends on what surface the assistant exposes.
 - GitHub Copilot currently has no live enforcement surface; the file is
   still ingested for `arai stats`, `arai diff`, and the audit log.
 
-Arai hooks several more events (on both Claude Code and Grok TUI) alongside
-the standard tool-call events so the rule set stays accurate to the live
+Arai hooks several more events alongside the standard tool-call events
+(when the assistant supports them) so the rule set stays accurate to the live
 working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
@@ -219,7 +219,7 @@ arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 
 Starting in v0.2.3, Arai no longer just *advises*: rules derived from
 prohibitive predicates (`never`, `forbids`, `must_not`) emit
-`permissionDecision: "deny"` so Claude Code refuses the tool call. Advisory
+`permissionDecision: "deny"` (or equivalent) so the assistant refuses the tool call. Advisory
 rules (`always`, `requires`, `prefers`) keep the previous behaviour.
 
 Severity is inferred from the predicate at extract time:
@@ -250,7 +250,7 @@ the audit log per rule:
   prohibitive rules), or the required evidence present (for affirmative
   rules).
 - **ignored** — forbidden phrase still in the executed command.
-  The model ran the thing anyway (either deny was off or Claude Code
+  The model ran the thing anyway (either deny was off or the assistant
   chose to proceed).
 - **unclear** — not enough signal to decide (short object text, or
   affirmative rule without evidence in this call).
@@ -571,7 +571,7 @@ re-ingest.
 ## Record — seed scenarios from real firings
 
 `arai record` turns entries in the audit log into scenario skeletons
-so you don't hand-write regression tests. Flow: run Claude Code, hit a
+so you don't hand-write regression tests. Flow: run your assistant, hit a
 rule firing you want pinned, `arai record --since=1h > tests.json`,
 tune the expectations, check in.
 
@@ -622,12 +622,12 @@ one merged file.
 ## MCP: agent-authored guardrails
 
 `arai mcp` is also the integration path for assistants that don't have a
-PreToolUse hook surface. Cursor and Windsurf are both MCP clients — point
-them at `arai mcp` and the agent can read the same rule set Claude Code
-sees, register new guards mid-session, and self-check recent decisions.
-The blocking path is still Claude-Code-only (no other assistant exposes
-a deny hook today), but everything else — rule lookup, agent-authored
-guards, decision history — is shared.
+native PreToolUse hook surface. Cursor and Windsurf are both MCP clients — point
+them at `arai mcp` and the agent can read the same rule set, register new guards
+mid-session, and self-check recent decisions.
+The strongest blocking enforcement is available in assistants with native hook
+support (currently Claude Code and Grok TUI), but everything else — rule lookup,
+agent-authored guards, decision history — is shared via MCP.
 
 `arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
 server on stdio. Three tools, exposed to any MCP-capable agent:
@@ -647,7 +647,7 @@ call `arai_recent_decisions` to see what it was just refused for —
 useful for avoiding "try the same thing twice" loops when a single
 rule keeps getting hit.
 
-Register it with Claude Code by adding to your MCP settings:
+Register it with your assistant (for example in Claude Code or Cline) by adding to your MCP settings:
 
 ```json
 {
@@ -716,7 +716,7 @@ docker compose run --rm arai
 | Hook check (full match pipeline) | ~32 ms | ~55 ms |
 | Full init | <200 ms | — |
 
-End-to-end wall clock per Claude Code tool call, measured by
+End-to-end wall clock per tool call (on supported assistants), measured by
 `bench/hot_path.sh`. Cost is dominated by Rust binary fork+exec
 (~20 ms floor on Linux/WSL); rule matching itself is sub-ms above 200
 rules thanks to the LEFT-JOIN'd intent and Aho-Corasick content sniffing.
