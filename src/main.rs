@@ -18,6 +18,7 @@ mod scenarios;
 mod session;
 mod stats;
 mod store;
+mod sync;
 mod telemetry;
 mod upgrade;
 
@@ -309,6 +310,29 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Generate per-tool instruction files (CLAUDE.md, AGENTS.md,
+    /// .cursorrules, .windsurfrules, .github/copilot-instructions.md)
+    /// from a canonical `arai.toml`.  Only files that already exist in
+    /// the project are touched — sync never creates a new tool's
+    /// instruction file the team didn't already choose.
+    ///
+    /// Hand-edits are preserved: content outside the
+    /// `<!-- BEGIN ARAI MANAGED RULES -->` / `<!-- END ARAI MANAGED RULES -->`
+    /// markers is left untouched.  A first sync against a file without
+    /// markers prepends the managed block at the top.
+    ///
+    /// Examples:
+    ///   arai sync                       # read ./arai.toml, update existing per-tool files
+    ///   arai sync --input rules.toml    # custom canonical file
+    ///   arai sync --dry-run             # print what would change, write nothing
+    Sync {
+        /// Path to the canonical TOML file (default: ./arai.toml).
+        #[arg(long, default_value = "arai.toml")]
+        input: std::path::PathBuf,
+        /// Print what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Explain which guardrails would fire on a hypothetical tool call —
     /// useful for debugging "why did this rule fire?" without running the
     /// hook live.  Pass either a Bash command or `--tool Edit <path>`.
@@ -393,6 +417,7 @@ fn main() {
         Commands::Enable { triple_id } => cmd_enable(triple_id),
         Commands::Migrate { yes } => cmd_migrate(yes),
         Commands::Canonicalize { output, force } => cmd_canonicalize(output, force),
+        Commands::Sync { input, dry_run } => cmd_sync(input, dry_run),
         Commands::Why {
             input,
             tool,
@@ -657,6 +682,52 @@ fn cmd_canonicalize(output: std::path::PathBuf, force: bool) -> Result<(), Strin
         "\n  Review the generated file before treating it as authoritative.\n  \
          Schema: docs/rules-file-spec.md"
     );
+    Ok(())
+}
+
+fn cmd_sync(input: std::path::PathBuf, dry_run: bool) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let canonical = sync::load_canonical(&input)?;
+    let summary = sync::run(&canonical, &cfg.project_root, dry_run)?;
+
+    if summary.results.is_empty() {
+        eprintln!(
+            "  No existing instruction files to update.  `arai sync` only touches\n  \
+             files already present in the project; create CLAUDE.md / AGENTS.md /\n  \
+             .cursorrules / etc first, then re-run."
+        );
+        return Ok(());
+    }
+
+    let prefix = if dry_run { "would " } else { "" };
+    for r in &summary.results {
+        let verb = match r.action {
+            sync::TargetAction::Inserted => "insert managed block in",
+            sync::TargetAction::Replaced => "update managed block in",
+            sync::TargetAction::Unchanged => "leave unchanged",
+        };
+        println!("  {prefix}{verb} {}", r.path.display());
+    }
+
+    for (path, err) in &summary.errors {
+        eprintln!("  error on {}: {}", path.display(), err);
+    }
+
+    let changed = summary.files_changed();
+    if dry_run {
+        println!(
+            "\n  Dry run: {changed} file(s) would change.  Re-run without --dry-run to apply."
+        );
+    } else {
+        println!("\n  Updated {changed} file(s) from {}.", input.display());
+    }
+
+    if !summary.errors.is_empty() {
+        return Err(format!(
+            "{} file(s) failed — see errors above.",
+            summary.errors.len()
+        ));
+    }
     Ok(())
 }
 
