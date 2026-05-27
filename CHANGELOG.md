@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-05-27
+
+### Documentation
+
+- Scope repo-layer (pre-commit) enforcement ([#82](https://github.com/taniwhaai/arai/pull/82))
+
+
 ## [0.2.25] - 2026-05-27
 
 ### Added
