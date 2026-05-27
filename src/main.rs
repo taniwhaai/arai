@@ -1,4 +1,5 @@
 mod audit;
+mod canonicalize;
 mod code_scanner;
 mod compliance;
 mod config;
@@ -285,6 +286,29 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
+    /// Extract rules from existing instruction files (CLAUDE.md, .cursorrules,
+    /// AGENTS.md, ...) into a canonical `arai.toml` matching
+    /// `docs/rules-file-spec.md`.  Lossy-but-honest: only what the parser
+    /// recognises as a rule survives; review and refine `when.tool` /
+    /// `when.path` / `when.command_pattern` on the generated file before
+    /// treating it as authoritative.
+    ///
+    /// The matcher is unchanged.  `arai.toml` is an output artefact for
+    /// adoption planning — `arai sync` (#77) and a canonical loader land
+    /// separately.
+    ///
+    /// Examples:
+    ///   arai canonicalize                       # writes ./arai.toml
+    ///   arai canonicalize --output rules.toml   # custom path
+    ///   arai canonicalize --force               # overwrite an existing file
+    Canonicalize {
+        /// Output path for the canonical file (default: ./arai.toml).
+        #[arg(long, default_value = "arai.toml")]
+        output: std::path::PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
     /// Explain which guardrails would fire on a hypothetical tool call —
     /// useful for debugging "why did this rule fire?" without running the
     /// hook live.  Pass either a Bash command or `--tool Edit <path>`.
@@ -368,6 +392,7 @@ fn main() {
         Commands::Disable { triple_id } => cmd_disable(triple_id),
         Commands::Enable { triple_id } => cmd_enable(triple_id),
         Commands::Migrate { yes } => cmd_migrate(yes),
+        Commands::Canonicalize { output, force } => cmd_canonicalize(output, force),
         Commands::Why {
             input,
             tool,
@@ -610,6 +635,29 @@ fn cmd_migrate(yes: bool) -> Result<(), String> {
     } else {
         migrate::run(&home, repo_root.as_deref())
     }
+}
+
+fn cmd_canonicalize(output: std::path::PathBuf, force: bool) -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    let summary = canonicalize::run(&cfg, &output, force)?;
+    println!(
+        "  Wrote {} rule(s) from {} instruction file(s) → {}",
+        summary.rules_written,
+        summary.files_read,
+        summary.output_path.display()
+    );
+    if summary.rules_written == 0 {
+        eprintln!(
+            "  No rules extracted.  Either the project has no instruction files\n  \
+             Arai recognises, or the parser didn't recognise any prose as a rule.\n  \
+             Run `arai status` to see what was discovered."
+        );
+    }
+    eprintln!(
+        "\n  Review the generated file before treating it as authoritative.\n  \
+         Schema: docs/rules-file-spec.md"
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
