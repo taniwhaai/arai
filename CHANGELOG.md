@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-05-27
+
+### Added
+
+- Add Arai guardrails hooks to Grok and Claude settings
+- Arai canonicalize — extract rules from instruction files to arai.toml ([#78](https://github.com/taniwhaai/arai/pull/78))
+- Arai sync — write per-tool instruction files from arai.toml ([#77](https://github.com/taniwhaai/arai/pull/77))
+
+### Documentation
+
+- Make marketing copy and README assistant-agnostic ([#125](https://github.com/taniwhaai/arai/pull/125))
+
+
 ## [0.2.24] - 2026-05-26
 
 ### Added
