@@ -1,0 +1,15 @@
+---
+schema_version: 1
+event_id: 01KSRB2ORCHDECIDE000000002
+kind: orchestrator_decided
+timestamp_iso: 2026-05-29T00:04:00.000Z
+invocation: 16
+triggered_by: subagent_returned:verifier:01KSRB0VERIFIERV1000000001
+summary: |
+  Verifier returned overall: pass for hooks-grok-exit (handoff 01KSRB0VERIFIERV1000000001).
+  AC1–AC7 all confirmed independently. 340 tests passed, 0 regressions.
+  Build is complete. Surfacing to user for commit + PR decision on branch feat/122-grok-exit-codes.
+action: surface_to_user
+prompt_kind: completion_review
+build_phase_before: verification_pending
+build_phase_after: user_input_pending

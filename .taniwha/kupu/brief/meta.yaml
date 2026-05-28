@@ -1,6 +1,6 @@
 schema_version: 1
 family: brief
-current_version: 4
+current_version: 5
 versions:
 - version: 1
   recorded_at:
@@ -25,5 +25,10 @@ versions:
     iso: 2026-05-25T09:30:49.752Z
     filename: 20260525T093049752Z
   source: github_issue
-  parent_version: 3
+  schema_version: 1
+- version: 5
+  recorded_at:
+    iso: 2026-05-28T21:29:39.154Z
+    filename: 20260528T212939154Z
+  source: github_issue
   schema_version: 1

@@ -1,0 +1,11 @@
+schema_version: 1
+event_id: 01KSR7YQNEFT31TSEAWK55V2W7
+kind: subagent_dispatched
+timestamp_iso: 2026-05-28T21:31:11.000Z
+payload:
+  role: design-doc
+  handoff_id: 01KSR7YKX36401D3325JJDMXSV
+  brief_version: 5
+  design_version_target: 3
+  reason: "build_kickoff for issue #122 exit-code sub-task; prior slice #113 complete"
+  decision_id: 01KSR7YQNE5VM9WBM0NSQ7CKSH

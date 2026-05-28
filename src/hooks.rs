@@ -348,42 +348,87 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     Ok(out)
 }
 
+/// Pure truth table: map (host, event, deny_outcome) → desired process exit
+/// code.  Returns 2 iff all three conditions are met: the invoking host is
+/// Grok TUI, the event is PreToolUse, and the match pipeline produced a
+/// Block-severity deny.  All other combinations → 0.
+///
+/// This function has no side effects, performs no I/O, and never calls
+/// `process::exit`.  The sole caller, `handle_stdin`, owns process-exit.
+fn desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32 {
+    if host == Host::Grok && event == "PreToolUse" && deny_outcome {
+        2
+    } else {
+        0
+    }
+}
+
 pub fn handle_stdin() -> Result<(), String> {
     // Default to PreToolUse so a bad payload (oversize / non-UTF8 / non-JSON)
     // — which we can't parse to know the real event — is treated as a
     // PreToolUse failure and gets the safe-by-default deny response.
     let mut event_hint = String::from("PreToolUse");
 
-    if let Err(e) = handle_stdin_impl(&mut event_hint) {
-        // Diagnostics on stderr.
-        eprintln!("arai hook error: {e}");
-        // Fail-closed on PreToolUse: emit a deny JSON to stdout so Claude
-        // Code blocks the tool call.  Without this, an attacker who can
-        // induce a hook error (oversize input, malformed JSON, DB lock)
-        // would slip past every Block-severity rule.  PostToolUse and
-        // UserPromptSubmit tolerate empty stdout — those events don't have
-        // a permissionDecision surface and the tool already ran (or is
-        // about to be summarized).
-        if event_hint == "PreToolUse" {
-            let response = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason":
-                        "Arai: internal error, blocking for safety",
+    let exit_code = match handle_stdin_impl(&mut event_hint) {
+        Ok(code) => code,
+        Err(e) => {
+            // Diagnostics on stderr.
+            eprintln!("arai hook error: {e}");
+            // Fail-closed on PreToolUse: emit a deny JSON to stdout so the
+            // host blocks the tool call.  Without this, an attacker who can
+            // induce a hook error (oversize input, malformed JSON, DB lock)
+            // would slip past every Block-severity rule.  PostToolUse and
+            // UserPromptSubmit tolerate empty stdout — those events don't have
+            // a permissionDecision surface and the tool already ran (or is
+            // about to be summarized).
+            //
+            // Host detection on the error path: since the payload may be
+            // unparsed, call detect_host with Value::Null (env-var-only
+            // detection, which is all that matters on the error path).
+            if event_hint == "PreToolUse" {
+                let host = detect_host(&Value::Null);
+                match host {
+                    Host::Grok => {
+                        let response = emit_grok_decision(
+                            false,
+                            Some("Arai: internal error, blocking for safety"),
+                            "",
+                        );
+                        println!("{}", serde_json::to_string(&response).unwrap_or_default());
+                    }
+                    _ => {
+                        let response = serde_json::json!({
+                            "hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "permissionDecision": "deny",
+                                "permissionDecisionReason":
+                                    "Arai: internal error, blocking for safety",
+                            }
+                        });
+                        println!("{}", serde_json::to_string(&response).unwrap_or_default());
+                    }
                 }
-            });
-            println!("{}", serde_json::to_string(&response).unwrap_or_default());
+                // Grok PreToolUse error: fail-closed with exit 2.
+                // Claude/Unknown: always exit 0 (Claude treats non-zero as
+                // "hook broken", defeating the deny above).
+                desired_exit_code(host, "PreToolUse", true)
+            } else {
+                0
+            }
         }
+    };
+
+    // Flush stdout so every byte is visible to the host before we exit.
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+
+    if exit_code == 2 {
+        std::process::exit(2);
     }
-    // Always exit 0 — stderr already carries the diagnostic.  Returning Err
-    // here would surface as a non-zero exit which Claude Code treats as
-    // "hook is broken, ignore it" and the tool would proceed (the very
-    // failure mode the deny above is closing).
     Ok(())
 }
 
-fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
+fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let start = std::time::Instant::now();
     // Read up to MAX_HOOK_INPUT_BYTES + 1 so we can distinguish "natural EOF"
     // from "hit the cap mid-stream".  Reject overruns rather than silently
@@ -450,12 +495,12 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 eprintln!("arai: ARAI_DISABLED set but could not load config to record bypass: {e}")
             }
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // Fast exit mirrors match_hook — avoids loading config/db for skipped tools
     if !tool_name.is_empty() && guardrails::should_skip_tool(&tool_name) {
-        return Ok(());
+        return Ok(0);
     }
 
     // FileChanged / InstructionsLoaded: observability events Claude Code
@@ -471,7 +516,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     if event == "FileChanged" || event == "InstructionsLoaded" {
         let file_path = hook.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
         if !is_instruction_file(file_path) {
-            return Ok(());
+            return Ok(0);
         }
         // Load config best-effort — if it fails (uninitialised project)
         // we still want to silently no-op rather than break the hook.
@@ -488,7 +533,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             );
             spawn_background_scan(None);
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // CwdChanged: Claude Code's working directory moved (e.g. the model
@@ -504,7 +549,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     if event == "CwdChanged" {
         let new_cwd = hook.get("new_cwd").and_then(|v| v.as_str()).unwrap_or("");
         if new_cwd.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         let old_cwd = hook.get("old_cwd").and_then(|v| v.as_str()).unwrap_or("");
         if let Ok(cfg) = config::Config::load() {
@@ -520,7 +565,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             );
             spawn_background_scan(Some(new_cwd));
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // PermissionDenied: Claude Code's auto-mode classifier denied a
@@ -538,7 +583,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     if event == "PermissionDenied" {
         let cfg = match config::Config::load() {
             Ok(c) => c,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(0),
         };
         let db_path = cfg.db_path();
         // Synthesize a PreToolUse-shaped payload from the denied call so
@@ -604,7 +649,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 serde_json::to_string(&response).map_err(|e| e.to_string())?
             );
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // PostToolBatch: fires once per batch of parallel tool calls (e.g.
@@ -678,7 +723,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
                 }),
             );
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // PostToolUse still has a side effect: it records the call into session
@@ -744,13 +789,13 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
 
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Ok(());
+        return Ok(0);
     }
     let db = store::Store::open(&db_path)?;
 
     let result = match_hook(&hook, &cfg, &db)?;
     if result.skipped {
-        return Ok(());
+        return Ok(0);
     }
 
     // UserPromptSubmit summary — domain-rules context injected into the response.
@@ -758,7 +803,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
     // no collector work to do here.
     if result.is_prompt_summary {
         if result.domain_rules.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         let mut subjects: Vec<String> = result
             .domain_rules
@@ -782,11 +827,11 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
             "{}",
             serde_json::to_string(&response).map_err(|e| e.to_string())?
         );
-        return Ok(());
+        return Ok(0);
     }
 
     if result.matched.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
 
     // Telemetry — aggregate counters only
@@ -891,7 +936,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<(), String> {
         "{}",
         serde_json::to_string(&response).map_err(|e| e.to_string())?
     );
-    Ok(())
+    Ok(desired_exit_code(host, &result.event, blocking))
 }
 
 /// Build a short deny reason Claude Code surfaces to the user.  Prefers the
@@ -1557,5 +1602,127 @@ mod tests {
             Some("PermissionDenied")
         );
         assert_eq!(known_hook_event("BogusEvent"), None);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Grok exit-code tests (AC1–AC6)
+    // ---------------------------------------------------------------------------
+
+    /// AC1: Grok + PreToolUse + deny → exit 2.
+    /// AC2: Grok + PreToolUse + allow → exit 0.
+    /// AC3: Claude + PreToolUse + deny → exit 0 (regression guard: never non-zero
+    ///      for Claude).
+    /// AC6: Grok + PostToolUse/UserPromptSubmit → exit 0.
+    /// These are all pure table-driven tests against `desired_exit_code`.
+    #[test]
+    fn desired_exit_code_truth_table() {
+        // AC1: Grok PreToolUse deny → 2
+        assert_eq!(
+            desired_exit_code(Host::Grok, "PreToolUse", true),
+            2,
+            "AC1: Grok PreToolUse deny must be exit 2"
+        );
+        // AC2: Grok PreToolUse allow → 0
+        assert_eq!(
+            desired_exit_code(Host::Grok, "PreToolUse", false),
+            0,
+            "AC2: Grok PreToolUse allow must be exit 0"
+        );
+        // AC3: Claude PreToolUse deny → 0 (hard regression guard)
+        assert_eq!(
+            desired_exit_code(Host::Claude, "PreToolUse", true),
+            0,
+            "AC3: Claude PreToolUse deny must be exit 0"
+        );
+        assert_eq!(
+            desired_exit_code(Host::Unknown, "PreToolUse", true),
+            0,
+            "AC3-variant: Unknown host PreToolUse deny must be exit 0"
+        );
+        // AC4/AC5: error-path host detection feeds into desired_exit_code with
+        // deny_outcome=true, event="PreToolUse".  Grok error → 2, Claude → 0.
+        assert_eq!(
+            desired_exit_code(Host::Grok, "PreToolUse", true),
+            2,
+            "AC4: Grok error path PreToolUse → exit 2"
+        );
+        assert_eq!(
+            desired_exit_code(Host::Claude, "PreToolUse", true),
+            0,
+            "AC5: Claude error path PreToolUse → exit 0"
+        );
+        // AC6: Grok PostToolUse/UserPromptSubmit → 0 regardless of deny
+        assert_eq!(
+            desired_exit_code(Host::Grok, "PostToolUse", true),
+            0,
+            "AC6: Grok PostToolUse deny must be exit 0"
+        );
+        assert_eq!(
+            desired_exit_code(Host::Grok, "PostToolUse", false),
+            0,
+            "AC6: Grok PostToolUse allow must be exit 0"
+        );
+        assert_eq!(
+            desired_exit_code(Host::Grok, "UserPromptSubmit", true),
+            0,
+            "AC6: Grok UserPromptSubmit deny must be exit 0"
+        );
+        assert_eq!(
+            desired_exit_code(Host::Grok, "UserPromptSubmit", false),
+            0,
+            "AC6: Grok UserPromptSubmit allow must be exit 0"
+        );
+        // Exhaustive: allow is always 0 for every host/event except Grok+Pre+deny
+        for host in [Host::Grok, Host::Claude, Host::Unknown] {
+            for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+                for deny in [false, true] {
+                    let code = desired_exit_code(host, event, deny);
+                    let expect_2 = host == Host::Grok && event == "PreToolUse" && deny;
+                    assert_eq!(
+                        code,
+                        if expect_2 { 2 } else { 0 },
+                        "desired_exit_code({host:?}, {event}, {deny}) wrong"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Grok host detection via `GROK_HOOK_EVENT` and `GROK_SESSION_ID`.
+    /// Serialised via a static mutex to avoid races with other env-var tests.
+    /// Uses only std — no new crate dependency introduced.
+    #[test]
+    fn detect_host_grok_env_vars() {
+        // Serialise all env-var-dependent tests in this module.
+        static ENV_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let mutex = ENV_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
+        let _guard = mutex.lock().unwrap_or_else(|p| p.into_inner());
+
+        // Ensure clean state first.
+        std::env::remove_var("GROK_HOOK_EVENT");
+        std::env::remove_var("GROK_SESSION_ID");
+        std::env::remove_var("CLAUDE_PROJECT_DIR");
+        std::env::remove_var("CLAUDE_PLUGIN_ROOT");
+
+        // Neither Grok nor Claude env vars set → Unknown (no hook_event_name in Null).
+        assert_eq!(detect_host(&Value::Null), Host::Unknown);
+
+        // GROK_HOOK_EVENT set → Grok (AC1, AC4 precondition).
+        std::env::set_var("GROK_HOOK_EVENT", "PreToolUse");
+        assert_eq!(detect_host(&Value::Null), Host::Grok);
+        std::env::remove_var("GROK_HOOK_EVENT");
+
+        // GROK_SESSION_ID set → Grok.
+        std::env::set_var("GROK_SESSION_ID", "abc123");
+        assert_eq!(detect_host(&Value::Null), Host::Grok);
+        std::env::remove_var("GROK_SESSION_ID");
+
+        // Neither set → not Grok; Claude detection via hook_event_name field
+        // (AC3, AC5 precondition: no GROK_* vars → Claude or Unknown host).
+        let with_hook_field = serde_json::json!({ "hook_event_name": "PreToolUse" });
+        assert_eq!(detect_host(&with_hook_field), Host::Claude);
+
+        // Neither GROK nor CLAUDE vars; no hook_event_name → Unknown.
+        assert_eq!(detect_host(&Value::Null), Host::Unknown);
     }
 }

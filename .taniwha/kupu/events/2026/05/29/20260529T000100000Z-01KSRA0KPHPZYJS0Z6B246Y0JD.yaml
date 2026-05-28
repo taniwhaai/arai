@@ -1,0 +1,20 @@
+schema_version: 1
+event_id: 01KSRA0KPHPZYJS0Z6B246Y0JD
+kind: orchestrator_decided
+timestamp_iso: "2026-05-29T00:01:00.000Z"
+payload:
+  invocation: 14
+  reason: "subagent_returned:contract-derivation:01KSR9GV1PEB6G5F9Q2JFFEQ5Q"
+  decision_id: 01KSR9ZSS5D7GCQK9RXM47EBEP
+  actions:
+    - sequence: 1
+      kind: write_artefact
+      module: hooks-grok-exit
+      contract_version: 1
+    - sequence: 2
+      kind: dispatch_subagent
+      role: leaf-implementation
+      handoff_id: 01KSR9W013AK08AWPHRQ4KN5PZ
+      model: claude-sonnet-4-6
+  build_phase_before: pre_derivation
+  build_phase_after: building

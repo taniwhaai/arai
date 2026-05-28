@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: completion_review
+responses:
+  - header: Ship this slice
+    question: How would you like to proceed with the completed implementation?
+    selected: Approve commit + PR

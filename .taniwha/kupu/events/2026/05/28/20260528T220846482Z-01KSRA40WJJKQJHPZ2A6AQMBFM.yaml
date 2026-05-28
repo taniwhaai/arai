@@ -1,0 +1,10 @@
+event_id: 01KSRA40WJJKQJHPZ2A6AQMBFM
+kind: contract_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:08:46.482Z
+  filename: 20260528T220846482Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"module": "hooks-grok-exit", "contract_version": 1, "parent_design_version": 3, "source_handoff": "01KSR9GV1PEB6G5F9Q2JFFEQ5Q"}'

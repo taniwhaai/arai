@@ -1,0 +1,40 @@
+schema_version: 1
+handoff_id: 01KSRB0VERIFIERV1000000001
+role: verifier
+target_node: hooks-grok-exit  # single_module tier; no tree
+parent_contract_version: 1
+implementation_handoff: 01KSR9W013AK08AWPHRQ4KN5PZ
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-28T22:19:14.010Z"
+  filename: "20260528T221914010Z"
+dispatched_at:
+  iso: "2026-05-28T22:19:14.010Z"
+  filename: "20260528T221914010Z"
+returned_at:
+  iso: "2026-05-28T22:23:43.100Z"
+  filename: "20260528T222343100Z"
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: pass
+  tests_added: [tests/hooks_grok_exit_verifier.rs]
+  summary: "Independent verification PASS — AC1-AC7 all pass; 340 unit + integration green; subprocess exit-code observed for AC1/AC4."
+inputs:
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/hooks-grok-exit/v1.md
+  - filename: implementation_manifest.md
+    kind: implementation_manifest
+    source_path: .taniwha/kupu/orchestrator/handoff/01KSR9W013AK08AWPHRQ4KN5PZ/outputs/implementation_manifest.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - verifier_report.yaml
+  - re_raise.yaml  # only if the contract/implementation is genuinely un-verifiable
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1
+  decided_at: "2026-05-29T00:03:00.000Z"

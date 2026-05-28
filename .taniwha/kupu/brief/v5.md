@@ -1,0 +1,71 @@
+# Brief — Issue #122 (scoped slice): Grok TUI native deny via exit code 2
+
+## Source
+GitHub issue #122 ("first-class support for Grok TUI"), scoped to the **exit-code**
+sub-task. The bulk of #122 (host detection, `emit_grok_decision`, tool-name
+normalization, `.grok/hooks/arai.json` injection, AGENTS.md discovery) is already
+merged on `main`. This slice closes the one remaining gap the issue names: native
+Grok deny signalling via process exit code.
+
+## Problem
+Grok TUI's hook spec (`~/.grok/docs/user-guide/10-hooks.md`, "Exit Codes"):
+
+| Exit | Meaning |
+|------|---------|
+| `0`  | allow |
+| `2`  | explicit deny (blocking hooks only) |
+| other | fail-OPEN (the tool call runs) |
+
+Today, when a Block-severity rule matches under Grok, Arai prints
+`{"decision":"deny",...}` to stdout and then `handle_stdin` always returns
+`Ok(())`, so the process exits **0**. Two defects follow:
+
+1. Exit `2` is the canonical "explicit deny" signal. Relying solely on the
+   stdout-JSON channel is fail-OPEN if that channel is ever mis-parsed.
+2. The fail-closed error path (`src/hooks.rs:367-377`) emits the *Claude*-shaped
+   JSON (`hookSpecificOutput.permissionDecision`) and exits 0 even under Grok.
+   Grok does not understand those keys and exit 0 = allow, so on any induced
+   internal hook error (oversize/malformed stdin, DB lock) a Block rule is
+   silently bypassed — the exact failure the fail-closed branch exists to prevent.
+
+## Goal / outcome
+Under Grok, an explicit deny — on both the happy path and the internal-error
+path — must emit Grok-shaped deny JSON **and exit with code 2**. Claude
+behaviour is unchanged: Claude treats a non-zero hook exit as "hook broken" →
+fail-OPEN, so the Claude path must keep exiting 0 and rely on its stdout JSON.
+
+## Scope
+- Single source file: `src/hooks.rs`.
+- Reuse existing `detect_host` (env-prioritised: `GROK_HOOK_EVENT` /
+  `GROK_SESSION_ID`) and `emit_grok_decision` / `emit_claude_decision`. No new
+  abstractions, no change to the match pipeline, parser, or store.
+- `process::exit` must live only on the side-effecting `handle_stdin` path, per
+  the repo's "side effects only on the handle_stdin path" rule (CLAUDE.md). Keep
+  `handle_stdin_impl` returning a value (a desired exit code), not exiting itself.
+
+## Acceptance criteria
+- AC1: PreToolUse + Block-rule match + `GROK_HOOK_EVENT` set → stdout contains
+  `"decision":"deny"` AND process exit code == 2.
+- AC2: PreToolUse allow under Grok → exit 0.
+- AC3: PreToolUse Block deny under Claude (no GROK_* env) → exit 0 AND
+  `permissionDecision":"deny"` (regression guard — Claude must never see non-zero).
+- AC4: Induced internal error (oversize/malformed stdin) on PreToolUse under
+  Grok → stdout Grok-shaped `"decision":"deny"` AND exit 2 (fail-closed).
+- AC5: Same induced error under Claude → exit 0 + Claude-shaped deny (unchanged).
+- AC6: PostToolUse / UserPromptSubmit under Grok → exit 0.
+- AC7: Full existing suite still passes (no regression); hot path unaffected.
+
+## Implementation sketch (non-binding for the implementor)
+- `handle_stdin_impl(&mut String) -> Result<i32, String>`; the Ok payload is the
+  desired exit code. The ~15 existing `Ok(())` skip/observability/allow returns
+  become `Ok(0)`. The emit site (the `match (event, blocking)` block) computes
+  `("PreToolUse", true, Host::Grok) => 2, _ => 0` after printing.
+- `handle_stdin()` consumes the code: `Ok(code) => if code != 0 { process::exit(code) }`.
+  Its error branch becomes host-aware — if `detect_host(&Value::Null)` is Grok,
+  emit Grok-shaped deny and `process::exit(2)`; else keep the existing
+  Claude-shaped deny + return Ok (exit 0).
+
+## Verification
+`cargo test --test hooks_safety` (AC1–AC6), `cargo test` (full suite, AC7), and a
+manual smoke: pipe a force-push command with `GROK_HOOK_EVENT=pre_tool_use` and
+confirm `{"decision":"deny",...}` + `exit=2`.

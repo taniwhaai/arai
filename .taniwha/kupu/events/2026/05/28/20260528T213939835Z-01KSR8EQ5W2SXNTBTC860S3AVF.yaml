@@ -1,0 +1,14 @@
+event_id: 01KSR8EQ5W2SXNTBTC860S3AVF
+kind: design_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-28T21:39:39.835Z
+  filename: 20260528T213939835Z
+payload:
+  schema_version: 1
+  family: design
+  version: 3
+  parent_brief_version: 5
+  parent_omitted: false

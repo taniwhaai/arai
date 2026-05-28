@@ -1,0 +1,12 @@
+schema_version: 1
+family: contract
+module: hooks-grok-exit
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-28T22:08:30.945Z
+    filename: 20260528T220830945Z
+  parent_design_version: 3
+  parent_omitted: false
+  schema_version: 1
