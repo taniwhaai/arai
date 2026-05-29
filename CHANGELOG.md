@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-05-29
+
+### Added
+
+- Grok TUI native deny via exit code 2 ([#122](https://github.com/taniwhaai/arai/pull/122))
+
+
 ## [0.2.26] - 2026-05-27
 
 ### Documentation
