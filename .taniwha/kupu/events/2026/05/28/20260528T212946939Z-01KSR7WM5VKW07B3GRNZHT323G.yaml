@@ -1,0 +1,10 @@
+event_id: 01KSR7WM5VKW07B3GRNZHT323G
+kind: build_started
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T21:29:46.939Z
+  filename: 20260528T212946939Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 5, "scope": "Issue #122 scoped slice — Grok TUI native deny via exit code 2", "parent_brief_version": 4, "branch": "feat/122-grok-exit-codes", "note": "New slice on the ongoing Arai project; prior slice (#113, brief v4) complete."}'

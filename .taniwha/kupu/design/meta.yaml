@@ -1,6 +1,6 @@
 schema_version: 1
 family: design
-current_version: 2
+current_version: 3
 versions:
 - version: 1
   recorded_at:
@@ -14,5 +14,12 @@ versions:
     iso: 2026-05-25T19:47:07.525Z
     filename: 20260525T194707525Z
   parent_brief_version: 4
+  parent_omitted: false
+  schema_version: 1
+- version: 3
+  recorded_at:
+    iso: 2026-05-28T21:39:39.835Z
+    filename: 20260528T213939835Z
+  parent_brief_version: 5
   parent_omitted: false
   schema_version: 1

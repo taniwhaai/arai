@@ -1,0 +1,15 @@
+event_id: 01KSRA3HQ1XNMGE55Z060C6P79
+kind: contract_written
+actor:
+  kind: tool
+  name: kupu
+timestamp:
+  iso: 2026-05-28T22:08:30.945Z
+  filename: 20260528T220830945Z
+payload:
+  schema_version: 1
+  family: contract
+  module: hooks-grok-exit
+  version: 1
+  parent_design_version: 3
+  parent_omitted: false

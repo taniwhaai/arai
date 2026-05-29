@@ -1,41 +1,48 @@
+---
 schema_version: 1
-as_of: "2026-05-26"
-invocation_count: 10  # tenth orchestrator invocation
+as_of: "2026-05-29"
+invocation_count: 17  # seventeenth orchestrator invocation
 
 build_phase: complete
 tier: single_module
-brief_version: 4
-brief_scope: "GitHub issue #113 — log-only prompt-text collector wired into UserPromptSubmit"
+brief_version: 5
+brief_scope: "GitHub issue #122 (scoped) — Grok TUI native deny via exit code 2 (src/hooks.rs only)"
 
 artefact_status:
-  brief: "v4 — current (issue #113 prompt collector)"
-  project_context: "v1 — current (Rust/cargo/single_package)"
-  design_doc: "v2 — current at kupu/design/v2.md"
-  contracts: "prompt-collector v1 — current at kupu/contracts/prompt-collector/v1.md"
-  implementation: "COMPLETE: handoff 01KSGB5549QPQDQMSH6B8NS077 — 367 tests passing, cargo exit 0"
-  verification: "PASS: verifier handoff 01KSGC4SR7NB7PVTJ75RXXSNKS — all 9 ACs passed"
-  commit: "2cfd194 on branch audit/113-prompt-collector"
-  pr: "PR #119 open against main — https://github.com/taniwhaai/arai/pull/119"
-  tree: "none — single-module tier"
+  brief: "v5 — current at kupu/brief/v5.md (issue #122 exit-code sub-task)"
+  project_context: "v1 — current at kupu/project_context.yaml (Rust/cargo/single_package)"
+  design_doc: "v3 — approved by user (event 01KSR9FMB4DXPJWNWSVGZ1VF6H); at kupu/design/v3.md"
+  contracts: |
+    hooks-grok-exit v1 — at kupu/contracts/hooks-grok-exit/v1.md (with meta.yaml).
+    AC1-AC7 verbatim. Language-neutral. All changes confined to src/hooks.rs.
+  implementation: |
+    hooks-grok-exit — VERIFIED PASS (handoff 01KSR9W013AK08AWPHRQ4KN5PZ).
+    Manifest at: kupu/orchestrator/handoff/01KSR9W013AK08AWPHRQ4KN5PZ/outputs/implementation_manifest.md
+    Functions changed: desired_exit_code (new, ~L351–364), handle_stdin (~L366–430),
+    handle_stdin_impl return type changed to Result<i32, String> (~L432–940).
+  verification: |
+    COMPLETE — verifier returned overall: pass (handoff 01KSRB0VERIFIERV1000000001).
+    AC1-AC7 all pass. Verifier authored tests/hooks_grok_exit_verifier.rs (9 tests).
+    Full cargo test: 340 passed, 0 failed, 0 regressions.
+  tree: "none — single-module tier, no tree"
   open_re_raises: 0
 
 last_action: |
-  Invoked with reason user_input_received:completion_review.
-  User approved commit + PR.
-  Dispatcher executed: commit 2cfd194 landed (59 files, +8210/-46), branch pushed.
-  PR #119 opened against main.
-  commit_landed event recorded.
-  Emitted: complete action.
+  Invocation 17: user approved "Approve commit + PR".
+  next_action.yaml: git_commit_and_pr (seq 1) + record_event commit_landed (seq 2) + complete (seq 3).
+  Dispatcher should: stage explicit file list, commit on feat/122-grok-exit-codes with
+  the conventional-commit message referencing #122, push to origin, open PR against main,
+  then record the commit_landed event and mark build complete.
 
-build_outcome: |
-  BUILD COMPLETE.
-  Issue #113 delivered end-to-end:
-    - src/prompt_collector.rs: new log-only UserPromptSubmit collector
-    - src/hooks.rs: UserPromptSubmit gate + collector call wired in
-    - src/main.rs: mod declaration
-    - tests/prompt_collector_integration.rs: integration tests
-    - tests/prompt_collector_verifier.rs: verifier-authored tests (9 ACs)
-    - CLAUDE.md: architecture section updated (AC8)
-  No new crate dependencies.
-  367 tests passing (322 unit + 45 integration).
-  PR #119 awaiting review/merge.
+next_expected:
+  event: build_complete
+  notes: |
+    After the dispatcher commits, pushes, and opens the PR, it records a commit_landed
+    event and emits the complete action. Build is done.
+    No further orchestrator invocation expected unless CI fails and needs a follow-up.
+
+notes: |
+  Build is complete. User approved shipping.
+  Branch feat/122-grok-exit-codes → PR against main.
+  This was the exit-code semantics slice of #122; the rest of #122 is already on main.
+  The .taniwha/kupu/state/ directory (dispatcher scratch) should NOT be committed.

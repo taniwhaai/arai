@@ -1,0 +1,10 @@
+event_id: 01KSRBHWE8ZCWX5V2ZN1KVAQYH
+kind: build_completed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:33:49.256Z
+  filename: 20260528T223349256Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 5, "module": "hooks-grok-exit", "issue_ref": "122", "slice": "exit-code-semantics", "modules_implemented": 1, "compositions_built": 0, "contract_amendments": 0, "re_raises_resolved": 0, "re_raises_user_escalated": 0, "verification": "pass (AC1-AC7)", "pr": "https://github.com/taniwhaai/arai/pull/136"}'

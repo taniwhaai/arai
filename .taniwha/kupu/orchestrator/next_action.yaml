@@ -1,18 +1,160 @@
+---
 schema_version: 1
-decided_at: "2026-05-26"
+generated_at: "2026-05-29T00:10:00.000Z"
 invocation_reason: "user_input_received:completion_review"
+# Orchestrator invocation 17 — user approved "Approve commit + PR"; emit git work + complete.
 
 actions:
-  - action: complete
+
+  - sequence: 1
+    action: git_commit_and_pr
+    # -------------------------------------------------------------------------
+    # COMMIT
+    # -------------------------------------------------------------------------
+    commit:
+      branch: feat/122-grok-exit-codes
+      # Stage ALL of the following paths before committing (use git add with
+      # explicit paths — do NOT use git add -A or git add .):
+      stage:
+        # Production code
+        - src/hooks.rs
+        # Verifier integration test (authored by the verifier subagent)
+        - tests/hooks_grok_exit_verifier.rs
+        # Taniwha build artefacts for this slice
+        - .taniwha/kupu/brief/v5.md
+        - .taniwha/kupu/brief/meta.yaml
+        - .taniwha/kupu/design/v3.md
+        - .taniwha/kupu/design/meta.yaml
+        - .taniwha/kupu/contracts/hooks-grok-exit/
+        - .taniwha/kupu/decisions/01KSR7YQNE5VM9WBM0NSQ7CKSH.md
+        - .taniwha/kupu/decisions/01KSR9H0AHAP7CTGARXXHWH634.md
+        - .taniwha/kupu/decisions/01KSR9ZSS5D7GCQK9RXM47EBEP.md
+        - .taniwha/kupu/decisions/01KSRB5X5V63V6PZ0ZVV2ZCK5R.md
+        - .taniwha/kupu/events/index.yaml
+        - .taniwha/kupu/events/2026/05/28/
+        - .taniwha/kupu/events/2026/05/29/
+        - .taniwha/kupu/orchestrator/handoff/01KSR7YKX36401D3325JJDMXSV/
+        - .taniwha/kupu/orchestrator/handoff/01KSR9GV1PEB6G5F9Q2JFFEQ5Q/
+        - .taniwha/kupu/orchestrator/handoff/01KSR9W013AK08AWPHRQ4KN5PZ/
+        - .taniwha/kupu/orchestrator/handoff/01KSRB0VERIFIERV1000000001/
+        - .taniwha/kupu/orchestrator/handoff/user-input-01KSR9F9RRPSFCW8F5YJCJTX8M/
+        - .taniwha/kupu/orchestrator/handoff/user-input-01KSRB9G8NERG440Z0G8VPQNJ4/
+        - .taniwha/kupu/orchestrator/current_state.yaml
+        - .taniwha/kupu/orchestrator/next_action.yaml
+        - .taniwha/project.yaml
+        # NOTE: do NOT stage .taniwha/kupu/state/ — that is dispatcher scratch state
+      message: |
+        feat: Grok TUI native deny via exit code 2 (#122)
+
+        When `arai guardrails --match-stdin` runs under the Grok TUI
+        (detected via GROK_HOOK_EVENT or GROK_SESSION_ID env vars) and
+        a Block-severity rule fires on a PreToolUse event, the process
+        now exits with code 2 so Grok can natively deny the tool call.
+
+        All other events (PostToolUse, UserPromptSubmit) and all other
+        hosts (Claude Code, unknown) continue to exit 0; Claude Code's
+        permissionDecision JSON path is unchanged (regression-guarded).
+
+        Adds `desired_exit_code(host, event, deny_outcome) -> i32` pure
+        helper and updates `handle_stdin_impl` return type to
+        `Result<i32, String>`.  Error paths on PreToolUse under Grok
+        are fail-closed (exit 2 + Grok deny JSON).
+
+        AC1–AC7 verified; 340 unit tests + all integration suites pass.
+        Verifier integration tests: tests/hooks_grok_exit_verifier.rs.
+
+        Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+    # -------------------------------------------------------------------------
+    # PUSH
+    # -------------------------------------------------------------------------
+    push:
+      remote: origin
+      branch: feat/122-grok-exit-codes
+      flags: []  # standard push, no force
+
+    # -------------------------------------------------------------------------
+    # PULL REQUEST
+    # -------------------------------------------------------------------------
+    pr:
+      base: main
+      head: feat/122-grok-exit-codes
+      title: "feat: Grok TUI native deny via exit code 2 (#122)"
+      body: |
+        ## Summary
+
+        This is the **exit-code semantics slice** of issue #122 (Grok TUI native hook support).
+        The earlier slices — host detection (`detect_host`) and Grok-shaped JSON output
+        (`emit_grok_decision`) — were merged on main previously (PR #123 / `feat/grok-tui-support`).
+        This PR closes the remaining gap: when a Block-severity rule fires under the Grok TUI,
+        the process must exit with code 2 so Grok can act on it natively.
+
+        ### What changed
+
+        **`src/hooks.rs`** (only file modified in production code):
+        - New pure helper `desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32`.
+          Returns `2` iff host is Grok, event is `PreToolUse`, and `deny_outcome` is true;
+          returns `0` for every other combination.
+        - `handle_stdin_impl` return type changed from `Result<(), String>` to `Result<i32, String>`;
+          all early-exit `Ok(())` paths become `Ok(0)`; the emit site returns
+          `Ok(desired_exit_code(host, &result.event, blocking))`.
+        - `handle_stdin` updated to call `std::process::exit(code)` when `code == 2`
+          (Grok PreToolUse deny), and return normally (`Ok(())`) otherwise.
+        - Error paths on `PreToolUse` under Grok are **fail-closed**: emit Grok-shaped deny JSON
+          + exit 2. Error paths under Claude/Unknown are unchanged (exit 0).
+
+        **`tests/hooks_grok_exit_verifier.rs`** (new — verifier-authored subprocess integration tests):
+        9 tests covering every truth-table cell via `Command::new(env!("CARGO_BIN_EXE_arai"))`.
+
+        ### Acceptance criteria (all pass)
+
+        | AC | Criterion | Status |
+        |----|-----------|--------|
+        | AC1 | Grok + PreToolUse + Block → exit 2, Grok deny JSON | pass |
+        | AC2 | Grok + PreToolUse + allow → exit 0 | pass |
+        | AC3 | Claude + PreToolUse + Block → exit 0, Claude deny JSON (regression guard) | pass |
+        | AC4 | Internal error on PreToolUse under Grok → exit 2, Grok deny (fail-closed) | pass |
+        | AC5 | Internal error under Claude → exit 0, Claude deny | pass |
+        | AC6 | PostToolUse or UserPromptSubmit under Grok → exit 0 always | pass |
+        | AC7 | 340 unit tests + all integration suites pass, 0 regressions | pass |
+
+        ### Test run
+
+        ```
+        test result: ok. 340 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+        ```
+
+        All integration suites green: `hooks_safety` (5/5), `hooks_grok_exit_verifier` (9/9),
+        `compliance_correlation` (3/3), `parser_coverage` (19/19),
+        `prompt_collector_integration` (3/3), `prompt_collector_verifier` (9/9),
+        `intent_severity` (4/4), `mcp_check_action` (1/1), `sync_integration` (3/3),
+        `canonicalize_integration` (2/2), `verifier_base_directory_resolution` (2/2).
+
+        🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+  - sequence: 2
+    action: record_event
+    # Dispatcher: append this entry to .taniwha/kupu/events/index.yaml and write
+    # the corresponding event file at the canonical path under events/2026/05/29/.
+    # Use kupu.record_event if available; otherwise write the file and append manually.
+    event:
+      kind: commit_landed
+      payload:
+        branch: feat/122-grok-exit-codes
+        files_committed:
+          - src/hooks.rs
+          - tests/hooks_grok_exit_verifier.rs
+          - .taniwha/ (build artefacts — see stage list in sequence 1)
+        pr_opened: true
+        base_branch: main
+        issue_ref: "122"
+        slice: exit-code-semantics
+
+  - sequence: 3
+    action: complete
     summary:
       modules_implemented: 1
       compositions_built: 0
       contract_amendments: 0
       re_raises_resolved: 0
       re_raises_user_escalated: 0
-      notes: |
-        GitHub issue #113 — prompt-collector module.
-        Commit 2cfd194 on branch audit/113-prompt-collector.
-        PR #119 open against main: https://github.com/taniwhaai/arai/pull/119
-        All 9 acceptance criteria verified (cargo test, 367 tests passing).
-        User approved commit + PR; commit_landed event recorded.

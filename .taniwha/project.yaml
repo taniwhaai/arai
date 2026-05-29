@@ -10,11 +10,13 @@ tools_registered:
 - kupu
 current_phase: phase-1
 brief:
-  current_version: 4
+  current_version: 5
 design:
-  current_version: 2
+  current_version: 3
 contracts:
   base-directory-resolution:
     current_version: 1
   prompt-collector:
+    current_version: 1
+  hooks-grok-exit:
     current_version: 1

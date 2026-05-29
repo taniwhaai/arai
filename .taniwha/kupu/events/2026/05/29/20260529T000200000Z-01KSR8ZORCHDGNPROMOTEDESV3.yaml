@@ -1,0 +1,12 @@
+schema_version: 1
+event_id: 01KSR8ZORCHDGNPROMOTEDESV3
+kind: orchestrator_decided
+timestamp_iso: "2026-05-29T00:02:00.000Z"
+payload:
+  invocation_count: 12
+  invocation_reason: "subagent_returned:design-doc:01KSR7YKX36401D3325JJDMXSV"
+  actions_emitted:
+    - write_artefact (design v3 — source: handoff 01KSR7YKX36401D3325JJDMXSV/outputs/design_doc.md → kupu/design/v3.md)
+    - surface_to_user (prompt_kind: design_doc_approval)
+  build_phase_transition: pre-design → design_pending_approval
+  notes: "Design doc v3 promoted to canonical location; user approval required before contract derivation."

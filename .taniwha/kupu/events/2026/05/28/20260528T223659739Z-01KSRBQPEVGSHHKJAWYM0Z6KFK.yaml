@@ -1,0 +1,10 @@
+event_id: 01KSRBQPEVGSHHKJAWYM0Z6KFK
+kind: ci_fix
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:36:59.739Z
+  filename: 20260528T223659739Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"issue_ref": "122", "pr": 136, "ci_failure": "Rustfmt — cargo fmt --all --check (run 26606209094)", "root_cause": "leaf/verifier ran cargo test but not cargo fmt; new code in src/hooks.rs + tests/hooks_grok_exit_verifier.rs exceeded line-width formatting", "fix": "cargo fmt --all; formatting-only, no logic change; hooks unit + verifier integration tests still green", "amended_commit": "60e79a9"}'

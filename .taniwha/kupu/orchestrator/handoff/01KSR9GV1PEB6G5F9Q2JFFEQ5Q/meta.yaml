@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_id: 01KSR9GV1PEB6G5F9Q2JFFEQ5Q
+role: contract-derivation
+target_node: hooks-grok-exit  # single_module tier; no tree
+parent_design_version: 3
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-28T22:00:55.743Z"
+  filename: "20260528T220055743Z"
+dispatched_at:
+  iso: "2026-05-28T22:00:55.743Z"
+  filename: "20260528T220055743Z"
+returned_at:
+  iso: "2026-05-28T22:03:19.684Z"
+  filename: "20260528T220319684Z"
+outcome:
+  produced: [contract_manifest.md]
+  re_raise: false
+  summary: "Single contract for hooks-grok-exit derived; AC1-AC7 verbatim; language-neutral; process::exit-placement encoded as named guarantee."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: design_doc_v3.md
+    kind: design_doc
+    source_path: .taniwha/kupu/design/v3.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - contract_manifest.md
+  - re_raise.yaml  # only if design is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-28T21:58:28.000Z"

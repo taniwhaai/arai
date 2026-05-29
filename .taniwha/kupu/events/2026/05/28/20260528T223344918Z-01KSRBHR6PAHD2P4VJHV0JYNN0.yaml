@@ -1,0 +1,10 @@
+event_id: 01KSRBHR6PAHD2P4VJHV0JYNN0
+kind: commit_landed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:33:44.918Z
+  filename: 20260528T223344918Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"branch": "feat/122-grok-exit-codes", "commit": "f4a4de1", "files_committed": ["src/hooks.rs", "tests/hooks_grok_exit_verifier.rs", ".taniwha/kupu (build artefacts)"], "pr_opened": true, "pr_url": "https://github.com/taniwhaai/arai/pull/136", "pr_number": 136, "base_branch": "main", "issue_ref": "122", "slice": "exit-code-semantics"}'

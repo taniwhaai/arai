@@ -1,0 +1,16 @@
+event_id: 01KSR9H0AHAP7CTGARXXHWH634
+kind: contract_derivation_dispatched
+actor:
+  kind: orchestrator
+  invocation: 13
+timestamp:
+  iso: 2026-05-28T21:58:28.000Z
+  filename: 20260528T215828000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  triggered_by: "01KSR9FMB4DXPJWNWSVGZ1VF6H"
+  decision_id: "01KSR9H0AHAP7CTGARXXHWH634"
+  handoff_id: "01KSR9GV1PEB6G5F9Q2JFFEQ5Q"
+  module: hooks-grok-exit
+  design_version: 3
+  model: claude-sonnet-4-6

@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: design_doc_approval
+responses:
+  - header: Design approval
+    question: Is design doc v3 (hooks-grok-exit) approved to proceed to contract derivation?
+    selected: Approve

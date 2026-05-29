@@ -1,0 +1,36 @@
+schema_version: 1
+handoff_id: 01KSR7YKX36401D3325JJDMXSV
+role: design-doc
+target_node: hooks-grok-exit  # single_module tier; no tree
+parent_brief_version: 5
+model: sonnet  # taniwha-design-doc default
+status: returned
+created_at:
+  iso: "2026-05-28T21:33:51.809Z"
+  filename: "20260528T213351809Z"
+dispatched_at:
+  iso: "2026-05-28T21:33:51.809Z"
+  filename: "20260528T213351809Z"
+returned_at:
+  iso: "2026-05-28T21:36:11.821Z"
+  filename: "20260528T213611821Z"
+outcome:
+  produced: [design_doc.md]
+  re_raise: false
+  summary: "Design doc v3 produced; single_module tier; module = hooks-grok-exit; AC1-AC7 mapped; out-of-scope confined to src/hooks.rs."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: brief.md
+    kind: brief
+    source_path: .taniwha/kupu/brief/v5.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - design_doc.md
+  - re_raise.yaml  # only if brief is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-28T21:31:11.000Z"

@@ -1,0 +1,10 @@
+event_id: 01KSRB07JQGVDZVDGQ6TCVEZ39
+kind: verification_passed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:24:10.839Z
+  filename: 20260528T222410839Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "handoff_id": "01KSRB0VERIFIERV1000000001", "module": "hooks-grok-exit", "overall": "pass", "acs_passed": ["AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7"], "tests_added": ["tests/hooks_grok_exit_verifier.rs"], "cargo_test": "340 passed; 0 failed"}'

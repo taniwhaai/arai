@@ -1,0 +1,38 @@
+schema_version: 1
+handoff_id: 01KSR9W013AK08AWPHRQ4KN5PZ
+role: leaf-implementation
+target_node: hooks-grok-exit  # single_module tier; no tree
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-28T22:08:48.070Z"
+  filename: "20260528T220848070Z"
+dispatched_at:
+  iso: "2026-05-28T22:08:48.070Z"
+  filename: "20260528T220848070Z"
+returned_at:
+  iso: "2026-05-28T22:15:08.451Z"
+  filename: "20260528T221508451Z"
+outcome:
+  produced: [implementation_manifest.md]
+  re_raise: false
+  files_changed: [src/hooks.rs]
+  tests: "340 unit passed + integration suites; 0 failed (implementor self-report)"
+  summary: "hooks-grok-exit implemented: pure desired_exit_code helper + handle_stdin_impl returns Result<i32,String> + host-aware fail-closed error path. Scope confined to src/hooks.rs."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/hooks-grok-exit/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+expected_outputs:
+  - implementation_manifest.md
+  - re_raise.yaml  # only if contract is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2
+  decided_at: "2026-05-29T00:00:00.000Z"

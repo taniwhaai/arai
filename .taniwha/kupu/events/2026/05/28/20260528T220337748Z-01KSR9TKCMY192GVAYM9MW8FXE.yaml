@@ -1,0 +1,10 @@
+event_id: 01KSR9TKCMY192GVAYM9MW8FXE
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-28T22:03:37.748Z
+  filename: 20260528T220337748Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KSR9GV1PEB6G5F9Q2JFFEQ5Q", "produced": ["contract_manifest.md"], "re_raise": false, "module": "hooks-grok-exit", "summary": "Single module contract derived from design v3; AC1-AC7 verbatim."}'
