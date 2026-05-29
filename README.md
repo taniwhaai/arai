@@ -744,6 +744,56 @@ flags are the load-bearing ones: they assert that the signing
 certificate was issued to *this* repo's CI workflow on a tag push, not
 to some attacker's fork. Loosening either flag defeats the point.
 
+### Verifying SLSA L3 provenance
+
+cosign answers *"was this binary signed by this repo's CI?"*. SLSA
+provenance answers the harder question: *"how was this binary built —
+which commit, which workflow, which inputs?"*. Together they cover
+both the signing identity (cosign) and the build process (SLSA), so
+verifiers can detect a tampered build pipeline even if the signing
+identity itself is intact.
+
+Releases include a single `<tag>.intoto.jsonl` attestation generated
+by the [SLSA GitHub generator](https://github.com/slsa-framework/slsa-github-generator).
+Verify consumer-side with [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier):
+
+```bash
+# 1. Download the binary and the release-level provenance attestation
+VERSION=v0.2.25
+FILE=arai-linux-x86_64
+curl -fL -o "$FILE" \
+  "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
+curl -fL -o "${VERSION}.intoto.jsonl" \
+  "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${VERSION}.intoto.jsonl"
+
+# 2. Verify the binary against the provenance, pinned to this repo + tag
+slsa-verifier verify-artifact \
+  --provenance-path "${VERSION}.intoto.jsonl" \
+  --source-uri github.com/taniwhaai/arai \
+  --source-tag "${VERSION}" \
+  "$FILE"
+```
+
+A successful verification prints `PASSED: SLSA verification passed` and
+exits 0. Failure exits non-zero — do not run the binary.
+
+`--source-uri` is the load-bearing flag: it asserts that the provenance
+was produced from a build of this repo's source. `--source-tag` (or
+`--source-branch`) further pins to a specific release.
+
+### What each layer protects against
+
+| Attack | SHA-256 checksums | cosign keyless | SLSA L3 provenance |
+|---|---|---|---|
+| Corrupted download | ✅ caught | ✅ caught | ✅ caught |
+| Substituted binary at release | ❌ checksums.txt would also be swapped | ✅ certificate identity ≠ this repo's workflow | ✅ provenance source-uri ≠ this repo |
+| Stolen release-pipeline secret | ❌ | ✅ no long-lived secret to steal | ✅ provenance binds to specific workflow run |
+| Tampered build process (compromised toolchain or workflow inputs) | ❌ | ❌ — cosign signs the artifact, not the build | ✅ provenance records the exact workflow, commit, and inputs |
+
+SHA-256 stays the default in `install.sh` / `npm` because it doesn't
+require any extra tooling client-side. cosign and SLSA are opt-in for
+environments that need the higher tier.
+
 ## Performance
 
 | Operation | Median | p95 |
