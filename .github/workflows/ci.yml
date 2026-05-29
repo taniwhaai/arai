@@ -183,6 +183,11 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    outputs:
+      # Base64-encoded `sha256sum`-style lines, one per `arai-*` binary,
+      # consumed by the slsa-provenance job below.  The SLSA generator
+      # expects the format `<sha256>  <filename>\n...` then base64'd.
+      hashes: ${{ steps.compute-hashes.outputs.hashes }}
     steps:
       - uses: actions/checkout@v6
 
@@ -221,6 +226,17 @@ jobs:
               "$file"
           done
 
+      - name: Compute hashes for SLSA provenance
+        id: compute-hashes
+        run: |
+          # The SLSA reusable workflow expects `base64-subjects`: a
+          # base64-encoded blob of `<sha256>  <filename>\n` lines.  We
+          # already have that exact shape in checksums.txt — just b64 it.
+          cd binaries
+          {
+            echo "hashes=$(base64 -w0 < checksums.txt)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Attach to release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -230,6 +246,28 @@ jobs:
             echo "Uploading $(basename $file)..."
             gh release upload "$TAG" "$file" --clobber
           done
+
+  # SLSA Level 3 provenance attestation via the slsa-github-generator
+  # reusable workflow.  Builds a verifiable record of *how* each binary
+  # was built (commit, workflow, inputs, toolchain) so verifiers can
+  # answer "was this binary produced by this exact CI pipeline" — the
+  # provenance question cosign doesn't answer on its own.
+  #
+  # The generator emits a single `<tag>.intoto.jsonl` attestation
+  # covering every subject in `base64-subjects` and (with
+  # upload-assets: true) attaches it to the release.  Verify
+  # consumer-side with `slsa-verifier verify-artifact`.
+  slsa-provenance:
+    needs: attach-binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      actions: read      # generator reads the workflow run for provenance
+      id-token: write    # OIDC keyless signing (same trust model as cosign)
+      contents: write    # attach the attestation to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: ${{ needs.attach-binaries.outputs.hashes }}
+      upload-assets: true
 
   npm-publish:
     name: Publish to npm
