@@ -13,7 +13,7 @@ pub struct Store {
 /// migrations may run on a fresh DB or on an upgrading DB that already
 /// happens to have some columns from a previous schema-on-every-open era.
 type Migration = fn(&Connection) -> rusqlite::Result<()>;
-const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3];
+const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3, migrate_v4];
 
 impl Store {
     pub fn open(db_path: &Path) -> Result<Store, String> {
@@ -126,9 +126,16 @@ impl Store {
 
         // Insert new triples
         for triple in triples {
+            // Serialise Tier to its string name for storage (e.g. "Strict").
+            // NULL in the DB means Peer (backward-compat: older rows without
+            // this column are read as Peer).
+            let tier_str: Option<String> = triple
+                .tier
+                .as_ref()
+                .map(|t| format!("{t:?}").to_lowercase());
             tx.execute(
-                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file, layer, expires_at, noenrich)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO triples (file_id, s, p, o, domain, confidence, line_start, line_end, source_file, layer, expires_at, noenrich, tier, source_label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     file_id,
                     triple.subject,
@@ -142,6 +149,8 @@ impl Store {
                     triple.layer.map(|l| l as i64),
                     triple.expires_at,
                     triple.noenrich as i32,
+                    tier_str,
+                    triple.source_label,
                 ],
             )?;
         }
@@ -736,17 +745,29 @@ fn is_required(p: &str) -> bool {
 /// (the predicate filter is included; callers append their own
 /// `AND <extra>` and `ORDER BY`).  `LEFT JOIN` so unclassified rules still
 /// surface — `intent` will be `None` on those.
+///
+/// Columns 0..=10: triple fields.  Columns 11..=17: intent fields.
+/// Columns 18..=19: tier-provenance fields (tier, source_label).
+/// NULL tier → Peer (backward-compat with pre-v4 rows).
 const GUARDRAIL_SELECT_PREDICATE_FILTERED: &str =
     "SELECT t.id, t.s, t.p, t.o, t.confidence, t.source_file, f.path, t.layer, t.line_start, t.expires_at, t.noenrich,
-            ri.action, ri.timing, ri.tools, ri.allow_inverse, ri.enriched_by, ri.severity, ri.severity_override
+            ri.action, ri.timing, ri.tools, ri.allow_inverse, ri.enriched_by, ri.severity, ri.severity_override,
+            t.tier, t.source_label
      FROM triples t
      JOIN files f ON t.file_id = f.id
      LEFT JOIN rule_intent ri ON ri.triple_id = t.id
      WHERE t.p IN ('forbids','must_not','never','always','requires','enforces','prefers')";
 
 /// Row mapper paired with `GUARDRAIL_SELECT_PREDICATE_FILTERED`.  Pulls
-/// triple columns from indices 0..=10 and intent columns from 11..=17.
+/// triple columns from indices 0..=10, intent columns from 11..=17, and
+/// tier-provenance columns from 18..=19.
 fn guardrail_from_row(row: &rusqlite::Row) -> rusqlite::Result<Guardrail> {
+    // Deserialise the stored tier string back to a Tier variant.
+    // NULL or unrecognised strings → None (Peer).
+    let tier: Option<crate::extends::Tier> = row
+        .get::<_, Option<String>>(18)?
+        .and_then(|s| tier_from_str(&s));
+    let source_label: Option<String> = row.get(19)?;
     Ok(Guardrail {
         triple_id: row.get(0)?,
         subject: row.get(1)?,
@@ -760,7 +781,22 @@ fn guardrail_from_row(row: &rusqlite::Row) -> rusqlite::Result<Guardrail> {
         expires_at: row.get::<_, Option<String>>(9)?,
         noenrich: row.get::<_, i64>(10)? != 0,
         intent: parse_intent_from_row(row, 11)?,
+        tier,
+        source_label,
     })
+}
+
+/// Deserialise the stored lowercase tier string.  Returns `None` for NULL or
+/// any unrecognised value — callers treat `None` as `Tier::Peer` per the
+/// backward-compat invariant.
+fn tier_from_str(s: &str) -> Option<crate::extends::Tier> {
+    match s {
+        "strict" => Some(crate::extends::Tier::Strict),
+        "advisory" => Some(crate::extends::Tier::Advisory),
+        "override" => Some(crate::extends::Tier::Override),
+        "peer" => Some(crate::extends::Tier::Peer),
+        _ => None,
+    }
 }
 
 /// Parse an optional `RuleIntent` from columns starting at `start`.  Returns
@@ -842,6 +878,15 @@ pub struct Guardrail {
     /// `arai add`, or a freshly-scanned file before `arai classify` runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<crate::intent::RuleIntent>,
+    /// Tier provenance: how strongly this upstream block's rules bind.
+    /// `None` means the rule is local (Peer tier, default).
+    /// Set once at extraction time via the `arai:extends` path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<crate::extends::Tier>,
+    /// Source provenance: the URL of the upstream block this rule came from.
+    /// `None` for purely local rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_label: Option<String>,
 }
 
 fn is_false_ref(b: &bool) -> bool {
@@ -1033,6 +1078,24 @@ fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "triples", "noenrich", "INTEGER NOT NULL DEFAULT 0")
 }
 
+/// Migration v3 -> v4: tier-provenance fields on triples.
+///
+/// Two additive nullable columns:
+///
+/// - `tier` TEXT: lowercase tier name ("strict"|"advisory"|"override"|"peer").
+///   NULL means Peer (backward-compat: all existing rows read as Peer).
+/// - `source_label` TEXT: the upstream URL the rule came from.
+///   NULL for local rules.
+///
+/// These columns are written by `upsert_file` when rules carry provenance set
+/// by the `arai:extends` resolve path, and read back by `guardrail_from_row`.
+/// Existing rows with NULL values are treated as Peer/no-label — no behaviour
+/// change for the current un-annotated path (backward-compat invariant AC1).
+fn migrate_v4(conn: &Connection) -> rusqlite::Result<()> {
+    add_column_if_missing(conn, "triples", "tier", "TEXT")?;
+    add_column_if_missing(conn, "triples", "source_label", "TEXT")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1129,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         }];
 
         let changed = store
@@ -1113,6 +1180,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project")
@@ -1154,6 +1225,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         let always = Triple {
             subject: "alembic".to_string(),
@@ -1167,6 +1242,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file(
@@ -1204,6 +1283,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         let t2 = Triple {
             subject: "alembic".to_string(),
@@ -1217,6 +1300,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "- a\n- b", &[t1, t2], "claude_md_project")
@@ -1258,6 +1345,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[t], "claude_md_project")
@@ -1342,6 +1433,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file(
@@ -1383,6 +1478,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file(
@@ -1430,6 +1529,10 @@ mod tests {
             layer: Some(1),
             expires_at: Some("2099-01-01".to_string()), // far future
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         let dead = Triple {
             subject: "legacy".to_string(),
@@ -1443,6 +1546,10 @@ mod tests {
             layer: Some(1),
             expires_at: Some("2000-01-01".to_string()), // long past
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[alive, dead], "claude_md_project")
@@ -1524,6 +1631,10 @@ mod tests {
                 layer: Some(1),
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
             Triple {
                 subject: "cargo".to_string(),
@@ -1537,6 +1648,10 @@ mod tests {
                 layer: Some(1),
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
         ];
         store
@@ -1599,6 +1714,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[t.clone()], "test")

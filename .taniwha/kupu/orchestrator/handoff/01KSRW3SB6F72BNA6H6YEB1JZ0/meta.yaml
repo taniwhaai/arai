@@ -1,0 +1,63 @@
+schema_version: 1
+handoff_id: 01KSRW3SB6F72BNA6H6YEB1JZ0
+role: composition
+module: resolve-composition
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-29T03:27:30.235Z"
+  filename: "20260529T032730235Z"
+dispatched_at:
+  iso: "2026-05-29T03:27:30.235Z"
+  filename: "20260529T032730235Z"
+returned_at:
+  iso: "2026-05-29T03:37:08.980Z"
+  filename: "20260529T033708980Z"
+outcome:
+  produced: [composition_manifest.yaml]
+  re_raise: false
+  committed: false
+  wiring: "resolve() 5-step wiring verified already-complete from leaves; no re-implementation"
+  files_created: [src/lib.rs, tests/extends_integration.rs]
+  files_modified: [Cargo.toml, src/extends.rs]
+  integration_tests: 11
+  gate: "fmt clean; clippy no new (9 baseline); 516 tests pass (386 unit + 130 integration incl 11 new)"
+  deviations_flagged_by_dispatcher:
+    - "NEW dev-dependency `tempfile` added — brief said ed25519-dalek is the ONLY new dependency."
+    - "NEW src/lib.rs adds a library target (extends compiled twice: lib + bin); repo convention for integration-testing the binary is subprocess via CARGO_BIN_EXE (cf. #122 hooks_grok_exit_verifier), which needs neither lib.rs nor tempfile."
+  status_note: "Surfaced to user for a decision before verifier/commit; harness approach may be redone."
+build_order: "4 of 4 (composition — wires the three leaves + cross-module integration test)"
+children:
+  - module: directive-tokenisation
+    handoff: 01KSRRYVFH6CAERYQS5TK5Q1N9
+  - module: fetch-verification
+    handoff: 01KSRSR46N9W8F66SVH651VRWF
+  - module: tier-provenance
+    handoff: 01KSRTT28PTQ2T2B3CRQKP3308
+inputs:
+  - filename: composition_contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/resolve-composition/v1.md
+  - filename: contract_directive_tokenisation.md
+    kind: child_contract
+  - filename: contract_fetch_verification.md
+    kind: child_contract
+  - filename: contract_tier_provenance.md
+    kind: child_contract
+  - filename: vocabulary.md
+    kind: vocabulary
+  - filename: project_context.yaml
+    kind: project_context
+  - filename: manifest_directive_tokenisation.yaml
+    kind: child_manifest
+  - filename: manifest_fetch_verification.yaml
+    kind: child_manifest
+  - filename: manifest_tier_provenance.yaml
+    kind: child_manifest
+expected_outputs:
+  - composition_manifest.yaml
+  - re_raise.yaml  # only if a genuine child-mismatch is found
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

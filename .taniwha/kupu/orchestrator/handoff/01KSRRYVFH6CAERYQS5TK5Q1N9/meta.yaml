@@ -1,0 +1,28 @@
+schema_version: 1
+handoff_id: 01KSRRYVFH6CAERYQS5TK5Q1N9
+role: leaf-implementation
+module: directive-tokenisation
+status: returned
+parent_contract_version: 1
+model: sonnet
+dispatched_at: "2026-05-29T02:34:51.115Z"
+returned_at: "2026-05-29T02:40:38.987Z"
+build_order: "1 of 4 (sequential — shares src/extends.rs)"
+outcome:
+  produced: [implementation_manifest.yaml]
+  re_raise: false
+  committed: false  # working-tree only; dispatcher commits once at end
+  files_modified: [src/extends.rs]
+  gate: "fmt clean; clippy ok (3 pre-existing unrelated test warnings); 363 unit + 52 integration pass"
+  summary: "classify_directive() + Tier/ParsedDirective/MalformedDirective; parse_directive routes through it; extract_urls backward-compat preserved; 23 new tests (AC1, AC3 tokeniser half, AC12a-h)."
+inputs:
+  - kind: contract
+    path: inputs/contract.md
+  - kind: vocabulary
+    path: inputs/vocabulary.md
+  - kind: project_context
+    path: inputs/project_context.yaml
+output_destination: outputs/
+expected_outputs:
+  - implementation_bundle
+  # or: re_raise (if a gap is found)

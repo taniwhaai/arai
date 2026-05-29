@@ -1,0 +1,10 @@
+event_id: 01KSRW2E80MX9KTZXAGDKSVX3Z
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T03:22:28.992Z
+  filename: 20260529T032228992Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "leaf-implementation", "module": "tier-provenance", "handoff_id": "01KSRTT28PTQ2T2B3CRQKP3308", "re_raise": false, "committed": false, "files_modified_actual": ["src/extends.rs", "src/parser.rs", "src/store.rs", "src/guardrails.rs", "src/canonicalize.rs", "src/enrich.rs", "src/hooks.rs", "src/scenarios.rs"], "manifest_discrepancy": "4 extra files contained only tier:None/source_label:None field ripples (verified, zero logic change)", "store_migration": "v4 additive", "gate": "fmt+clippy(no new)+test pass (386, +7)", "build_order": "3 of 4"}'

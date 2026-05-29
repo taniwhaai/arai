@@ -1,0 +1,10 @@
+event_id: 01KSRR1SHGKN6KGTKFXMX2EM6P
+kind: user_input_received
+actor:
+  kind: user
+  name: matt
+timestamp:
+  iso: 2026-05-29T02:12:13.488Z
+  filename: 20260529T021213488Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "design_doc_approval", "design_version": 4, "approval": "Approve", "ac11_drop_syntax": "triple-equality (implicit SPO match)", "duplicate_tokens": "fail-closed (skip + warn)", "response_path": ".taniwha/kupu/orchestrator/handoff/user-input-01KSRR1AYRG1SV8SJN0S3P53B2/inputs/response.yaml"}'

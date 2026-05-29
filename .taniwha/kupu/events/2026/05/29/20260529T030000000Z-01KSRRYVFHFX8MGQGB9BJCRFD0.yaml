@@ -1,0 +1,27 @@
+schema_version: 1
+event_id: 01KSRRYVFHFX8MGQGB9BJCRFD0
+kind: contracts_promoted
+timestamp_iso: "2026-05-29T03:00:00.000Z"
+payload:
+  source_handoff: 01KSRR3G6XZ8RP5PEH2CSHWG2A
+  artefacts_promoted:
+    - kind: vocabulary
+      path: kupu/vocabulary/v1.md
+      version: 1
+    - kind: contract
+      module: directive-tokenisation
+      path: kupu/contracts/directive-tokenisation/v1.md
+      version: 1
+    - kind: contract
+      module: fetch-verification
+      path: kupu/contracts/fetch-verification/v1.md
+      version: 1
+    - kind: contract
+      module: tier-provenance
+      path: kupu/contracts/tier-provenance/v1.md
+      version: 1
+    - kind: contract
+      module: resolve-composition
+      path: kupu/contracts/resolve-composition/v1.md
+      version: 1
+  decision_record: decisions/01KSRRYVFHFNFQTC78C63GG70E.md

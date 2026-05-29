@@ -1,0 +1,40 @@
+schema_version: 1
+handoff_id: 01KSRSR46N9W8F66SVH651VRWF
+role: leaf-implementation
+module: fetch-verification
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-29T02:45:03.569Z"
+  filename: "20260529T024503569Z"
+dispatched_at:
+  iso: "2026-05-29T02:45:03.569Z"
+  filename: "20260529T024503569Z"
+returned_at:
+  iso: "2026-05-29T02:59:28.047Z"
+  filename: "20260529T025928047Z"
+outcome:
+  produced: [implementation_manifest.yaml]
+  re_raise: false
+  committed: false
+  files_modified: [Cargo.toml, Cargo.lock, src/extends.rs, src/main.rs]
+  new_dependency: ed25519-dalek
+  gate: "fmt clean; clippy no new warnings (9 baseline); 379 unit (+16) + integration pass"
+  summary: "TrustEntry/TrustFile dual-form serde, verify_content() (sha256 pin + ed25519 sidecar, fail-closed when keyed), fetch() wired, trust --add --pubkey + keyed listing."
+build_order: "2 of 4 (sequential — builds on leaf 1's working-tree types)"
+inputs:
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/fetch-verification/v1.md
+  - filename: vocabulary.md
+    kind: vocabulary
+    source_path: .taniwha/kupu/vocabulary/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+expected_outputs:
+  - implementation_manifest.yaml
+  - re_raise.yaml  # only if contract is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

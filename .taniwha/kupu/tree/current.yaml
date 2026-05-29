@@ -1,0 +1,76 @@
+schema_version: 1
+design_version: 4
+tier: small_multi_module
+as_of: "2026-05-29"
+
+# Build order for small_multi_module: leaves first (sequentially, not in parallel —
+# they share overlapping source files), then the composition node.
+# Sequential order: directive-tokenisation -> fetch-verification -> tier-provenance -> resolve-composition
+# Rationale for sequential dispatch:
+#   directive-tokenisation and fetch-verification both modify src/extends.rs.
+#   tier-provenance modifies src/extends.rs, src/parser.rs, src/store.rs, src/guardrails.rs.
+#   Parallel worktrees would produce conflicting diffs on src/extends.rs at minimum.
+#   Each leaf must be committed to the working tree before the next is dispatched.
+
+nodes:
+  - id: directive-tokenisation
+    kind: leaf
+    contract: contracts/directive-tokenisation/v1.md
+    implementation_status: pending
+    verification_status: pending
+    dispatch_order: 1
+    primary_files:
+      - src/extends.rs
+    notes: "Pure, foundational. Defines ParsedDirective, MalformedDirective, Tier.
+      No dependencies on sibling leaves. Must be dispatched and verified first."
+
+  - id: fetch-verification
+    kind: leaf
+    contract: contracts/fetch-verification/v1.md
+    implementation_status: pending
+    verification_status: pending
+    dispatch_order: 2
+    primary_files:
+      - src/extends.rs
+      - src/main.rs
+      - Cargo.toml
+    depends_on:
+      - directive-tokenisation
+    notes: "Consumes ParsedDirective from directive-tokenisation. Adds ed25519-dalek
+      dependency. Modifies src/extends.rs (overlaps with directive-tokenisation output).
+      Must be dispatched after directive-tokenisation is committed."
+
+  - id: tier-provenance
+    kind: leaf
+    contract: contracts/tier-provenance/v1.md
+    implementation_status: pending
+    verification_status: pending
+    dispatch_order: 3
+    primary_files:
+      - src/extends.rs
+      - src/parser.rs
+      - src/store.rs
+      - src/guardrails.rs
+    depends_on:
+      - fetch-verification
+    notes: "Consumes admitted content + Tier from upstream leaves. Cross-cuts
+      parser.rs, store.rs, guardrails.rs in addition to extends.rs. Must be dispatched
+      after fetch-verification is committed."
+
+  - id: resolve-composition
+    kind: composition
+    contract: contracts/resolve-composition/v1.md
+    implementation_status: pending
+    verification_status: pending
+    dispatch_order: 4
+    child_contracts:
+      - contracts/directive-tokenisation/v1.md
+      - contracts/fetch-verification/v1.md
+      - contracts/tier-provenance/v1.md
+    depends_on:
+      - directive-tokenisation
+      - fetch-verification
+      - tier-provenance
+    notes: "Wires the three leaves within resolve() in src/extends.rs. Writes the
+      cross-module integration tests. Dispatched only after all three leaves are
+      implemented and verified."

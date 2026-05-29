@@ -1,0 +1,54 @@
+schema_version: 1
+handoff_id: 01KSRY2BWJB0MDH0FJ5WDTCP2S
+role: verifier
+module: resolve-composition  # scope: full build (all 4 nodes)
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-29T03:57:34.000Z"
+  filename: "20260529T035734000Z"
+dispatched_at: "2026-05-29T04:01:30.530Z"
+returned_at: "2026-05-29T04:10:11.024Z"
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: pass
+  acs: "AC1-AC14 all pass"
+  tests_added: [tests/verifier_extends_slice.rs]
+  gate: "fmt clean; clippy no new (baseline); cargo test 486 / 0 fail"
+  structural: "src/lib.rs absent; Cargo.toml diff vs main = ed25519-dalek only; tempfile removed"
+  notes: "AC5 (valid sig) + AC9/10/11 (tier ranking) verified via code-path + implementor unit tests (not observable through subprocess stdout) — acceptable evidence per verifier."
+
+inputs:
+  - filename: contract_directive_tokenisation_v1.md
+    kind: contract
+    module: directive-tokenisation
+  - filename: contract_fetch_verification_v1.md
+    kind: contract
+    module: fetch-verification
+  - filename: contract_tier_provenance_v1.md
+    kind: contract
+    module: tier-provenance
+  - filename: contract_resolve_composition_v1.md
+    kind: contract
+    module: resolve-composition
+  - filename: vocabulary_v1.md
+    kind: vocabulary
+  - filename: project_context.yaml
+    kind: project_context
+  - filename: manifest_directive_tokenisation.yaml
+    kind: implementation_manifest
+    module: directive-tokenisation
+  - filename: manifest_fetch_verification.yaml
+    kind: implementation_manifest
+    module: fetch-verification
+  - filename: manifest_tier_provenance.yaml
+    kind: implementation_manifest
+    module: tier-provenance
+  - filename: manifest_resolve_composition.yaml
+    kind: implementation_manifest
+    module: resolve-composition
+
+expected_outputs:
+  - verifier_report.yaml

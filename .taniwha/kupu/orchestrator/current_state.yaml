@@ -1,48 +1,123 @@
 ---
 schema_version: 1
 as_of: "2026-05-29"
-invocation_count: 17  # seventeenth orchestrator invocation
+invocation_count: 26  # twenty-sixth orchestrator invocation
 
 build_phase: complete
-tier: single_module
-brief_version: 5
-brief_scope: "GitHub issue #122 (scoped) — Grok TUI native deny via exit code 2 (src/hooks.rs only)"
+tier: small_multi_module
+brief_version: 6
+brief_scope: "GitHub issue #29 — extend arai:extends with pinning (@sha256), ed25519 detached-sidecar signing, and tiering (strict/advisory/override)"
 
 artefact_status:
-  brief: "v5 — current at kupu/brief/v5.md (issue #122 exit-code sub-task)"
+  brief: "v6 — current at kupu/brief/v6.md"
   project_context: "v1 — current at kupu/project_context.yaml (Rust/cargo/single_package)"
-  design_doc: "v3 — approved by user (event 01KSR9FMB4DXPJWNWSVGZ1VF6H); at kupu/design/v3.md"
+  design_doc: "v4 — APPROVED. Canonical at .taniwha/kupu/design/v4.md."
+  vocabulary: "v1 — PROMOTED. At kupu/vocabulary/v1.md. meta.yaml written."
   contracts: |
-    hooks-grok-exit v1 — at kupu/contracts/hooks-grok-exit/v1.md (with meta.yaml).
-    AC1-AC7 verbatim. Language-neutral. All changes confined to src/hooks.rs.
+    directive-tokenisation v1 — PROMOTED at kupu/contracts/directive-tokenisation/v1.md
+    fetch-verification v1     — PROMOTED at kupu/contracts/fetch-verification/v1.md
+    tier-provenance v1        — PROMOTED at kupu/contracts/tier-provenance/v1.md
+    resolve-composition v1    — PROMOTED at kupu/contracts/resolve-composition/v1.md
+  tree: "Established at kupu/tree/current.yaml. Four nodes: 3 leaves + 1 composition."
   implementation: |
-    hooks-grok-exit — VERIFIED PASS (handoff 01KSR9W013AK08AWPHRQ4KN5PZ).
-    Manifest at: kupu/orchestrator/handoff/01KSR9W013AK08AWPHRQ4KN5PZ/outputs/implementation_manifest.md
-    Functions changed: desired_exit_code (new, ~L351–364), handle_stdin (~L366–430),
-    handle_stdin_impl return type changed to Result<i32, String> (~L432–940).
+    directive-tokenisation: VERIFIED (handoff 01KSRRYVFH6CAERYQS5TK5Q1N9)
+    fetch-verification: VERIFIED (handoff 01KSRSR46N9W8F66SVH651VRWF)
+    tier-provenance: VERIFIED (handoff 01KSRTT28PTQ2T2B3CRQKP3308)
+    resolve-composition: VERIFIED (handoff 01KSRXF0NVCVZTK9TRF2E1XTAE, corrective)
+    ALL FOUR NODES verified. No commits yet — awaiting user approval.
+    Branch: feat/29-extends-policy
   verification: |
-    COMPLETE — verifier returned overall: pass (handoff 01KSRB0VERIFIERV1000000001).
-    AC1-AC7 all pass. Verifier authored tests/hooks_grok_exit_verifier.rs (9 tests).
-    Full cargo test: 340 passed, 0 failed, 0 regressions.
-  tree: "none — single-module tier, no tree"
+    COMPLETE — verifier handoff 01KSRY2BWJB0MDH0FJ5WDTCP2S
+    overall: PASS
+    AC1-AC14: all PASS
+    Gate: fmt clean, clippy 0 new warnings, test 486/0
+    Verifier added: tests/verifier_extends_slice.rs (23 tests)
   open_re_raises: 0
 
+settled_decisions:
+  AC11_drop_syntax:
+    choice: triple-equality (implicit)
+    detail: |
+      A local rule whose SPO exactly matches an upstream rule's SPO implicitly drops
+      that upstream rule when tier=override is in effect. No new directive keyword.
+      Reference-to-absent-SPO is a no-op. Owned by tier-provenance.
+    decision_record: ".taniwha/kupu/decisions/01KSRR3G6X14A0N2YQMXXJETSV.md"
+  AC12_duplicate_token:
+    choice: fail-closed (skip + warn)
+    detail: |
+      A directive carrying more than one @<pin> OR more than one tier= token is
+      malformed. Skip the directive + emit stderr warning naming the duplicate token.
+      Owned by directive-tokenisation (AC12 family).
+    decision_record: ".taniwha/kupu/decisions/01KSRR3G6X14A0N2YQMXXJETSV.md"
+  contract_promotion:
+    choice: all five artefacts promoted to canonical
+    detail: |
+      vocabulary v1, directive-tokenisation v1, fetch-verification v1,
+      tier-provenance v1, resolve-composition v1 all promoted from handoff
+      01KSRR3G6XZ8RP5PEH2CSHWG2A outputs. Tree established.
+    decision_record: ".taniwha/kupu/decisions/01KSRRYVFHFNFQTC78C63GG70E.md"
+  no_per_leaf_commit:
+    choice: single commit at end (after verifier passes)
+    detail: |
+      Per the dispatcher's corrected flow, leaves do NOT commit individually.
+      All working-tree changes accumulate on feat/29-extends-policy and a single
+      commit is made by the dispatcher after the final verifier passes.
+  dispatch_resolve_composition:
+    choice: dispatch composition node after all three leaves gate-passed
+    decision_record: ".taniwha/kupu/decisions/01KSRW4006JG8MAQSRSC8C4RFA.md"
+  build_complete:
+    choice: surface to user for commit + PR approval
+    detail: |
+      Verifier handoff 01KSRY2BWJB0MDH0FJ5WDTCP2S returned overall: PASS.
+      AC1-AC14 all pass. Gate: fmt clean, clippy 0 new, test 486/0.
+      Decision record: .taniwha/kupu/decisions/01KSRYU8K2BUILD0COMPLETE001.md
+      Event: 01KSRYU8K2BUILD0COMPLETE001 (build_complete)
+
+design_v4_summary:
+  tier: small_multi_module
+  modules:
+    - name: directive-tokenisation
+      acs: [AC1, AC3, AC12]
+      files: ["src/extends.rs"]
+      dispatch_order: 1
+      status: verified
+    - name: fetch-verification
+      acs: [AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC13]
+      files: ["src/extends.rs", "src/main.rs", "Cargo.toml"]
+      dispatch_order: 2
+      status: verified
+    - name: tier-provenance
+      acs: [AC9, AC10, AC11]
+      files: ["src/extends.rs", "src/parser.rs", "src/store.rs", "src/guardrails.rs"]
+      dispatch_order: 3
+      status: verified
+  composition_node: "resolve() in src/extends.rs + tests/extends_integration.rs"
+  dispatch_order: 4
+  composition_status: verified
+
+active_handoff: null  # build complete; awaiting user commit/PR decision
+
 last_action: |
-  Invocation 17: user approved "Approve commit + PR".
-  next_action.yaml: git_commit_and_pr (seq 1) + record_event commit_landed (seq 2) + complete (seq 3).
-  Dispatcher should: stage explicit file list, commit on feat/122-grok-exit-codes with
-  the conventional-commit message referencing #122, push to origin, open PR against main,
-  then record the commit_landed event and mark build complete.
+  Invocation 26: subagent_returned:verifier:01KSRY2BWJB0MDH0FJ5WDTCP2S.
+  Verifier overall=PASS. AC1-AC14 all pass. Gate clean. Build complete.
+  Decision 01KSRYU8K2BUILD0COMPLETE001 recorded. Surfaced to user for
+  commit + PR approval (next_action.yaml: surface_to_user:completion_review).
 
 next_expected:
-  event: build_complete
+  event: user_response
+  prompt_kind: completion_review
   notes: |
-    After the dispatcher commits, pushes, and opens the PR, it records a commit_landed
-    event and emits the complete action. Build is done.
-    No further orchestrator invocation expected unless CI fails and needs a follow-up.
+    User selects one of:
+      1. Approve commit + PR (Recommended) — dispatcher stages file set,
+         commits with the specified message, pushes feat/29-extends-policy,
+         opens PR to main referencing issue #29.
+      2. Commit only, no PR — dispatcher stages and commits, does not push.
+      3. Hold — no action taken; re-invoke when user is ready.
+    On approval: this is the FINAL dispatcher action for this build.
+    No further orchestrator invocation is needed after the commit is made.
 
 notes: |
-  Build is complete. User approved shipping.
-  Branch feat/122-grok-exit-codes → PR against main.
-  This was the exit-code semantics slice of #122; the rest of #122 is already on main.
-  The .taniwha/kupu/state/ directory (dispatcher scratch) should NOT be committed.
+  Build is COMPLETE. All working-tree changes on feat/29-extends-policy,
+  NOT yet committed. Single commit pending user approval.
+  Commit file set and message are specified in next_action.yaml.
+  Exclude: .taniwha/kupu/state/

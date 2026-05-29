@@ -1074,6 +1074,10 @@ mod tests {
             expires_at: None,
             noenrich: false,
             intent: None,
+
+            tier: None,
+
+            source_label: None,
         };
         let action = fuzzy_match_action("forbid", &g);
         // "forbid" is about predicate, not action — should fall back to taxonomy
@@ -1257,6 +1261,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
             crate::parser::Triple {
                 subject: "Alembic".to_string(),
@@ -1270,6 +1278,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
         ];
 
@@ -1346,6 +1358,10 @@ mod tests {
             expires_at: None,
             noenrich: false,
             intent: None,
+
+            tier: None,
+
+            source_label: None,
         }];
         let prompt = build_enrichment_prompt(&guardrails);
         assert!(prompt.contains("[id:1] Git never: force-push to main"));
@@ -1398,6 +1414,10 @@ mod tests {
             layer: None,
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         }];
         store.upsert_file("test", "test", &triples, "test").unwrap();
         let guardrails = store.load_guardrails().unwrap();
@@ -1427,6 +1447,10 @@ mod tests {
             expires_at: None,
             noenrich: false,
             intent: None,
+
+            tier: None,
+
+            source_label: None,
         }
     }
 
@@ -1512,6 +1536,10 @@ mod tests {
                 layer: Some(1),
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
             crate::parser::Triple {
                 subject: "Internal".to_string(),
@@ -1525,6 +1553,8 @@ mod tests {
                 layer: Some(1),
                 expires_at: None,
                 noenrich: true,
+                tier: None,
+                source_label: None,
             },
         ];
         store.upsert_file("test", "x", &triples, "test").unwrap();

@@ -1,0 +1,91 @@
+schema_version: 1
+module: tier-provenance
+contract_version: 1
+committed: false
+branch: feat/29-extends-policy
+
+files_modified:
+  - src/extends.rs
+  - src/parser.rs
+  - src/store.rs
+  - src/guardrails.rs
+
+gate_results:
+  cargo_fmt_check: pass
+  cargo_clippy_all_targets: pass
+  clippy_warnings_baseline: 9
+  clippy_warnings_after: 9
+  clippy_new_warnings: 0
+  cargo_test: pass
+  test_count_before: 379
+  test_count_after: 386
+  new_tests_added: 7
+
+summary: |
+  Implements tier-provenance as the cross-cutting module for the
+  extends-pinning-signing-tiering slice.
+
+  ## src/extends.rs
+  - Added `Serialize` + `Deserialize` derives to `Tier` enum (required
+    for the Triple serde path).
+  - Updated `resolve()` to embed tier-annotated block-start comments:
+    `<!-- arai:extends-block url="<url>" tier="<tier>" -->` before each
+    inlined upstream block.  The "peer" tier is the default when `tier=`
+    is absent in the directive (backward-compat invariant AC1).
+
+  ## src/parser.rs
+  - Added optional `tier: Option<Tier>` and `source_label: Option<String>`
+    fields to `Triple` (additive; both `#[serde(default)]` so existing
+    serialised triples without these fields round-trip as None = Peer).
+  - `extract_rules()` unchanged in signature; now delegates to
+    `extract_rules_with_provenance(..., None, None)`.
+  - New `extract_rules_with_provenance()` stamps every extracted triple
+    with the supplied tier + source_label.
+  - New `extract_rules_from_resolved()` parses the block-start markers
+    emitted by `resolve()` to apply per-block provenance, then falls back
+    to no provenance (Peer) for the local tail.  Marked `#[allow(dead_code)]`
+    because the callers (discovery.rs) are outside the 4-file scope.
+  - Private helpers `parse_extends_block_marker` and `extract_kv_attr`
+    support `extract_rules_from_resolved`.
+
+  ## src/store.rs
+  - Migration v4 (`migrate_v4`): adds nullable `tier TEXT` and
+    `source_label TEXT` columns to `triples` via `add_column_if_missing`.
+    Existing rows read as NULL = Peer/no-label (backward-compat).
+  - `upsert_file` extended to persist `triple.tier` (serialised as
+    lowercase string) and `triple.source_label` alongside each triple.
+  - `GUARDRAIL_SELECT_PREDICATE_FILTERED` extended with columns 18 + 19
+    (`t.tier`, `t.source_label`).
+  - `guardrail_from_row` reads the new columns; `tier_from_str()` helper
+    deserialises the stored string back to `Tier`.
+  - `Guardrail` struct extended with `tier` and `source_label` fields
+    (additive; `#[serde(default, skip_serializing_if = "Option::is_none")]`).
+
+  ## src/guardrails.rs
+  - `match_guardrails` implements all four tier semantics:
+    - Override (AC11): before matching, build a set of local SPO triples
+      and drop any upstream override-tier rule whose SPO exactly matches
+      a local rule.
+    - Advisory (AC10): halve the effective score of advisory-tier rules
+      before sorting; protect them from the low-relevance filter so they
+      are present but ranked lower.
+    - Strict (AC9): protect strict-tier upstream rules from the
+      low-relevance suppress filter; they are never dropped even when a
+      local rule scores higher.
+    - Peer / absent tier (AC1): no code path entered; behaviour unchanged.
+
+  ## Tests added (7 new in guardrails.rs)
+  - `ac9_strict_upstream_not_shadowed_by_local`: local rule has a higher
+    relevance score; strict upstream survives the score filter (AC9).
+  - `ac9_strict_not_suppressed_by_score_filter`: regression for the same
+    scenario from a different angle.
+  - `ac10_advisory_upstream_deprioritised_vs_local_peer`: advisory rule
+    present but ranked after the local peer rule (AC10).
+  - `ac11a_override_upstream_dropped_when_spo_matches_local`: exact SPO
+    match causes upstream override rule to be dropped (AC11 sub-case A).
+  - `ac11b_override_upstream_retained_when_no_local_spo_match`: no local
+    match → upstream override rule retained (AC11 sub-case B).
+  - `ac11c_override_no_upstream_to_drop_is_noop`: local-only rules are
+    unaffected; no spurious drop (AC11 sub-case C).
+  - `ac1_peer_tier_absent_produces_no_behaviour_change`: all-Peer
+    guardrails match identically to pre-slice (AC1 regression).

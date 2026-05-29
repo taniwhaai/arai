@@ -1,160 +1,149 @@
 ---
 schema_version: 1
-generated_at: "2026-05-29T00:10:00.000Z"
-invocation_reason: "user_input_received:completion_review"
-# Orchestrator invocation 17 — user approved "Approve commit + PR"; emit git work + complete.
+orchestrator_invocation: 26
+generated_at: "2026-05-29T04:11:36.000Z"
+triggered_by: "subagent_returned:verifier:01KSRY2BWJB0MDH0FJ5WDTCP2S"
+
+# Verifier returned overall: PASS. AC1-AC14 all pass. Gate: fmt clean,
+# clippy 0 new warnings, test 486/0. Build is complete. Surface to user
+# for commit + PR approval.
 
 actions:
 
   - sequence: 1
-    action: git_commit_and_pr
-    # -------------------------------------------------------------------------
-    # COMMIT
-    # -------------------------------------------------------------------------
-    commit:
-      branch: feat/122-grok-exit-codes
-      # Stage ALL of the following paths before committing (use git add with
-      # explicit paths — do NOT use git add -A or git add .):
-      stage:
-        # Production code
-        - src/hooks.rs
-        # Verifier integration test (authored by the verifier subagent)
-        - tests/hooks_grok_exit_verifier.rs
-        # Taniwha build artefacts for this slice
-        - .taniwha/kupu/brief/v5.md
-        - .taniwha/kupu/brief/meta.yaml
-        - .taniwha/kupu/design/v3.md
-        - .taniwha/kupu/design/meta.yaml
-        - .taniwha/kupu/contracts/hooks-grok-exit/
-        - .taniwha/kupu/decisions/01KSR7YQNE5VM9WBM0NSQ7CKSH.md
-        - .taniwha/kupu/decisions/01KSR9H0AHAP7CTGARXXHWH634.md
-        - .taniwha/kupu/decisions/01KSR9ZSS5D7GCQK9RXM47EBEP.md
-        - .taniwha/kupu/decisions/01KSRB5X5V63V6PZ0ZVV2ZCK5R.md
-        - .taniwha/kupu/events/index.yaml
-        - .taniwha/kupu/events/2026/05/28/
-        - .taniwha/kupu/events/2026/05/29/
-        - .taniwha/kupu/orchestrator/handoff/01KSR7YKX36401D3325JJDMXSV/
-        - .taniwha/kupu/orchestrator/handoff/01KSR9GV1PEB6G5F9Q2JFFEQ5Q/
-        - .taniwha/kupu/orchestrator/handoff/01KSR9W013AK08AWPHRQ4KN5PZ/
-        - .taniwha/kupu/orchestrator/handoff/01KSRB0VERIFIERV1000000001/
-        - .taniwha/kupu/orchestrator/handoff/user-input-01KSR9F9RRPSFCW8F5YJCJTX8M/
-        - .taniwha/kupu/orchestrator/handoff/user-input-01KSRB9G8NERG440Z0G8VPQNJ4/
-        - .taniwha/kupu/orchestrator/current_state.yaml
-        - .taniwha/kupu/orchestrator/next_action.yaml
-        - .taniwha/project.yaml
-        # NOTE: do NOT stage .taniwha/kupu/state/ — that is dispatcher scratch state
-      message: |
-        feat: Grok TUI native deny via exit code 2 (#122)
+    action: record_decision
+    decision:
+      kind: scope_change
+      triggered_by: "01KSRYTX4V76JRET2EBKQVA2JB"
+      affects:
+        - kind: build
+          id: "issue-29-extends-policy"
+          from_version: null
+          to_version: 1
+      body: |
+        Decision file already written at:
+        .taniwha/kupu/decisions/01KSRYU8K2BUILD0COMPLETE001.md
+        Events log appended: event 01KSRYU8K2BUILD0COMPLETE001 (build_complete)
 
-        When `arai guardrails --match-stdin` runs under the Grok TUI
-        (detected via GROK_HOOK_EVENT or GROK_SESSION_ID env vars) and
-        a Block-severity rule fires on a PreToolUse event, the process
-        now exits with code 2 so Grok can natively deny the tool call.
+  - sequence: 2
+    action: surface_to_user
+    prompt_kind: completion_review
+    mode: structured
+    context: |
+      The independent verifier returned overall: PASS for the full issue-#29 slice.
+      All 14 acceptance criteria pass. Gate: fmt clean, clippy 0 new warnings,
+      cargo test 486/0. The verifier added tests/verifier_extends_slice.rs
+      (23 subprocess-level tests).
 
-        All other events (PostToolUse, UserPromptSubmit) and all other
-        hosts (Claude Code, unknown) continue to exit 0; Claude Code's
-        permissionDecision JSON path is unchanged (regression-guarded).
+      The working tree on branch feat/29-extends-policy has NO commits yet.
+      The build is ready to commit and merge. Choose how to proceed.
 
-        Adds `desired_exit_code(host, event, deny_outcome) -> i32` pure
-        helper and updates `handle_stdin_impl` return type to
-        `Result<i32, String>`.  Error paths on PreToolUse under Grok
-        are fail-closed (exit 2 + Grok deny JSON).
+      COMMIT MESSAGE (use verbatim):
 
-        AC1–AC7 verified; 340 unit tests + all integration suites pass.
-        Verifier integration tests: tests/hooks_grok_exit_verifier.rs.
+        feat(extends): add @sha256 pinning, ed25519 sidecar signing, and tier provenance (#29)
+
+        Extend arai:extends with three security/trust features for upstream policy ingestion:
+
+        - @<sha256> pin token: content is verified against the hash before ingestion;
+          mismatch rejects and warns. Pin check runs on both fresh-remote and stale-cache paths.
+        - ed25519 detached-sidecar signing: `arai trust --add --pubkey <hex>` records a
+          verifying key; the .sig sidecar is fetched and verified before ingestion. No pubkey
+          = no check (opt-in). Legacy trust files (bare URL list) parse correctly unchanged.
+        - Tier provenance enum (strict/advisory/override/peer) on Triple and Guardrail:
+          strict rules retained unconditionally, advisory scores halved but present, override
+          rules drop any local rule whose subject-predicate-object triple matches exactly.
+
+        New dependency: ed25519-dalek = "2.1.1". tempfile removed from dev-deps.
+        486 tests pass; 23 new verifier subprocess tests in tests/verifier_extends_slice.rs.
 
         Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 
-    # -------------------------------------------------------------------------
-    # PUSH
-    # -------------------------------------------------------------------------
-    push:
-      remote: origin
-      branch: feat/122-grok-exit-codes
-      flags: []  # standard push, no force
+      FILES TO STAGE (explicit git add, no git add -A):
+        Cargo.toml
+        Cargo.lock
+        src/extends.rs
+        src/parser.rs
+        src/store.rs
+        src/guardrails.rs
+        src/main.rs
+        src/canonicalize.rs
+        src/enrich.rs
+        src/hooks.rs
+        src/scenarios.rs
+        tests/extends_integration.rs
+        tests/verifier_extends_slice.rs
+        .taniwha/kupu/orchestrator/current_state.yaml
+        .taniwha/kupu/orchestrator/next_action.yaml
+        .taniwha/kupu/decisions/01KSRYU8K2BUILD0COMPLETE001.md
+        .taniwha/kupu/events/2026/05/29/20260529T041136000Z-01KSRYU8K2BUILD0COMPLETE001.yaml
+        .taniwha/kupu/events/index.yaml
+        .taniwha/kupu/orchestrator/handoff/01KSRY2BWJB0MDH0FJ5WDTCP2S/outputs/verifier_report.yaml
 
-    # -------------------------------------------------------------------------
-    # PULL REQUEST
-    # -------------------------------------------------------------------------
-    pr:
-      base: main
-      head: feat/122-grok-exit-codes
-      title: "feat: Grok TUI native deny via exit code 2 (#122)"
-      body: |
+      DO NOT stage: .taniwha/kupu/state/ or any other path not listed above.
+
+      PR TITLE: feat(extends): add @sha256 pinning, ed25519 signing, and tier provenance (#29)
+      PR BASE: main
+      PR HEAD: feat/29-extends-policy
+
+      PR BODY:
         ## Summary
 
-        This is the **exit-code semantics slice** of issue #122 (Grok TUI native hook support).
-        The earlier slices — host detection (`detect_host`) and Grok-shaped JSON output
-        (`emit_grok_decision`) — were merged on main previously (PR #123 / `feat/grok-tui-support`).
-        This PR closes the remaining gap: when a Block-severity rule fires under the Grok TUI,
-        the process must exit with code 2 so Grok can act on it natively.
+        Closes #29. Extends `arai:extends` with three hardening features for
+        upstream policy ingestion:
 
-        ### What changed
+        - **@sha256 pin token** — append `@<64-char-hex>` to an `arai:extends`
+          directive to require the fetched content to match the given SHA-256.
+          Content whose hash differs is rejected and a warning is emitted. Pin
+          check runs on both the fresh-remote and stale-cache fallback paths.
+        - **ed25519 detached-sidecar signing** — run `arai trust --add <url>
+          --pubkey <hex>` to record an ed25519 verifying key for a trusted URL.
+          On each fetch a `.sig` sidecar is retrieved and the signature verified
+          over the full content bytes before ingestion. Opt-in: no pubkey = no
+          check. Legacy trust files (bare URL list) continue to work unchanged.
+        - **Tier provenance** — `arai:extends` directives accept a `tier=<value>`
+          token (`strict`, `advisory`, `override`). This governs how upstream rules
+          compete with local rules at match time: strict rules are always retained,
+          advisory rules are deprioritised (score halved) but present, override rules
+          implicitly drop any local rule whose subject-predicate-object triple matches
+          exactly.
 
-        **`src/hooks.rs`** (only file modified in production code):
-        - New pure helper `desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32`.
-          Returns `2` iff host is Grok, event is `PreToolUse`, and `deny_outcome` is true;
-          returns `0` for every other combination.
-        - `handle_stdin_impl` return type changed from `Result<(), String>` to `Result<i32, String>`;
-          all early-exit `Ok(())` paths become `Ok(0)`; the emit site returns
-          `Ok(desired_exit_code(host, &result.event, blocking))`.
-        - `handle_stdin` updated to call `std::process::exit(code)` when `code == 2`
-          (Grok PreToolUse deny), and return normally (`Ok(())`) otherwise.
-        - Error paths on `PreToolUse` under Grok are **fail-closed**: emit Grok-shaped deny JSON
-          + exit 2. Error paths under Claude/Unknown are unchanged (exit 0).
+        All three gaps named in issue #29 are closed.
 
-        **`tests/hooks_grok_exit_verifier.rs`** (new — verifier-authored subprocess integration tests):
-        9 tests covering every truth-table cell via `Command::new(env!("CARGO_BIN_EXE_arai"))`.
+        ## Gate
 
-        ### Acceptance criteria (all pass)
+        | Check | Result |
+        |-------|--------|
+        | `cargo fmt --all -- --check` | PASS |
+        | `cargo clippy --all-targets` | PASS (0 new warnings) |
+        | `cargo test` | PASS (486 tests, 0 failures) |
 
-        | AC | Criterion | Status |
-        |----|-----------|--------|
-        | AC1 | Grok + PreToolUse + Block → exit 2, Grok deny JSON | pass |
-        | AC2 | Grok + PreToolUse + allow → exit 0 | pass |
-        | AC3 | Claude + PreToolUse + Block → exit 0, Claude deny JSON (regression guard) | pass |
-        | AC4 | Internal error on PreToolUse under Grok → exit 2, Grok deny (fail-closed) | pass |
-        | AC5 | Internal error under Claude → exit 0, Claude deny | pass |
-        | AC6 | PostToolUse or UserPromptSubmit under Grok → exit 0 always | pass |
-        | AC7 | 340 unit tests + all integration suites pass, 0 regressions | pass |
+        New dependency: `ed25519-dalek = "2.1.1"`. `tempfile` removed from
+        dev-dependencies. `src/lib.rs` does not exist (single-binary crate maintained).
 
-        ### Test run
+        ## Tests added
 
-        ```
-        test result: ok. 340 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-        ```
+        - `tests/extends_integration.rs` — 11 subprocess-level integration tests
+        - `tests/verifier_extends_slice.rs` — 23 subprocess-level verifier tests
+          covering all 14 acceptance criteria families
 
-        All integration suites green: `hooks_safety` (5/5), `hooks_grok_exit_verifier` (9/9),
-        `compliance_correlation` (3/3), `parser_coverage` (19/19),
-        `prompt_collector_integration` (3/3), `prompt_collector_verifier` (9/9),
-        `intent_severity` (4/4), `mcp_check_action` (1/1), `sync_integration` (3/3),
-        `canonicalize_integration` (2/2), `verifier_base_directory_resolution` (2/2).
+        ## Acceptance criteria
+
+        AC1 bare directive backward-compat, AC2 pin admit, AC3 pin mismatch/malformed,
+        AC4 pin on cache path, AC5 valid signature admits, AC6 missing sidecar rejects,
+        AC7 no-pubkey no-check, AC8 legacy trust file, AC9 strict tier, AC10 advisory
+        tier, AC11 override triple-equality drop (A/B/C), AC12a-h tokeniser
+        reject/accept matrix, AC13 trust --add --pubkey CLI, AC14 full gate. All 14 pass.
 
         🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
-  - sequence: 2
-    action: record_event
-    # Dispatcher: append this entry to .taniwha/kupu/events/index.yaml and write
-    # the corresponding event file at the canonical path under events/2026/05/29/.
-    # Use kupu.record_event if available; otherwise write the file and append manually.
-    event:
-      kind: commit_landed
-      payload:
-        branch: feat/122-grok-exit-codes
-        files_committed:
-          - src/hooks.rs
-          - tests/hooks_grok_exit_verifier.rs
-          - .taniwha/ (build artefacts — see stage list in sequence 1)
-        pr_opened: true
-        base_branch: main
-        issue_ref: "122"
-        slice: exit-code-semantics
-
-  - sequence: 3
-    action: complete
-    summary:
-      modules_implemented: 1
-      compositions_built: 0
-      contract_amendments: 0
-      re_raises_resolved: 0
-      re_raises_user_escalated: 0
+    questions:
+      - header: "Commit and PR"
+        question: "How would you like to proceed with the completed issue-#29 implementation?"
+        multi_select: false
+        options:
+          - label: "Approve commit + PR (Recommended)"
+            description: "Stage the file set, commit with the message above, push feat/29-extends-policy, and open a PR to main referencing issue #29."
+          - label: "Commit only, no PR"
+            description: "Stage and commit locally on feat/29-extends-policy. Do not push or open a PR yet."
+          - label: "Hold"
+            description: "Do not commit yet. Leave the working tree as-is. Re-invoke when ready."

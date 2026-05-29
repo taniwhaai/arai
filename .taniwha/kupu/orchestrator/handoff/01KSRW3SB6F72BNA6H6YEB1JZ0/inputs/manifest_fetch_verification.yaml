@@ -1,0 +1,71 @@
+schema_version: 1
+module: fetch-verification
+contract_version: 1
+status: complete
+
+files_modified:
+  - path: Cargo.toml
+    change: added ed25519-dalek = "2.1.1" dependency (resolved to 2.2.0)
+  - path: src/extends.rs
+    change: |
+      - Replaced legacy TrustFile (Vec<String>) with TrustEntry + TrustFile with
+        dual-form serde deserialiser (legacy string form + new inline-table form)
+      - Added hex_to_bytes, decode_verifying_key, bytes_sha256_hex helpers
+      - Added verify_content() — pin check + ed25519 signature check with
+        testable sidecar-fetch callback
+      - Added fetch_sig_remote() — HTTPS sidecar fetcher for live code path
+      - Updated fetch() to accept pin: Option<&str> and perform verification
+        on both fresh-remote and stale-cache paths (AC4)
+      - Added extract_directives() returning Vec<ParsedDirective>
+      - Updated resolve() to use extract_directives() and thread pin into fetch()
+      - Updated extract_urls() to delegate to extract_directives() (backward-compat)
+      - Updated trust_add(), trust_remove(), trust_list() for new TrustEntry type
+      - Updated existing test_trust_add_and_list test for new API
+      - Added 16 new unit tests covering AC2, AC3, AC4, AC5, AC6a, AC6b, AC7,
+        AC8 (3 variants + round-trip), AC13a, AC13b, and malformed-key test
+  - path: src/main.rs
+    change: |
+      - Added --pubkey <HEX> arg to Trust subcommand
+      - Updated cmd_trust() to accept pubkey, pass to trust_add(), validate hex
+      - Updated trust listing to distinguish keyed entries with "(key configured)"
+
+gate_results:
+  cargo_fmt_check: pass
+  cargo_clippy_all_targets: pass
+    note: warnings match pre-existing baseline exactly (3 pre-existing test warnings,
+          2 pre-existing bin-test warnings, all in code not touched by this leaf)
+  cargo_test: pass
+  test_count: 379
+  new_tests_added: 16
+  tests_by_ac:
+    AC2: ac2_matching_pin_admits
+    AC3: ac3_pin_mismatch_rejects
+    AC4: ac4_pin_check_on_stale_cache_content
+    AC5: ac5_valid_signature_admits, ac5_valid_pin_and_signature_admits
+    AC6a: ac6a_sidecar_fetch_failure_rejects
+    AC6b: ac6b_invalid_signature_rejects
+    AC7: ac7_no_pubkey_no_sig_check, ac7_no_pubkey_pin_check_only
+    AC8: ac8_legacy_trust_file_parses, ac8_new_trust_file_parses,
+         ac8_mixed_trust_file_parses, ac8_legacy_file_not_rewritten_on_read
+    AC13a: ac13a_trust_add_with_pubkey_writes_entry
+    AC13b: ac13b_listing_distinguishes_keyed_entries
+    extra: malformed_configured_key_rejects
+
+backward_compat_invariant:
+  status: satisfied
+  mechanism: |
+    Legacy trusted_extends.toml (trusted = ["url"]) deserialises via the
+    TrustEntryOrString::Url variant to TrustEntry { url, pubkey: None }.
+    pubkey: None skips signature check entirely (no sidecar fetch).
+    pin absent + pubkey absent = verify_content returns Ok(true) immediately.
+    Byte-identical to pre-slice behaviour.
+
+summary: |
+  Implemented the fetch-verification module for the extends-pinning-signing-tiering
+  slice. The module adds a dual-form serde deserialiser for TrustFile (backward-
+  compatible with legacy list-of-strings form), a verify_content() function with
+  injectable sidecar-fetch callback (for testability), and wires pin and ed25519
+  signature checks into the existing fetch() flow on both the fresh-remote and
+  stale-cache paths. The trust CLI gains --pubkey to record keys, and the listing
+  distinguishes keyed entries. The only new crate dependency is ed25519-dalek.
+  All 379 tests pass; no new clippy warnings introduced.

@@ -1,0 +1,10 @@
+event_id: 01KSRSPPSPFR791JN8CABHGH13
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T02:41:07.382Z
+  filename: 20260529T024107382Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "leaf-implementation", "module": "directive-tokenisation", "handoff_id": "01KSRRYVFH6CAERYQS5TK5Q1N9", "re_raise": false, "committed": false, "files_modified": ["src/extends.rs"], "gate": "fmt+clippy+test pass (363 unit + 52 integration)", "build_order": "1 of 4"}'

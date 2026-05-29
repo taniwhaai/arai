@@ -1,0 +1,10 @@
+event_id: 01KSS1EWEERTQGQBJ129V5R8A9
+kind: user_input_received
+actor:
+  kind: user
+  name: matt
+timestamp:
+  iso: 2026-05-29T04:56:39.630Z
+  filename: 20260529T045639630Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "completion_review", "selected": "Approve commit + PR", "response_path": ".taniwha/kupu/orchestrator/handoff/user-input-01KSS1EJRQMB5T26BT84SRC2X2/inputs/response.yaml"}'

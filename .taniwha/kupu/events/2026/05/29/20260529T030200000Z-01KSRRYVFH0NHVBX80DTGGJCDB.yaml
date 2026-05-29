@@ -1,0 +1,10 @@
+schema_version: 1
+event_id: 01KSRRYVFH0NHVBX80DTGGJCDB
+kind: subagent_dispatched
+timestamp_iso: "2026-05-29T03:02:00.000Z"
+payload:
+  role: leaf-implementation
+  module: directive-tokenisation
+  handoff_id: 01KSRRYVFH6CAERYQS5TK5Q1N9
+  contract_version: 1
+  vocabulary_version: 1

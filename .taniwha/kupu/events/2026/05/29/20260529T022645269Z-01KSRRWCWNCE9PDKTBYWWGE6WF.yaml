@@ -1,0 +1,10 @@
+event_id: 01KSRRWCWNCE9PDKTBYWWGE6WF
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T02:26:45.269Z
+  filename: 20260529T022645269Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KSRR3G6XZ8RP5PEH2CSHWG2A", "re_raise": false, "produced": ["vocabulary.md", "contract_directive_tokenisation.md", "contract_fetch_verification.md", "contract_tier_provenance.md", "contract_resolve_composition.md"], "modules": ["directive-tokenisation", "fetch-verification", "tier-provenance"], "composition": "resolve"}'

@@ -168,6 +168,11 @@ enum Commands {
         /// Remove this URL from the trust list
         #[arg(long, value_name = "URL")]
         remove: Option<String>,
+        /// ed25519 public key for the URL being added (64-char lowercase hex).
+        /// When set, fetches of this URL require a valid detached signature at
+        /// <url>.sig.  Only valid with --add.
+        #[arg(long, value_name = "HEX")]
+        pubkey: Option<String>,
     },
     /// Replay synthetic hook scenarios against the current rule set to
     /// catch regressions in rule behaviour.  Scenarios are JSON describing
@@ -397,7 +402,11 @@ fn main() {
         ),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
-        Commands::Trust { add, remove } => cmd_trust(add, remove),
+        Commands::Trust {
+            add,
+            remove,
+            pubkey,
+        } => cmd_trust(add, remove, pubkey),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
         Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
         Commands::Stats {
@@ -1018,18 +1027,42 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_trust(add: Option<String>, remove: Option<String>) -> Result<(), String> {
+fn cmd_trust(
+    add: Option<String>,
+    remove: Option<String>,
+    pubkey: Option<String>,
+) -> Result<(), String> {
     let cfg = config::Config::load()?;
     match (add, remove) {
         (Some(url), None) => {
-            let added = extends::trust_add(&url, &cfg.arai_base_dir)?;
+            // Validate hex format before calling trust_add (which also validates).
+            if let Some(ref pk) = pubkey {
+                if pk.len() != 64 || !pk.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "invalid pubkey: must be a 64-character hex string (got {} chars)",
+                        pk.len()
+                    ));
+                }
+            }
+            let added = extends::trust_add(&url, &cfg.arai_base_dir, pubkey.as_deref())?;
             if added {
-                println!("  Trusted: {url}");
+                if pubkey.is_some() {
+                    println!("  Trusted: {url} (key configured)");
+                } else {
+                    println!("  Trusted: {url}");
+                }
             } else {
-                println!("  Already trusted: {url}");
+                if pubkey.is_some() {
+                    println!("  Updated: {url} (key configured)");
+                } else {
+                    println!("  Already trusted: {url}");
+                }
             }
         }
         (None, Some(url)) => {
+            if pubkey.is_some() {
+                return Err("--pubkey is only valid with --add".to_string());
+            }
             let removed = extends::trust_remove(&url, &cfg.arai_base_dir)?;
             if removed {
                 println!("  Untrusted: {url}");
@@ -1041,13 +1074,20 @@ fn cmd_trust(add: Option<String>, remove: Option<String>) -> Result<(), String> 
             return Err("Pass --add or --remove, not both".to_string());
         }
         (None, None) => {
-            let urls = extends::trust_list(&cfg.arai_base_dir);
-            if urls.is_empty() {
+            if pubkey.is_some() {
+                return Err("--pubkey is only valid with --add".to_string());
+            }
+            let entries = extends::trust_list(&cfg.arai_base_dir);
+            if entries.is_empty() {
                 println!("No trusted URLs.  Add one with `arai trust --add https://...`");
             } else {
-                println!("Trusted URLs ({}):", urls.len());
-                for u in urls {
-                    println!("  - {u}");
+                println!("Trusted URLs ({}):", entries.len());
+                for e in &entries {
+                    if e.pubkey.is_some() {
+                        println!("  - {} (key configured)", e.url);
+                    } else {
+                        println!("  - {}", e.url);
+                    }
                 }
             }
         }

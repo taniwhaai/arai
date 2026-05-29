@@ -1,0 +1,10 @@
+event_id: 01KSS1JD4BVRHBFZSAAHNWHPKG
+kind: commit_landed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T04:58:35.019Z
+  filename: 20260529T045835019Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"branch": "feat/29-extends-policy", "commit": "556c670", "issue_ref": "29", "pr_number": 138, "pr_url": "https://github.com/taniwhaai/arai/pull/138", "base_branch": "main", "staged_files": 127, "code_files": ["Cargo.toml", "Cargo.lock", "src/extends.rs", "src/parser.rs", "src/store.rs", "src/guardrails.rs", "src/main.rs", "src/canonicalize.rs", "src/enrich.rs", "src/hooks.rs", "src/scenarios.rs", "tests/extends_integration.rs", "tests/verifier_extends_slice.rs"]}'

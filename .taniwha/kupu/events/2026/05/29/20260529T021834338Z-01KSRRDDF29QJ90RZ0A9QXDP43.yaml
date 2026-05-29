@@ -1,0 +1,10 @@
+event_id: 01KSRRDDF29QJ90RZ0A9QXDP43
+kind: decision_recorded
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T02:18:34.338Z
+  filename: 20260529T021834338Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"decision_id": "01KSRR3G6X14A0N2YQMXXJETSV", "summary": "Design open questions resolved: AC11 drop syntax (triple-equality implicit SPO match) + duplicate directive token (fail-closed skip+warn)", "design_version": 4}'

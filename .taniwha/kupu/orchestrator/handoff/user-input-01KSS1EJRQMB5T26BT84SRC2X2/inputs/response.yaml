@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: completion_review
+responses:
+  - header: Commit and PR
+    question: How would you like to proceed with the completed issue-#29 implementation?
+    selected: Approve commit + PR

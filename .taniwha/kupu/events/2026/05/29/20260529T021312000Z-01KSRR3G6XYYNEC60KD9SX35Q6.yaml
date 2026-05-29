@@ -1,0 +1,16 @@
+---
+schema_version: 1
+event_id: 01KSRR3G6XYYNEC60KD9SX35Q6
+kind: decision_recorded
+timestamp_iso: "2026-05-29T02:13:12.000Z"
+decision_id: 01KSRR3G6X14A0N2YQMXXJETSV
+decision_kind: re_raise_resolution
+triggered_by: "user_input_received:design_doc_approval (event 01KSRR1SHGKN6KGTKFXMX2EM6P)"
+summary: "Design open questions resolved: AC11 drop syntax (triple-equality implicit) + duplicate directive token handling (fail-closed skip+warn)"
+affects:
+  - kind: design_doc
+    id: v4
+  - kind: contract
+    id: tier-provenance
+  - kind: contract
+    id: directive-tokenisation

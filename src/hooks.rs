@@ -1137,6 +1137,10 @@ mod tests {
             expires_at: None,
             noenrich: false,
             intent: None,
+
+            tier: None,
+
+            source_label: None,
         }
     }
 
@@ -1247,6 +1251,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[triple], "test")
@@ -1360,6 +1368,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("CLAUDE.md", "x", &[triple], "test")
@@ -1459,6 +1471,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         };
         store
             .upsert_file("manual", "x", &[triple], "manual")

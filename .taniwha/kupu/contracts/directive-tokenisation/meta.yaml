@@ -1,0 +1,11 @@
+schema_version: 1
+family: contracts
+module: directive-tokenisation
+current_version: 1
+parent_design_version: 4
+versions:
+  - version: 1
+    path: contracts/directive-tokenisation/v1.md
+    status: current
+    written_at: "2026-05-29"
+    source_handoff: 01KSRR3G6XZ8RP5PEH2CSHWG2A

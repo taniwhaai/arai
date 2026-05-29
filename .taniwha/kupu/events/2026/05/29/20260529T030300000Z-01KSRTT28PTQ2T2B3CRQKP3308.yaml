@@ -1,0 +1,32 @@
+---
+schema_version: 1
+event_id: 01KSRTT28PTQ2T2B3CRQKP3308
+event_kind: subagent_dispatched
+timestamp: "2026-05-29T03:03:00.000Z"
+orchestrator_invocation: 23
+
+payload:
+  role: leaf-implementation
+  module: tier-provenance
+  handoff_id: 01KSRTT28PTQ2T2B3CRQKP3308
+  triggered_by_return:
+    handoff_id: 01KSRSR46N9W8F66SVH651VRWF
+    module: fetch-verification
+    gate_result: pass
+    test_count: 379
+    new_tests: 16
+  inputs:
+    - kind: contract
+      path: .taniwha/kupu/contracts/tier-provenance/v1.md
+    - kind: vocabulary
+      path: .taniwha/kupu/vocabulary/v1.md
+    - kind: project_context
+      path: .taniwha/kupu/project_context.yaml
+  output_destination: .taniwha/kupu/orchestrator/handoff/01KSRTT28PTQ2T2B3CRQKP3308/outputs/
+  expected_outputs:
+    - implementation_bundle
+  notes: |
+    Leaf 3 of 4. Cross-cutting module: extends src/extends.rs (provenance threading),
+    src/parser.rs (additive tier/source_label on triples), src/store.rs (nullable columns),
+    src/guardrails.rs (strict/advisory/override semantics). Must not redefine leaf 1/2 types.
+    No commit; working tree only on branch feat/29-extends-policy.
