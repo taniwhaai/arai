@@ -1,0 +1,12 @@
+---
+schema_version: 1
+event_id: 01KSRQ8P2DN4V6000ORCHESTR1
+kind: orchestrator_decided
+timestamp_iso: 2026-05-29T02:00:00.000Z
+payload:
+  action: dispatch_subagent
+  role: design-doc
+  handoff_id: 01KSRQ8P2DN4V6XYZDESIGN01
+  decision_id: 01KSRQ8P2DN4V6000DECISION1
+  brief_version: 6
+  reason: "Pre-design phase for brief v6 (issue #29 arai:extends pinning/signing/tiering). No design doc exists for this brief. Dispatching design-doc subagent to produce v4."

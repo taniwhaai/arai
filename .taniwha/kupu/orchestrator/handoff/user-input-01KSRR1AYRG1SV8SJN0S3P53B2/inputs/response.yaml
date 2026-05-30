@@ -1,0 +1,22 @@
+schema_version: 1
+prompt_kind: design_doc_approval
+responses:
+  - header: Design approval
+    question: Does design v4 (3-module small_multi_module decomposition for #29) accurately represent what you want built?
+    selected: Approve
+  - header: AC11 drop syntax
+    question: For tier=override (AC11), how should a local instruction file name which upstream rule(s) to drop?
+    selected: Triple-equality (implicit)
+    note: >
+      A local rule whose subject-predicate-object exactly matches an upstream rule
+      implicitly drops that upstream rule when tier=override is in effect. No new
+      directive keyword; relies on exact SPO triple match. This settles design open
+      question 1 and shapes the tier-provenance contract's override input/output spec.
+  - header: Duplicate directive tokens
+    question: If a directive carries two @<pin> tokens or two tier= tokens, what should happen?
+    selected: Fail-closed (skip + warn)
+    note: >
+      A directive carrying more than one @<pin> or more than one tier= token is
+      malformed → skip the directive + emit a stderr warning naming the duplicate.
+      Consistent with the brief's fail-closed posture. Settles design open question 2;
+      owned by directive-tokenisation (AC12 family).

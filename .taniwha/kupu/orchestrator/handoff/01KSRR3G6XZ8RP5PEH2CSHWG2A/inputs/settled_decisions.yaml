@@ -1,0 +1,26 @@
+---
+schema_version: 1
+kind: settled_decisions
+source_event: "01KSRR1SHGKN6KGTKFXMX2EM6P"
+decision_record: ".taniwha/kupu/decisions/01KSRR3G6X14A0N2YQMXXJETSV.md"
+
+decisions:
+  - id: AC11_drop_syntax
+    description: >
+      tier=override drop syntax is triple-equality (implicit). A local rule
+      whose subject-predicate-object exactly matches an upstream rule implicitly
+      drops that upstream rule when tier=override is in effect. No new directive
+      keyword. Owned by tier-provenance.
+    binding_on:
+      - tier-provenance
+      - directive-tokenisation
+
+  - id: AC12_duplicate_token
+    description: >
+      Duplicate directive tokens (two @<pin> or two tier=) = fail-closed (skip
+      + warn). A directive carrying more than one @<pin> OR more than one tier=
+      token is malformed. The directive is skipped (local content preserved) and
+      a stderr warning is emitted naming the duplicate. Owned by
+      directive-tokenisation (AC12 family).
+    binding_on:
+      - directive-tokenisation

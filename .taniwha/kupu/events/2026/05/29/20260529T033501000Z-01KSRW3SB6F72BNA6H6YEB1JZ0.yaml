@@ -1,0 +1,29 @@
+schema_version: 1
+event_id: 01KSRW3SB6F72BNA6H6YEB1JZ0
+kind: subagent_dispatched
+timestamp_iso: 2026-05-29T03:35:01.000Z
+role: composition
+module: resolve-composition
+handoff_id: 01KSRW3SB6F72BNA6H6YEB1JZ0
+inputs:
+  - kind: parent_contract
+    path: .taniwha/kupu/contracts/resolve-composition/v1.md
+  - kind: child_contracts
+    path: .taniwha/kupu/contracts/directive-tokenisation/v1.md
+  - kind: child_contracts
+    path: .taniwha/kupu/contracts/fetch-verification/v1.md
+  - kind: child_contracts
+    path: .taniwha/kupu/contracts/tier-provenance/v1.md
+  - kind: child_implementation_manifests
+    path: .taniwha/kupu/orchestrator/handoff/01KSRRYVFH6CAERYQS5TK5Q1N9/outputs/implementation_manifest.yaml
+  - kind: child_implementation_manifests
+    path: .taniwha/kupu/orchestrator/handoff/01KSRSR46N9W8F66SVH651VRWF/outputs/implementation_manifest.yaml
+  - kind: child_implementation_manifests
+    path: .taniwha/kupu/orchestrator/handoff/01KSRTT28PTQ2T2B3CRQKP3308/outputs/implementation_manifest.yaml
+  - kind: vocabulary
+    path: .taniwha/kupu/vocabulary/v1.md
+  - kind: project_context
+    path: .taniwha/kupu/project_context.yaml
+output_destination: .taniwha/kupu/orchestrator/handoff/01KSRW3SB6F72BNA6H6YEB1JZ0/outputs/
+expected_outputs:
+  - implementation_bundle

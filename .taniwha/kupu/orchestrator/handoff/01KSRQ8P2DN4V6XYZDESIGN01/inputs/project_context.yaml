@@ -1,0 +1,22 @@
+# Redacted project_context for the design-doc subagent (layout + conventions only).
+# Toolchain commands, binary paths, detected versions, and provenance are stripped
+# per the orchestrator's redaction note — the design must stay language-neutral.
+project_context:
+  language:
+    name: rust
+  repo_style:
+    kind: single_package
+    module_layout: "src/{module}.rs"
+    notes: |
+      Single Cargo crate at the repo root (one Cargo.toml). Modules are flat
+      .rs files under src/ (config.rs, hooks.rs, parser.rs, extends.rs, etc.) —
+      NOT subdirectory-per-module. Tests live as `#[cfg(test)] mod tests { ... }`
+      blocks at the bottom of each source file. Cross-module integration tests
+      go under tests/ at the crate root.
+  conventions:
+    naming: snake
+    code_style_notes: |
+      Standard rustfmt + clippy defaults. Project standardises on
+      Result<T, String> for fallible library functions rather than custom
+      Error enums (simpler for a single-binary CLI). Doc comments on public
+      items; avoid panics in library code; .unwrap() fine in tests.

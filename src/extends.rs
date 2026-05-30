@@ -26,8 +26,21 @@
 //!
 //! Only directives appearing at the very top of the file (before any
 //! meaningful content, optionally after YAML frontmatter) are honoured.
+//!
+//! ## Directive tokenisation
+//!
+//! A directive line may carry optional trailing tokens after the URL:
+//!   - `@<pin>` — a 64-character lowercase hex SHA-256 content pin.
+//!   - `tier=strict|advisory|override` — the tier for the upstream block.
+//!
+//! [`classify_directive`] parses a raw directive body (the text after the
+//! `arai:extends` marker and its leading whitespace have been stripped) into
+//! either a [`ParsedDirective`] or a [`MalformedDirective`].  A bare
+//! `arai:extends <url>` (no trailing tokens) produces a `ParsedDirective`
+//! with `pin` absent and `tier` absent — identical to the pre-slice behaviour.
 
-use serde::{Deserialize, Serialize};
+use ed25519_dalek::{Signature, VerifyingKey};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -44,11 +57,268 @@ const CACHE_TTL_SECS: u64 = 86_400;
 /// HTTP timeout for a single fetch attempt.
 const FETCH_TIMEOUT_SECS: u64 = 10;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct TrustFile {
-    #[serde(default)]
-    trusted: Vec<String>,
+// ─── Directive tokenisation types ────────────────────────────────────────────
+
+/// How strongly an upstream block's rules bind relative to local rules.
+///
+/// Only `Strict`, `Advisory`, and `Override` are valid written values in a
+/// directive.  `Peer` is the implicit default when `tier=` is absent; it is
+/// never written in a directive.
+///
+/// `Peer` is part of the public contract for downstream modules (tier-provenance,
+/// resolve-composition) even though this module never constructs it directly —
+/// those modules apply the Peer default when `ParsedDirective.tier` is absent.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)]
+pub enum Tier {
+    /// Upstream rules whose subject matches a local rule take precedence.
+    Strict,
+    /// Upstream rules are deprioritised by the ranker.
+    Advisory,
+    /// Local rules may implicitly drop matching upstream rules by triple-equality.
+    Override,
+    /// No shadowing change, no deprioritisation, no implicit drop.  Applied when
+    /// `tier=` is absent.  Never written in a directive.
+    Peer,
 }
+
+/// The structured result of successfully classifying one `arai:extends`
+/// directive line.
+///
+/// Produced by [`classify_directive`] on the success path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedDirective {
+    /// The URL token, exactly as it appears in the directive.
+    pub url: String,
+    /// The 64-character lowercase hex SHA-256 content pin, if present.
+    /// The leading `@` sigil is stripped.
+    pub pin: Option<String>,
+    /// The declared tier for this upstream block, if present.
+    /// When absent, callers apply the [`Tier::Peer`] default.
+    pub tier: Option<Tier>,
+}
+
+/// The outcome produced by [`classify_directive`] when a directive line cannot
+/// be classified.
+///
+/// The caller is responsible for emitting a stderr warning and skipping the
+/// directive; local content is preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MalformedDirective {
+    /// The whitespace-separated token that caused the failure.
+    pub offending_token: String,
+    /// A short human-readable description of why classification failed.
+    pub reason: String,
+}
+
+/// Classify a raw `arai:extends` directive body into a [`ParsedDirective`] or
+/// [`MalformedDirective`].
+///
+/// # Input
+///
+/// `directive_line` is the text of the directive **after** the `arai:extends`
+/// marker has been stripped.  Both the `#` form and the `<!-- ... -->` form
+/// are accepted: if the input still carries `<!-- ... -->` comment delimiters
+/// they are stripped before tokenisation.
+///
+/// # Token grammar
+///
+/// ```text
+/// <directive_line> ::= <url> (<ws> <token>)*
+/// <token>          ::= "@" <64hex>         # content-pin
+///                    | "tier=" <tier_val>  # tier declaration
+/// <tier_val>       ::= "strict" | "advisory" | "override"
+/// ```
+///
+/// An `@` character **inside** the URL is not a pin token — it is
+/// whitespace-delimited tokens only.
+///
+/// # Fail-closed rules (BINDING: AC12_duplicate_token)
+///
+/// - Two or more `@<pin>` tokens → [`MalformedDirective`] naming the second.
+/// - Two or more `tier=` tokens → [`MalformedDirective`] naming the second.
+/// - Any token that does not match either shape → [`MalformedDirective`].
+/// - A `tier=` token with an unknown value → [`MalformedDirective`].
+/// - An `@`-prefixed token whose remainder is not exactly 64 lowercase hex
+///   characters → [`MalformedDirective`].
+///
+/// # Backward-compatibility invariant (AC1)
+///
+/// A directive with no trailing tokens (bare `arai:extends <url>`) produces a
+/// `ParsedDirective` with `pin` absent and `tier` absent.  No new code path is
+/// entered.
+pub fn classify_directive(directive_line: &str) -> Result<ParsedDirective, MalformedDirective> {
+    // Strip HTML comment delimiters if present so both surface forms are
+    // handled identically.
+    let inner = if let Some(stripped) = directive_line
+        .trim()
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))
+    {
+        stripped.trim()
+    } else {
+        directive_line.trim()
+    };
+
+    // Strip the "arai:extends " prefix if it is still present (callers may
+    // pass the already-stripped body, but we tolerate the full prefix too).
+    let body = if let Some(rest) = inner.strip_prefix("arai:extends ") {
+        rest.trim_start()
+    } else {
+        inner
+    };
+
+    let mut tokens = body.split_whitespace();
+
+    // First token must be the URL.
+    let url = match tokens.next() {
+        Some(u) => u.to_string(),
+        None => {
+            return Err(MalformedDirective {
+                offending_token: String::new(),
+                reason: "directive body is empty — no URL found".to_string(),
+            });
+        }
+    };
+
+    let mut pin: Option<String> = None;
+    let mut tier: Option<Tier> = None;
+
+    for token in tokens {
+        if let Some(hex_part) = token.strip_prefix('@') {
+            // Pin token: @ followed by exactly 64 lowercase hex chars.
+            if pin.is_some() {
+                // AC12d: duplicate pin token → fail-closed.
+                return Err(MalformedDirective {
+                    offending_token: token.to_string(),
+                    reason: format!("duplicate @pin token: {token}"),
+                });
+            }
+            if is_valid_pin_hex(hex_part) {
+                pin = Some(hex_part.to_ascii_lowercase());
+            } else {
+                return Err(MalformedDirective {
+                    offending_token: token.to_string(),
+                    reason: format!("malformed pin: {token} — expected @<64-char lowercase hex>"),
+                });
+            }
+        } else if let Some(value) = token.strip_prefix("tier=") {
+            // Tier token: tier=strict|advisory|override
+            if tier.is_some() {
+                // AC12e: duplicate tier= token → fail-closed.
+                return Err(MalformedDirective {
+                    offending_token: token.to_string(),
+                    reason: format!("duplicate tier= token: {token}"),
+                });
+            }
+            match value {
+                "strict" => tier = Some(Tier::Strict),
+                "advisory" => tier = Some(Tier::Advisory),
+                "override" => tier = Some(Tier::Override),
+                _ => {
+                    return Err(MalformedDirective {
+                        offending_token: token.to_string(),
+                        reason: format!(
+                            "unknown tier value {value:?} — expected strict, advisory, or override"
+                        ),
+                    });
+                }
+            }
+        } else {
+            // AC12a: unknown trailing token → fail-closed.
+            return Err(MalformedDirective {
+                offending_token: token.to_string(),
+                reason: format!("unknown directive token: {token}"),
+            });
+        }
+    }
+
+    Ok(ParsedDirective { url, pin, tier })
+}
+
+/// Returns `true` when `hex` is exactly 64 characters all in `[0-9a-fA-F]`.
+/// Uppercase letters are accepted here and normalised to lowercase by the
+/// caller (per the cross-cutting hex-encoding convention).
+fn is_valid_pin_hex(hex: &str) -> bool {
+    hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+// ─── End directive tokenisation types ────────────────────────────────────────
+
+// ─── Trust file types ────────────────────────────────────────────────────────
+
+/// A per-URL trust record in the trust file.
+///
+/// `pubkey` is an optional 64-character lowercase hex string encoding a
+/// 32-byte ed25519 public key.  When absent, no signature check is performed
+/// for this URL.  When present, a detached ed25519 signature over the fetched
+/// content is required (fetched from `<url>.sig`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustEntry {
+    /// The trusted URL.
+    pub url: String,
+    /// Optional hex-encoded ed25519 public key (64 chars = 32 bytes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pubkey: Option<String>,
+}
+
+/// The in-memory representation of `trusted_extends.toml`.
+///
+/// Supports a dual on-disk form:
+///   - Legacy: `trusted = ["https://..."]` — each string maps to a
+///     `TrustEntry` with `pubkey` absent.
+///   - New: `trusted = [{url = "https://...", pubkey = "..."}]`
+///
+/// Both forms deserialise to the same `Vec<TrustEntry>`.  The serialiser
+/// always writes the new per-entry form.  A legacy file is NOT rewritten on
+/// read.
+#[derive(Debug, Default, Serialize)]
+pub struct TrustFile {
+    /// Ordered list of trust entries.
+    #[serde(default)]
+    pub trusted: Vec<TrustEntry>,
+}
+
+/// Helper enum for dual-form deserialisation: each element of the `trusted`
+/// array can be either a plain URL string (legacy) or an inline table (new).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TrustEntryOrString {
+    /// New form: inline table with `url` and optional `pubkey`.
+    Entry(TrustEntry),
+    /// Legacy form: a bare URL string.
+    Url(String),
+}
+
+impl From<TrustEntryOrString> for TrustEntry {
+    fn from(v: TrustEntryOrString) -> Self {
+        match v {
+            TrustEntryOrString::Entry(e) => e,
+            TrustEntryOrString::Url(u) => TrustEntry {
+                url: u,
+                pubkey: None,
+            },
+        }
+    }
+}
+
+/// Newtype wrapper so we can implement a custom `Deserialize` for `TrustFile`
+/// that accepts both the legacy and new on-disk forms.
+#[derive(Deserialize)]
+struct TrustFileRaw {
+    #[serde(default)]
+    trusted: Vec<TrustEntryOrString>,
+}
+
+impl<'de> Deserialize<'de> for TrustFile {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = TrustFileRaw::deserialize(deserializer)?;
+        let trusted = raw.trusted.into_iter().map(TrustEntry::from).collect();
+        Ok(TrustFile { trusted })
+    }
+}
+
+// ─── End trust file types ─────────────────────────────────────────────────────
 
 /// Path to the trust list: `{arai_base}/trusted_extends.toml`.
 pub fn trust_path(arai_base: &Path) -> PathBuf {
@@ -79,20 +349,43 @@ fn write_trust(arai_base: &Path, tf: &TrustFile) -> Result<(), String> {
     Ok(())
 }
 
+/// Return the `TrustEntry` for a URL if it is currently trusted.
+fn find_trust_entry(url: &str, arai_base: &Path) -> Option<TrustEntry> {
+    read_trust(arai_base)
+        .trusted
+        .into_iter()
+        .find(|e| e.url == url)
+}
+
 /// Return true if the URL is currently trusted.
 pub fn is_trusted(url: &str, arai_base: &Path) -> bool {
-    read_trust(arai_base).trusted.iter().any(|u| u == url)
+    find_trust_entry(url, arai_base).is_some()
 }
 
 /// Add a URL to the trust list.  Idempotent.  HTTPS only.
-pub fn trust_add(url: &str, arai_base: &Path) -> Result<bool, String> {
+/// `pubkey` is an optional 64-character lowercase hex string.
+pub fn trust_add(url: &str, arai_base: &Path, pubkey: Option<&str>) -> Result<bool, String> {
     validate_url(url)?;
-    let mut tf = read_trust(arai_base);
-    if tf.trusted.iter().any(|u| u == url) {
-        return Ok(false);
+    if let Some(pk) = pubkey {
+        validate_pubkey_hex(pk)?;
     }
-    tf.trusted.push(url.to_string());
-    tf.trusted.sort();
+    let mut tf = read_trust(arai_base);
+    if let Some(existing) = tf.trusted.iter_mut().find(|e| e.url == url) {
+        // URL already present; update pubkey only if it changed.
+        let new_pk = pubkey.map(|s| s.to_ascii_lowercase());
+        if existing.pubkey == new_pk {
+            return Ok(false); // idempotent: no change
+        }
+        existing.pubkey = new_pk;
+        tf.trusted.sort_by(|a, b| a.url.cmp(&b.url));
+        write_trust(arai_base, &tf)?;
+        return Ok(true);
+    }
+    tf.trusted.push(TrustEntry {
+        url: url.to_string(),
+        pubkey: pubkey.map(|s| s.to_ascii_lowercase()),
+    });
+    tf.trusted.sort_by(|a, b| a.url.cmp(&b.url));
     write_trust(arai_base, &tf)?;
     Ok(true)
 }
@@ -101,7 +394,7 @@ pub fn trust_add(url: &str, arai_base: &Path) -> Result<bool, String> {
 pub fn trust_remove(url: &str, arai_base: &Path) -> Result<bool, String> {
     let mut tf = read_trust(arai_base);
     let before = tf.trusted.len();
-    tf.trusted.retain(|u| u != url);
+    tf.trusted.retain(|e| e.url != url);
     let removed = tf.trusted.len() != before;
     if removed {
         write_trust(arai_base, &tf)?;
@@ -109,9 +402,155 @@ pub fn trust_remove(url: &str, arai_base: &Path) -> Result<bool, String> {
     Ok(removed)
 }
 
-/// List all currently-trusted URLs.
-pub fn trust_list(arai_base: &Path) -> Vec<String> {
+/// List all currently-trusted entries.
+pub fn trust_list_entries(arai_base: &Path) -> Vec<TrustEntry> {
     read_trust(arai_base).trusted
+}
+
+/// List all currently-trusted URLs (for backward-compat with callers that only
+/// need the URL string).
+pub fn trust_list(arai_base: &Path) -> Vec<TrustEntry> {
+    trust_list_entries(arai_base)
+}
+
+/// Validate that a pubkey string is a 64-character lowercase hex string.
+/// Returns an error string if invalid.
+fn validate_pubkey_hex(hex: &str) -> Result<(), String> {
+    let lower = hex.to_ascii_lowercase();
+    if lower.len() != 64 || !lower.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "pubkey must be a 64-character hex string (got {} chars)",
+            hex.len()
+        ));
+    }
+    // Also verify it decodes to a valid ed25519 public key.
+    decode_verifying_key(&lower)?;
+    Ok(())
+}
+
+/// Decode a hex string into bytes.  Returns an error if any character is not
+/// a valid hex digit or if the string has an odd length.
+fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
+    if !hex.len().is_multiple_of(2) {
+        return Err(format!("hex string has odd length: {}", hex.len()));
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|_| format!("invalid hex byte at offset {i}: {:?}", &hex[i..i + 2]))
+        })
+        .collect()
+}
+
+/// Decode a 64-char lowercase hex string to a `VerifyingKey`.
+/// Returns an error string on any failure (malformed hex, invalid key bytes).
+fn decode_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
+    let bytes = hex_to_bytes(hex).map_err(|e| format!("malformed pubkey hex for ed25519: {e}"))?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "pubkey must decode to exactly 32 bytes".to_string())?;
+    VerifyingKey::from_bytes(&arr).map_err(|e| format!("invalid ed25519 public key: {e}"))
+}
+
+// ─── Content verification ─────────────────────────────────────────────────────
+
+/// Verify obtained content against the configured pin and/or ed25519 signature.
+///
+/// # Arguments
+///
+/// - `url`: the upstream URL (used for the sidecar URL and warning messages)
+/// - `pin`: optional 64-char lowercase hex SHA-256 pin from the `ParsedDirective`
+/// - `obtained_content`: the upstream content bytes to verify
+/// - `entry`: the `TrustEntry` for this URL (supplies optional pubkey)
+/// - `fetch_sig`: callback to fetch the `<url>.sig` sidecar; receives the sidecar
+///   URL as a `&str` and returns `Result<Vec<u8>, String>`.  Used for testability.
+///
+/// # Returns
+///
+/// `Ok(true)` when all configured checks pass (or when no checks are configured).
+/// `Err(String)` with a human-readable warning on any failure.
+///
+/// # Backward-compatibility
+///
+/// When `pin` is absent **and** `entry.pubkey` is absent, no checks run and
+/// the function always returns `Ok(true)`.  Behaviour is byte-identical to
+/// before this function existed.
+pub fn verify_content(
+    url: &str,
+    pin: Option<&str>,
+    obtained_content: &[u8],
+    entry: &TrustEntry,
+    fetch_sig: impl Fn(&str) -> Result<Vec<u8>, String>,
+) -> Result<bool, String> {
+    // ── Pin check ──────────────────────────────────────────────────────────
+    if let Some(expected_pin) = pin {
+        let actual = bytes_sha256_hex(obtained_content);
+        let expected_lower = expected_pin.to_ascii_lowercase();
+        if actual != expected_lower {
+            return Err(format!(
+                "arai: extends content for {url} failed pin check \
+                 (expected {}, got {})",
+                short_hash(&expected_lower),
+                short_hash(&actual)
+            ));
+        }
+    }
+
+    // ── Signature check (only when pubkey configured) ─────────────────────
+    if let Some(pubkey_hex) = &entry.pubkey {
+        // Fail-closed: a malformed key must never silently downgrade to no-check.
+        let verifying_key = decode_verifying_key(pubkey_hex)
+            .map_err(|e| format!("arai: extends for {url} has malformed configured pubkey: {e}"))?;
+
+        // Fetch the detached signature sidecar.
+        let sig_url = format!("{url}.sig");
+        let sig_bytes = fetch_sig(&sig_url).map_err(|e| {
+            format!(
+                "arai: extends for {url} missing or unreachable signature sidecar \
+                 ({sig_url}): {e}"
+            )
+        })?;
+
+        // Parse the sidecar: raw 64 bytes or hex-encoded (with optional
+        // trailing whitespace/newlines).
+        let sig_raw = if sig_bytes.len() == 64 {
+            sig_bytes.clone()
+        } else {
+            // Try treating the sidecar as a hex-encoded signature (128 hex
+            // chars = 64 bytes), optionally followed by whitespace.
+            let maybe_hex = std::str::from_utf8(&sig_bytes)
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if maybe_hex.len() == 128 && maybe_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                hex_to_bytes(&maybe_hex).map_err(|e| {
+                    format!("arai: signature sidecar for {url} is not valid hex: {e}")
+                })?
+            } else {
+                return Err(format!(
+                    "arai: signature sidecar for {url} has unexpected length \
+                     ({} bytes — expected 64 raw bytes or 128 hex chars)",
+                    sig_bytes.len()
+                ));
+            }
+        };
+
+        let sig_arr: [u8; 64] = sig_raw
+            .try_into()
+            .map_err(|_| format!("arai: signature sidecar for {url} did not decode to 64 bytes"))?;
+        let sig = Signature::from_bytes(&sig_arr);
+
+        use ed25519_dalek::Verifier;
+        verifying_key.verify(obtained_content, &sig).map_err(|_| {
+            format!(
+                "arai: extends for {url} failed ed25519 signature verification — \
+                 content may have been tampered with"
+            )
+        })?;
+    }
+
+    Ok(true)
 }
 
 fn validate_url(url: &str) -> Result<(), String> {
@@ -248,10 +687,15 @@ fn url_cache_sig_path(url: &str, arai_base: &Path) -> PathBuf {
 }
 
 fn content_sha256_hex(content: &str) -> String {
+    bytes_sha256_hex(content.as_bytes())
+}
+
+/// Compute the SHA-256 hash of raw bytes and return it as a lowercase hex string.
+fn bytes_sha256_hex(data: &[u8]) -> String {
     let mut h = Sha256::new();
-    h.update(content.as_bytes());
-    let bytes = h.finalize();
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    h.update(data);
+    let hash = h.finalize();
+    hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn cache_is_fresh(path: &Path) -> bool {
@@ -270,19 +714,37 @@ fn cache_is_fresh(path: &Path) -> bool {
 /// Fetch an extends URL, honouring the cache and trust list.  Returns the
 /// file contents or an error.  Not recursive — the returned content is
 /// used as-is; its own extends directives (if any) are ignored.
-pub fn fetch(url: &str, arai_base: &Path) -> Result<String, String> {
+///
+/// `pin` is the optional 64-char lowercase hex SHA-256 content pin from the
+/// `arai:extends` directive.  When present, the fetched/cached content is
+/// checked against it (and against an ed25519 signature when the URL has a
+/// configured public key in the trust file).
+///
+/// When `pin` is absent and the URL has no configured pubkey the function
+/// behaves byte-identically to its pre-verification incarnation.
+pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, String> {
     validate_url(url)?;
     if !is_trusted(url, arai_base) {
         return Err(format!(
             "URL not trusted — run `arai trust {url}` to approve it"
         ));
     }
+    // Unwrap is safe: is_trusted just confirmed the entry exists.
+    let entry = find_trust_entry(url, arai_base).unwrap();
 
     let path = url_cache_path(url, arai_base);
     let sig_path = url_cache_sig_path(url, arai_base);
 
     if cache_is_fresh(&path) {
         if let Some(content) = read_cache_verified(&path, &sig_path, url) {
+            // Run pin + signature verification on the cached content.
+            // AC4: pin check runs on the stale-cache path too.
+            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig_remote).map_err(
+                |e| {
+                    eprintln!("{e}");
+                    e
+                },
+            )?;
             return Ok(content);
         }
         // Verification failed (or sidecar missing on a chain-aware install) —
@@ -292,6 +754,14 @@ pub fn fetch(url: &str, arai_base: &Path) -> Result<String, String> {
 
     match fetch_remote(url) {
         Ok(content) => {
+            // Pin + signature check on freshly-fetched content before we cache it.
+            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig_remote).map_err(
+                |e| {
+                    eprintln!("{e}");
+                    e
+                },
+            )?;
+
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -324,15 +794,51 @@ pub fn fetch(url: &str, arai_base: &Path) -> Result<String, String> {
             // accepting an unverified stale copy would let cache tampering
             // outlive the TTL.
             if let Some(cached) = read_cache_verified(&path, &sig_path, url) {
-                eprintln!(
-                    "arai: extends fetch failed for {url}, using verified stale cache ({fetch_err})"
-                );
-                let _ = filetouch(&path);
-                return Ok(cached);
+                // AC4: pin + signature check on stale-cache fallback too.
+                match verify_content(url, pin, cached.as_bytes(), &entry, fetch_sig_remote) {
+                    Ok(_) => {
+                        eprintln!(
+                            "arai: extends fetch failed for {url}, using verified stale cache ({fetch_err})"
+                        );
+                        let _ = filetouch(&path);
+                        return Ok(cached);
+                    }
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return Err(e);
+                    }
+                }
             }
             Err(fetch_err)
         }
     }
+}
+
+/// Fetch the signature sidecar for a URL using the existing HTTPS fetch posture.
+/// Used as the default `fetch_sig` callback in the live code path.
+fn fetch_sig_remote(sig_url: &str) -> Result<Vec<u8>, String> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS)))
+        .max_redirects(0)
+        .build()
+        .new_agent();
+
+    let response = agent
+        .get(sig_url)
+        .header("Accept-Encoding", "identity")
+        .call()
+        .map_err(|e| format!("HTTP error: {e}"))?;
+
+    let (parts, mut body) = response.into_parts();
+    if !parts.status.is_success() {
+        return Err(format!("HTTP {} from {sig_url}", parts.status));
+    }
+
+    // Signature sidecar is at most 128 bytes (64-byte raw sig or 128-char hex).
+    body.with_config()
+        .limit(256)
+        .read_to_vec()
+        .map_err(|e| format!("read body: {e}"))
 }
 
 /// Read a cached upstream policy and verify its SHA-256 against the sidecar.
@@ -429,12 +935,11 @@ fn filetouch(path: &Path) -> std::io::Result<()> {
 }
 
 /// Scan markdown content for `arai:extends` directives at the top of the file.
-/// Returns a list of URLs in the order they appear.  Only directives appearing
-/// before any meaningful content (blank lines + comments + a single H1 allowed)
-/// are honoured.
-pub fn extract_urls(content: &str) -> Vec<String> {
-    let mut urls = Vec::new();
-    // Skip YAML frontmatter
+/// Returns a list of `ParsedDirective`s (carrying URL, pin, and tier) in the
+/// order they appear.  Only directives appearing before any meaningful content
+/// (blank lines + comments + a single H1 allowed) are honoured.
+pub fn extract_directives(content: &str) -> Vec<ParsedDirective> {
+    let mut directives = Vec::new();
     let body = skip_frontmatter(content);
 
     for line in body.lines() {
@@ -442,10 +947,21 @@ pub fn extract_urls(content: &str) -> Vec<String> {
         if trimmed.is_empty() {
             continue;
         }
-        // Stop once we hit a non-directive, non-comment, non-top-heading line.
-        if let Some(url) = parse_directive(trimmed) {
-            urls.push(url);
-            continue;
+        if let Some(body) = parse_directive_body(trimmed) {
+            match classify_directive(body) {
+                Ok(pd) => {
+                    directives.push(pd);
+                    continue;
+                }
+                Err(bad) => {
+                    eprintln!(
+                        "arai: malformed extends directive — {}: {}",
+                        bad.offending_token, bad.reason
+                    );
+                    // A malformed directive is treated as a stop-word — stop scanning.
+                    break;
+                }
+            }
         }
         if trimmed.starts_with("<!--") {
             // An HTML comment that's not our directive — tolerate and keep scanning.
@@ -457,23 +973,42 @@ pub fn extract_urls(content: &str) -> Vec<String> {
         }
         break;
     }
-    urls
+    directives
 }
 
-fn parse_directive(line: &str) -> Option<String> {
-    // Form 1: <!-- arai:extends <url> -->
+/// Scan markdown content for `arai:extends` directives at the top of the file.
+/// Returns a list of URLs in the order they appear.  Only directives appearing
+/// before any meaningful content (blank lines + comments + a single H1 allowed)
+/// are honoured.
+///
+/// This is a convenience wrapper over [`extract_directives`] for callers that
+/// only need URL strings.  For pin- and tier-aware processing, use
+/// [`extract_directives`] directly.
+#[allow(dead_code)]
+pub fn extract_urls(content: &str) -> Vec<String> {
+    extract_directives(content)
+        .into_iter()
+        .map(|pd| pd.url)
+        .collect()
+}
+
+/// Extract the directive body (text after the `arai:extends` marker) from a
+/// single markdown line, for both directive surface forms.  Returns `None` if
+/// the line is not a directive.
+fn parse_directive_body(line: &str) -> Option<&str> {
+    // Form 1: <!-- arai:extends <body> -->
     if let Some(inner) = line
         .strip_prefix("<!--")
         .and_then(|s| s.strip_suffix("-->"))
     {
         let inner = inner.trim();
-        if let Some(url) = inner.strip_prefix("arai:extends ") {
-            return Some(url.trim().to_string());
+        if let Some(body) = inner.strip_prefix("arai:extends") {
+            return Some(body.trim_start());
         }
     }
-    // Form 2: # arai:extends <url>
-    if let Some(url) = line.strip_prefix("# arai:extends ") {
-        return Some(url.trim().to_string());
+    // Form 2: # arai:extends <body>
+    if let Some(body) = line.strip_prefix("# arai:extends") {
+        return Some(body.trim_start());
     }
     None
 }
@@ -495,16 +1030,39 @@ fn skip_frontmatter(content: &str) -> &str {
 /// Resolve extends directives in `content`, prepending the fetched upstream
 /// markdown ahead of the local content.  Never recursive.  Failures for
 /// individual URLs are logged to stderr but don't break discovery.
+///
+/// When a directive carries a `tier=` token, the tier and source URL are
+/// embedded in the block-start comment so downstream rule extraction can stamp
+/// per-rule provenance without a second parse of the directives.  The marker
+/// format is:
+/// ```ignore
+/// <!-- arai:extends-block url="<url>" tier="<tier>" -->
+/// ```
+/// Rules extracted from this block are tagged with the tier and URL.  Existing
+/// `<!-- arai:extends from <url> -->` style markers (without tier) remain for
+/// backward-compat; the new `arai:extends-block` form is additive.
 pub fn resolve(content: &str, arai_base: &Path) -> String {
-    let urls = extract_urls(content);
-    if urls.is_empty() {
+    let directives = extract_directives(content);
+    if directives.is_empty() {
         return content.to_string();
     }
     let mut out = String::new();
-    for url in &urls {
-        match fetch(url, arai_base) {
+    for pd in &directives {
+        let url = &pd.url;
+        let pin = pd.pin.as_deref();
+        match fetch(url, pin, arai_base) {
             Ok(upstream) => {
-                out.push_str(&format!("<!-- arai:extends from {url} -->\n"));
+                // Emit the tier-annotated block-start marker.  The tier
+                // defaults to "peer" when absent (AC1 backward-compat).
+                let tier_str = match &pd.tier {
+                    Some(Tier::Strict) => "strict",
+                    Some(Tier::Advisory) => "advisory",
+                    Some(Tier::Override) => "override",
+                    Some(Tier::Peer) | None => "peer",
+                };
+                out.push_str(&format!(
+                    "<!-- arai:extends-block url=\"{url}\" tier=\"{tier_str}\" -->\n"
+                ));
                 out.push_str(&upstream);
                 if !upstream.ends_with('\n') {
                     out.push('\n');
@@ -654,11 +1212,13 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("arai_trust_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let url = "https://example.com/rules.md";
-        assert!(trust_add(url, &tmp).unwrap());
-        assert!(!trust_add(url, &tmp).unwrap()); // idempotent
+        assert!(trust_add(url, &tmp, None).unwrap());
+        assert!(!trust_add(url, &tmp, None).unwrap()); // idempotent
         assert!(is_trusted(url, &tmp));
         let list = trust_list(&tmp);
-        assert_eq!(list, vec![url.to_string()]);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].url, url);
+        assert!(list[0].pubkey.is_none());
         assert!(trust_remove(url, &tmp).unwrap());
         assert!(!is_trusted(url, &tmp));
         std::fs::remove_dir_all(&tmp).ok();
@@ -772,5 +1332,724 @@ mod tests {
         let read = read_cache_verified(&path, &sig, url);
         assert!(read.is_none(), "missing sidecar → treat as cache miss");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // ── directive-tokenisation unit tests ────────────────────────────────────
+
+    const GOOD_PIN: &str = "a3f1e2b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2";
+
+    // AC1 — bare directive with no trailing tokens produces ParsedDirective
+    // with pin absent and tier absent.
+    #[test]
+    fn classify_bare_url_success() {
+        let result = classify_directive("https://example.com/policy.md");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: None,
+                tier: None,
+            })
+        );
+    }
+
+    // AC1 — both surface forms produce identical output for a bare directive.
+    #[test]
+    fn classify_bare_url_html_comment_form() {
+        let result = classify_directive("<!-- arai:extends https://example.com/policy.md -->");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: None,
+                tier: None,
+            })
+        );
+    }
+
+    // AC12g — valid 64-char hex pin accepted.
+    #[test]
+    fn classify_valid_pin_accepted() {
+        let input = format!("https://example.com/policy.md @{GOOD_PIN}");
+        let result = classify_directive(&input);
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: Some(GOOD_PIN.to_string()),
+                tier: None,
+            })
+        );
+    }
+
+    // AC3 (tokeniser half) — malformed pin: too short.
+    #[test]
+    fn classify_short_pin_rejected() {
+        let result = classify_directive("https://example.com/policy.md @abc123");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "@abc123");
+    }
+
+    // AC3 (tokeniser half) — malformed pin: lone @.
+    #[test]
+    fn classify_lone_at_rejected() {
+        let result = classify_directive("https://example.com/policy.md @");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "@");
+    }
+
+    // AC3 (tokeniser half) — malformed pin: 63 hex chars (one short).
+    #[test]
+    fn classify_63_hex_pin_rejected() {
+        let short_pin = "a".repeat(63);
+        let input = format!("https://example.com/policy.md @{short_pin}");
+        let result = classify_directive(&input);
+        assert!(result.is_err());
+    }
+
+    // AC3 (tokeniser half) — malformed pin: uppercase chars are accepted by
+    // is_valid_pin_hex and normalised to lowercase.
+    #[test]
+    fn classify_uppercase_pin_normalised() {
+        let upper_pin = "A".repeat(64);
+        let expected_lower = "a".repeat(64);
+        let input = format!("https://example.com/policy.md @{upper_pin}");
+        let result = classify_directive(&input);
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: Some(expected_lower),
+                tier: None,
+            })
+        );
+    }
+
+    // AC12c — tier=strict accepted.
+    #[test]
+    fn classify_tier_strict_accepted() {
+        let result = classify_directive("https://example.com/policy.md tier=strict");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: None,
+                tier: Some(Tier::Strict),
+            })
+        );
+    }
+
+    // AC12c — tier=advisory accepted.
+    #[test]
+    fn classify_tier_advisory_accepted() {
+        let result = classify_directive("https://example.com/policy.md tier=advisory");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: None,
+                tier: Some(Tier::Advisory),
+            })
+        );
+    }
+
+    // AC12c — tier=override accepted (AC11_drop_syntax settled decision).
+    #[test]
+    fn classify_tier_override_accepted() {
+        let result = classify_directive("https://example.com/policy.md tier=override");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://example.com/policy.md".to_string(),
+                pin: None,
+                tier: Some(Tier::Override),
+            })
+        );
+    }
+
+    // AC12b — unknown tier= value rejected.
+    #[test]
+    fn classify_unknown_tier_rejected() {
+        let result = classify_directive("https://example.com/policy.md tier=unknown");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "tier=unknown");
+    }
+
+    // AC12b — tier=peer is NOT a writable value (vocabulary: "peer is NOT
+    // a writable directive token").
+    #[test]
+    fn classify_tier_peer_keyword_rejected() {
+        let result = classify_directive("https://example.com/policy.md tier=peer");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "tier=peer");
+    }
+
+    // AC12a — unknown trailing token rejected.
+    #[test]
+    fn classify_unknown_token_rejected() {
+        let result = classify_directive("https://example.com/policy.md foo");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "foo");
+    }
+
+    // AC12a — bar=baz (key-value but not tier=) is unknown.
+    #[test]
+    fn classify_unknown_kv_token_rejected() {
+        let result = classify_directive("https://example.com/policy.md bar=baz");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "bar=baz");
+    }
+
+    // AC12a — "strict" without "tier=" prefix is unknown.
+    #[test]
+    fn classify_bare_tier_value_rejected() {
+        let result = classify_directive("https://example.com/policy.md strict");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "strict");
+    }
+
+    // AC12d (BINDING) — duplicate @pin token → fail-closed, second named.
+    #[test]
+    fn classify_duplicate_pin_rejected() {
+        let pin2 = "b".repeat(64);
+        let input = format!("https://example.com/policy.md @{GOOD_PIN} @{pin2}");
+        let result = classify_directive(&input);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // The second pin token must be named as the offending token.
+        assert!(
+            err.offending_token.starts_with('@'),
+            "offending token should be the second pin"
+        );
+        assert!(err.reason.contains("duplicate"));
+    }
+
+    // AC12e (BINDING) — duplicate tier= token → fail-closed, second named.
+    #[test]
+    fn classify_duplicate_tier_rejected() {
+        let result = classify_directive("https://example.com/policy.md tier=strict tier=advisory");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "tier=advisory");
+        assert!(err.reason.contains("duplicate"));
+    }
+
+    // AC12e (BINDING) — duplicate tier= with same value is still malformed.
+    #[test]
+    fn classify_duplicate_tier_same_value_rejected() {
+        let result = classify_directive("https://example.com/policy.md tier=strict tier=strict");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.offending_token, "tier=strict");
+        assert!(err.reason.contains("duplicate"));
+    }
+
+    // AC12f — pin then tier and tier then pin produce identical ParsedDirective.
+    #[test]
+    fn classify_order_independence() {
+        let pin_then_tier = classify_directive(&format!(
+            "https://example.com/policy.md @{GOOD_PIN} tier=strict"
+        ));
+        let tier_then_pin = classify_directive(&format!(
+            "https://example.com/policy.md tier=strict @{GOOD_PIN}"
+        ));
+        assert!(pin_then_tier.is_ok());
+        assert_eq!(pin_then_tier, tier_then_pin);
+    }
+
+    // AC12h — @-character inside the URL token is not misclassified as a pin.
+    #[test]
+    fn classify_in_url_at_not_a_pin() {
+        let result = classify_directive("https://user@host.example.com/path.md");
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://user@host.example.com/path.md".to_string(),
+                pin: None,
+                tier: None,
+            })
+        );
+    }
+
+    // AC12h — @-in-url combined with a valid trailing pin token.
+    #[test]
+    fn classify_in_url_at_plus_pin_token() {
+        let input = format!("https://user@host.example.com/path.md @{GOOD_PIN}");
+        let result = classify_directive(&input);
+        assert_eq!(
+            result,
+            Ok(ParsedDirective {
+                url: "https://user@host.example.com/path.md".to_string(),
+                pin: Some(GOOD_PIN.to_string()),
+                tier: None,
+            })
+        );
+    }
+
+    // Regression: extract_urls should still work correctly for directives
+    // that carry trailing tokens (pin/tier in the line are now silently
+    // consumed by classify_directive; the URL is still returned).
+    #[test]
+    fn extract_urls_with_pin_token() {
+        let content =
+            format!("# arai:extends https://example.com/a.md @{GOOD_PIN}\n\n# My rules\n");
+        let urls = extract_urls(&content);
+        assert_eq!(urls, vec!["https://example.com/a.md"]);
+    }
+
+    // Regression: extract_urls for a malformed directive returns nothing (no
+    // partial URL leak).
+    #[test]
+    fn extract_urls_malformed_directive_skipped() {
+        let content = "# arai:extends https://example.com/a.md foo\n\n# My rules\n";
+        let urls = extract_urls(content);
+        assert!(
+            urls.is_empty(),
+            "malformed directive must be skipped entirely"
+        );
+    }
+
+    // ── fetch-verification unit tests ─────────────────────────────────────────
+
+    /// Generate a deterministic keypair for use in tests.
+    /// Uses a fixed 32-byte seed so tests are reproducible.
+    fn test_keypair(seed_byte: u8) -> (ed25519_dalek::SigningKey, String) {
+        use ed25519_dalek::SigningKey;
+        let signing_key = SigningKey::from_bytes(&[seed_byte; 32]);
+        let vk = signing_key.verifying_key();
+        let vk_hex: String = vk.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        (signing_key, vk_hex)
+    }
+
+    /// Sign content bytes and return the 128-char hex-encoded signature.
+    fn sign_content(signing_key: &ed25519_dalek::SigningKey, content: &[u8]) -> String {
+        use ed25519_dalek::Signer;
+        let sig = signing_key.sign(content);
+        sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    // AC2 — Matching pin admits content (pubkey absent).
+    #[test]
+    fn ac2_matching_pin_admits() {
+        let content = b"- never force-push\n";
+        let pin = bytes_sha256_hex(content);
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: None,
+        };
+        // No sidecar fetch callback should be invoked.
+        let result = verify_content(
+            "https://example.com/policy.md",
+            Some(&pin),
+            content,
+            &entry,
+            |_| panic!("sidecar should not be fetched when pubkey is absent"),
+        );
+        assert!(result.is_ok(), "matching pin should admit: {:?}", result);
+    }
+
+    // AC3 — Pin mismatch rejects content.
+    #[test]
+    fn ac3_pin_mismatch_rejects() {
+        let content = b"- never force-push\n";
+        let wrong_pin = "a".repeat(64); // not the sha256 of content
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: None,
+        };
+        let result = verify_content(
+            "https://example.com/policy.md",
+            Some(&wrong_pin),
+            content,
+            &entry,
+            |_| panic!("sidecar should not be fetched when pubkey is absent"),
+        );
+        assert!(result.is_err(), "pin mismatch should reject");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("pin check"),
+            "warning should mention pin check: {msg}"
+        );
+        assert!(
+            msg.contains("example.com"),
+            "warning should name the URL: {msg}"
+        );
+    }
+
+    // AC4 — Pin check runs on the stale-cache path too.
+    // We test this by calling verify_content with stale-cache content (same
+    // function, different source — the test ensures pin comparison is not
+    // skipped regardless of content origin).
+    #[test]
+    fn ac4_pin_check_on_stale_cache_content() {
+        // Seed cache with tampered content whose sha256 does not match the pin.
+        let cache_content = b"- tampered content\n";
+        let original_content = b"- original content\n";
+        let pin_for_original = bytes_sha256_hex(original_content);
+
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: None,
+        };
+        // Simulate stale-cache path: verify_content called with cache content
+        // and a pin from the directive.  The cache content ≠ original, so
+        // the pin check must reject.
+        let result = verify_content(
+            "https://example.com/policy.md",
+            Some(&pin_for_original),
+            cache_content,
+            &entry,
+            |_| panic!("sidecar should not be fetched when pubkey is absent"),
+        );
+        assert!(
+            result.is_err(),
+            "stale-cache content with pin mismatch should reject"
+        );
+    }
+
+    // AC5 — Configured pubkey + valid signature admits content.
+    #[test]
+    fn ac5_valid_signature_admits() {
+        let (signing_key, vk_hex) = test_keypair(42);
+        let content = b"- never force-push\n";
+        let sig_hex = sign_content(&signing_key, content);
+
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: Some(vk_hex),
+        };
+        // Sidecar fetch callback returns our valid signature.
+        let result = verify_content(
+            "https://example.com/policy.md",
+            None, // no pin
+            content,
+            &entry,
+            |_url| Ok(sig_hex.as_bytes().to_vec()),
+        );
+        assert!(result.is_ok(), "valid signature should admit: {:?}", result);
+    }
+
+    // AC5 — Valid pin + valid signature admits content.
+    #[test]
+    fn ac5_valid_pin_and_signature_admits() {
+        let (signing_key, vk_hex) = test_keypair(7);
+        let content = b"- never force-push\n";
+        let pin = bytes_sha256_hex(content);
+        let sig_hex = sign_content(&signing_key, content);
+
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: Some(vk_hex),
+        };
+        let result = verify_content(
+            "https://example.com/policy.md",
+            Some(&pin),
+            content,
+            &entry,
+            |_url| Ok(sig_hex.as_bytes().to_vec()),
+        );
+        assert!(
+            result.is_ok(),
+            "valid pin + valid signature should admit: {:?}",
+            result
+        );
+    }
+
+    // AC6a — Configured pubkey + sidecar fetch failure rejects.
+    #[test]
+    fn ac6a_sidecar_fetch_failure_rejects() {
+        let (_, vk_hex) = test_keypair(1);
+        let content = b"- never force-push\n";
+
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: Some(vk_hex),
+        };
+        let result = verify_content(
+            "https://example.com/policy.md",
+            None,
+            content,
+            &entry,
+            |_url| Err("network error: connection refused".to_string()),
+        );
+        assert!(result.is_err(), "sidecar fetch failure should reject");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("missing or unreachable signature sidecar"),
+            "warning should mention missing sidecar: {msg}"
+        );
+    }
+
+    // AC6b — Configured pubkey + invalid signature rejects.
+    #[test]
+    fn ac6b_invalid_signature_rejects() {
+        let (signing_key, vk_hex) = test_keypair(1);
+        let content = b"- never force-push\n";
+        // Sign different content — signature won't match.
+        let wrong_content = b"- different content\n";
+        let bad_sig_hex = sign_content(&signing_key, wrong_content);
+
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: Some(vk_hex),
+        };
+        let result = verify_content(
+            "https://example.com/policy.md",
+            None,
+            content,
+            &entry,
+            |_url| Ok(bad_sig_hex.as_bytes().to_vec()),
+        );
+        assert!(result.is_err(), "invalid signature should reject");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("signature verification"),
+            "warning should mention signature verification: {msg}"
+        );
+    }
+
+    // AC7 — No configured pubkey means no sidecar fetch and no signature check.
+    #[test]
+    fn ac7_no_pubkey_no_sig_check() {
+        let content = b"- never force-push\n";
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: None,
+        };
+        let sidecar_called = std::cell::Cell::new(false);
+        let result = verify_content(
+            "https://example.com/policy.md",
+            None,
+            content,
+            &entry,
+            |_url| {
+                sidecar_called.set(true);
+                Err("should not be called".to_string())
+            },
+        );
+        assert!(
+            !sidecar_called.get(),
+            "sidecar callback must not be invoked when pubkey absent"
+        );
+        assert!(
+            result.is_ok(),
+            "no pin + no pubkey should always admit: {:?}",
+            result
+        );
+    }
+
+    // AC7 — No pubkey: only pin check runs (not sig check).
+    #[test]
+    fn ac7_no_pubkey_pin_check_only() {
+        let content = b"- rule\n";
+        let pin = bytes_sha256_hex(content);
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: None,
+        };
+        let sidecar_called = std::cell::Cell::new(false);
+        let result = verify_content(
+            "https://example.com/policy.md",
+            Some(&pin),
+            content,
+            &entry,
+            |_url| {
+                sidecar_called.set(true);
+                Err("should not be called".to_string())
+            },
+        );
+        assert!(
+            !sidecar_called.get(),
+            "sidecar callback must not be invoked when pubkey absent"
+        );
+        assert!(
+            result.is_ok(),
+            "matching pin with no pubkey should admit: {:?}",
+            result
+        );
+    }
+
+    // AC8 — Legacy trust file (list of strings) parses correctly.
+    #[test]
+    fn ac8_legacy_trust_file_parses() {
+        let toml_legacy = r#"trusted = ["https://example.com/policy.md"]"#;
+        let tf: TrustFile = toml::from_str(toml_legacy).expect("legacy trust file must parse");
+        assert_eq!(tf.trusted.len(), 1);
+        assert_eq!(tf.trusted[0].url, "https://example.com/policy.md");
+        assert!(
+            tf.trusted[0].pubkey.is_none(),
+            "legacy entry must have pubkey absent"
+        );
+    }
+
+    // AC8 — New trust file (inline tables) also parses.
+    #[test]
+    fn ac8_new_trust_file_parses() {
+        let toml_new = r#"trusted = [{url = "https://example.com/policy.md", pubkey = "aabbcc0000000000000000000000000000000000000000000000000000000000"}]"#;
+        let tf: TrustFile = toml::from_str(toml_new).expect("new trust file must parse");
+        assert_eq!(tf.trusted.len(), 1);
+        assert_eq!(tf.trusted[0].url, "https://example.com/policy.md");
+        assert!(
+            tf.trusted[0].pubkey.is_some(),
+            "new entry must have pubkey present"
+        );
+    }
+
+    // AC8 — Mixed trust file (both forms) parses correctly.
+    #[test]
+    fn ac8_mixed_trust_file_parses() {
+        let toml_mixed = r#"trusted = [
+  "https://example.com/a.md",
+  {url = "https://example.com/b.md", pubkey = "aabbcc0000000000000000000000000000000000000000000000000000000000"},
+]"#;
+        let tf: TrustFile = toml::from_str(toml_mixed).expect("mixed trust file must parse");
+        assert_eq!(tf.trusted.len(), 2);
+        assert_eq!(tf.trusted[0].url, "https://example.com/a.md");
+        assert!(tf.trusted[0].pubkey.is_none());
+        assert_eq!(tf.trusted[1].url, "https://example.com/b.md");
+        assert!(tf.trusted[1].pubkey.is_some());
+    }
+
+    // AC8 — Legacy trust file: round-trip behaviour is preserved (no rewrite on read).
+    // We test that reading a legacy file via is_trusted + trust_list works, and
+    // the on-disk file is not modified.
+    #[test]
+    fn ac8_legacy_file_not_rewritten_on_read() {
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_trust_legacy_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let trust_file = trust_path(&tmp);
+        std::fs::write(&trust_file, r#"trusted = ["https://example.com/a.md"]"#).unwrap();
+
+        // Read without modifying.
+        assert!(is_trusted("https://example.com/a.md", &tmp));
+        let entries = trust_list(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].pubkey.is_none());
+
+        // Confirm on-disk content was not rewritten.
+        let after = std::fs::read_to_string(&trust_file).unwrap();
+        assert!(
+            after.contains(r#"trusted = ["https://example.com/a.md"]"#),
+            "legacy file must not be rewritten on read: {after:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // AC13a — trust --add --pubkey writes keyed entry to trust file.
+    #[test]
+    fn ac13a_trust_add_with_pubkey_writes_entry() {
+        let (_, vk_hex) = test_keypair(99);
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_trust_key_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/policy.md";
+
+        let added = trust_add(url, &tmp, Some(&vk_hex)).unwrap();
+        assert!(added, "should return true for a new entry");
+
+        let entries = trust_list(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, url);
+        assert_eq!(
+            entries[0].pubkey.as_deref(),
+            Some(vk_hex.as_str()),
+            "pubkey must be stored as supplied"
+        );
+
+        // verify_content for this URL must now perform a signature check.
+        // Confirm: valid signature → admits; invalid signature → rejects.
+        let content = b"- test rule\n";
+        let (signing_key, _) = test_keypair(99); // same seed = same key
+        let sig_hex = sign_content(&signing_key, content);
+        let entry = &entries[0];
+        let result = verify_content(url, None, content, entry, |_| {
+            Ok(sig_hex.as_bytes().to_vec())
+        });
+        assert!(
+            result.is_ok(),
+            "valid sig after trust_add should admit: {:?}",
+            result
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // AC13b — trust listing distinguishes keyed from non-keyed entries.
+    #[test]
+    fn ac13b_listing_distinguishes_keyed_entries() {
+        let (_, vk_hex) = test_keypair(5);
+        let tmp = std::env::temp_dir().join(format!(
+            "arai_trust_list_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        trust_add("https://example.com/plain.md", &tmp, None).unwrap();
+        trust_add("https://example.com/signed.md", &tmp, Some(&vk_hex)).unwrap();
+
+        let entries = trust_list(&tmp);
+        assert_eq!(entries.len(), 2);
+
+        let plain = entries.iter().find(|e| e.url.contains("plain")).unwrap();
+        let signed_entry = entries.iter().find(|e| e.url.contains("signed")).unwrap();
+
+        assert!(plain.pubkey.is_none(), "plain entry must have no pubkey");
+        assert!(
+            signed_entry.pubkey.is_some(),
+            "signed entry must have a pubkey"
+        );
+        assert_eq!(signed_entry.pubkey.as_deref(), Some(vk_hex.as_str()));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // Malformed configured key rejects (never silently downgrades).
+    #[test]
+    fn malformed_configured_key_rejects() {
+        let content = b"- rule\n";
+        let entry = TrustEntry {
+            url: "https://example.com/policy.md".to_string(),
+            pubkey: Some("not_a_valid_hex_key_at_all_and_too_short".to_string()),
+        };
+        let result = verify_content(
+            "https://example.com/policy.md",
+            None,
+            content,
+            &entry,
+            |_| unreachable!("sidecar should not be fetched when key is malformed"),
+        );
+        assert!(
+            result.is_err(),
+            "malformed pubkey must reject (fail-closed)"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("malformed configured pubkey"),
+            "warning must mention malformed key: {msg}"
+        );
     }
 }

@@ -1,0 +1,18 @@
+---
+schema_version: 1
+event_id: 01KSRR3G6X0XZQJ63SGG0V4EB0
+kind: subagent_dispatched
+timestamp_iso: "2026-05-29T02:13:12.001Z"
+handoff_id: 01KSRR3G6XZ8RP5PEH2CSHWG2A
+role: contract-derivation
+model: claude-sonnet-4-6
+inputs:
+  - kind: design_doc
+    path: .taniwha/kupu/design/v4.md
+  - kind: project_context
+    path: .taniwha/kupu/project_context.yaml
+  - kind: settled_decisions
+    path: .taniwha/kupu/orchestrator/handoff/01KSRR3G6XZ8RP5PEH2CSHWG2A/inputs/settled_decisions.yaml
+output_destination: .taniwha/kupu/orchestrator/handoff/01KSRR3G6XZ8RP5PEH2CSHWG2A/outputs/
+expected_outputs:
+  - contract_bundle

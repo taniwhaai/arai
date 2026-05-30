@@ -1,0 +1,14 @@
+schema_version: 1
+event_id: 01KSRRYVFHKN2JPERG7HYYK4JM
+kind: orchestrator_decided
+timestamp_iso: "2026-05-29T03:01:00.000Z"
+payload:
+  decision: promote_contracts_and_dispatch_first_leaf
+  next_action: dispatch_subagent
+  role: leaf-implementation
+  module: directive-tokenisation
+  handoff_id: 01KSRRYVFH6CAERYQS5TK5Q1N9
+  reason: |
+    Contract-derivation returned successfully. Five artefacts promoted to canonical.
+    Tree established. First sequential leaf dispatch: directive-tokenisation (pure,
+    foundational, no sibling deps, safe to run independently).

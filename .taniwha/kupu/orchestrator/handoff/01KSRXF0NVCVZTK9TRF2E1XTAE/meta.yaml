@@ -1,0 +1,47 @@
+schema_version: 1
+handoff_id: 01KSRXF0NVCVZTK9TRF2E1XTAE
+role: composition
+module: resolve-composition
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-29T03:47:04.611Z"
+  filename: "20260529T034704611Z"
+dispatched_at:
+  iso: "2026-05-29T03:47:04.611Z"
+  filename: "20260529T034704611Z"
+returned_at:
+  iso: "2026-05-29T03:55:00.000Z"
+  filename: "20260529T035500000Z"
+outcome:
+  produced: [composition_manifest.yaml]
+  re_raise: false
+  committed: false
+  files_deleted: [src/lib.rs]
+  files_modified: [Cargo.toml, tests/extends_integration.rs]
+  dispatcher_independent_verification:
+    fmt: "clean"
+    clippy: "9 warnings = baseline; none in extends.rs/new code"
+    test: "457 passed / 0 failed across all 13 suites; extends_integration 11/11"
+    cargo_toml_vs_main: "differs ONLY by ed25519-dalek line; tempfile removed"
+    lib_rs: "deleted (single-binary crate restored)"
+  note: "Stray top-level outputs/composition_manifest.yaml relocated to handoff outputs/ by dispatcher; stray dir removed. Earlier 516 test count was inflated by lib.rs double-compiling extends unit tests; true count 457."
+supersedes_handoff: 01KSRW3SB6F72BNA6H6YEB1JZ0
+reason: "Corrective re-dispatch — remove src/lib.rs + tempfile (brief deviation); rewrite integration test as subprocess per repo convention. Decision 01KSRXEYF2X29A48ERMC94EWH6."
+inputs:
+  - filename: composition_contract.md
+    kind: contract
+  - filename: vocabulary.md
+    kind: vocabulary
+  - filename: project_context.yaml
+    kind: project_context
+  - filename: current_extends_integration_DELETE_AND_REWRITE.rs
+    kind: reference
+    note: the lib-based test to delete and re-author via subprocess (preserve its scenarios)
+expected_outputs:
+  - composition_manifest.yaml
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: corrective

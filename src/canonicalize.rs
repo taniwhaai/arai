@@ -338,6 +338,10 @@ mod tests {
             layer: Some(1),
             expires_at: None,
             noenrich: false,
+
+            tier: None,
+
+            source_label: None,
         }
     }
 

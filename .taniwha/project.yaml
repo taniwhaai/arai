@@ -10,9 +10,9 @@ tools_registered:
 - kupu
 current_phase: phase-1
 brief:
-  current_version: 5
+  current_version: 6
 design:
-  current_version: 3
+  current_version: 4
 contracts:
   base-directory-resolution:
     current_version: 1
@@ -20,3 +20,13 @@ contracts:
     current_version: 1
   hooks-grok-exit:
     current_version: 1
+  directive-tokenisation:
+    current_version: 1
+  fetch-verification:
+    current_version: 1
+  tier-provenance:
+    current_version: 1
+  resolve-composition:
+    current_version: 1
+vocabulary:
+  current_version: 1

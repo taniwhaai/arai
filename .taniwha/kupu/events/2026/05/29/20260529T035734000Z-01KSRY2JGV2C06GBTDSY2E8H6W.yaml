@@ -1,0 +1,22 @@
+event_id: 01KSRY2JGV2C06GBTDSY2E8H6W
+kind: orchestrator_decision
+actor:
+  kind: orchestrator
+  invocation: 25
+timestamp:
+  iso: 2026-05-29T03:57:34.000Z
+  filename: 20260529T035734000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  decision: dispatch_verifier
+  decision_id: 01KSRY2JGVN2J4WAC5MKKXWTBS
+  trigger: subagent_returned:composition:01KSRXF0NVCVZTK9TRF2E1XTAE
+  handoff_id: 01KSRY2BWJB0MDH0FJ5WDTCP2S
+  role: verifier
+  scope: AC1-AC14 across all four build nodes
+  branch: feat/29-extends-policy
+  gate_at_trigger:
+    fmt: clean
+    clippy: "9 warnings = baseline, none new"
+    test: "457 passed / 0 failed; extends_integration 11/11"
+    committed: false

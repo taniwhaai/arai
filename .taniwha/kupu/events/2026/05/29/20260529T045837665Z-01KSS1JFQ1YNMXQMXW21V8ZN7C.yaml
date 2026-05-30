@@ -1,0 +1,10 @@
+event_id: 01KSS1JFQ1YNMXQMXW21V8ZN7C
+kind: build_completed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T04:58:37.665Z
+  filename: 20260529T045837665Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 6, "issue_ref": "29", "tier": "small_multi_module", "modules_implemented": 3, "compositions_built": 1, "verifier": "pass (AC1-AC14)", "new_dependency": "ed25519-dalek", "pr": "https://github.com/taniwhaai/arai/pull/138", "notes": "All three #29 gaps closed (pin/sign/tier). One corrective re-dispatch (removed lib.rs+tempfile, subprocess test). 486 tests."}'

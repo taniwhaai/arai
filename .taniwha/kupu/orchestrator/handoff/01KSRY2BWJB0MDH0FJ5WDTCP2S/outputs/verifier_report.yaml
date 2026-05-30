@@ -1,0 +1,442 @@
+---
+schema_version: 1
+
+verifier_report:
+  contract:
+    modules:
+      - directive-tokenisation
+      - fetch-verification
+      - tier-provenance
+      - resolve-composition
+    version: 1
+
+  implementation:
+    source_paths:
+      - src/extends.rs
+      - src/parser.rs
+      - src/store.rs
+      - src/guardrails.rs
+      - src/main.rs
+      - Cargo.toml
+      - tests/extends_integration.rs
+
+  gate_results:
+    cargo_fmt_check:
+      result: pass
+      notes: No formatting issues. Verifier test file also passes fmt.
+    cargo_clippy_all_targets:
+      result: pass
+      notes: |
+        5 warnings total, all pre-existing on origin/main (verified by stashing
+        changes and running baseline). Zero new warnings introduced by the
+        implementation or by the verifier test file.
+    cargo_test:
+      result: pass
+      test_suites:
+        - suite: unit tests (src/main.rs)
+          count: 386
+          result: pass
+        - suite: extends_integration (tests/extends_integration.rs)
+          count: 11
+          result: pass
+        - suite: verifier_extends_slice (tests/verifier_extends_slice.rs)
+          count: 23
+          result: pass
+        - suite: parser_coverage (tests/parser_coverage.rs)
+          count: 19
+          result: pass
+        - suite: prompt_collector_integration
+          count: 3
+          result: pass
+        - suite: prompt_collector_verifier
+          count: 9
+          result: pass
+        - suite: sync_integration
+          count: 3
+          result: pass
+        - suite: hooks_grok_exit_verifier and others
+          count: 8
+          result: pass
+      total_all_tests: 486
+      failures: 0
+
+  structural_checks:
+    src_lib_rs_exists: false
+    cargo_toml_new_deps: ed25519-dalek = "2.1.1" (only change vs origin/main)
+    tempfile_removed: true (not in Cargo.toml dev-dependencies)
+
+  acceptance_criteria:
+
+    - id: AC1
+      criterion: "Bare directive (URL only, no trailing tokens) produces ParsedDirective
+        with pin absent and tier absent; no new code path is entered; backward-compat
+        is preserved end-to-end."
+      verifier_tests:
+        - verifier_ac1_bare_directive_no_trailing_tokens
+      result: pass
+      notes: |
+        Code path (extends.rs:classify_directive): when only the URL token is
+        present, the `for token in tokens` loop does not execute; returns
+        Ok(ParsedDirective { url, pin: None, tier: None }) immediately.
+        Integration test confirms no malformed warning is emitted, scan succeeds,
+        and CLAUDE.md is processed normally with upstream content inlined.
+        Implementor's unit test classify_bare_url_success also confirmed by gate.
+
+    - id: AC2
+      criterion: "Obtained content whose sha256 hex equals pin admits the block
+        (admit decision true, no warning, pubkey absent path)."
+      verifier_tests:
+        - verifier_ac2_matching_pin_admits
+      result: pass
+      notes: |
+        verify_content() (extends.rs:479) performs pin check first: computes
+        bytes_sha256_hex(obtained_content) and compares case-insensitively.
+        On match returns Ok(true) before the signature block.
+        Verifier test seeds cache with known content, computes its sha256, and
+        verifies no pin-check warning appears in stderr.
+
+    - id: AC3
+      criterion: "Pin mismatch rejects content and emits a warning naming the URL.
+        Tokeniser half: @-prefixed token not matching 64-char hex is MalformedDirective."
+      verifier_tests:
+        - verifier_ac3_pin_mismatch_rejects
+        - verifier_ac3_malformed_pin_rejected_in_pipeline
+      result: pass
+      notes: |
+        Tokeniser half: classify_directive() calls is_valid_pin_hex() which checks
+        hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()). Short/invalid
+        hex produces MalformedDirective. Verified: scan emits "malformed" warning.
+        Fetch-verification half: verify_content() returns Err with "pin check" in
+        the message when sha256 mismatch. Verified: scan emits warning containing "pin".
+
+    - id: AC4
+      criterion: "Pin check runs on the stale-cache fallback path identically to
+        the fresh-remote path."
+      verifier_tests:
+        - verifier_ac4_pin_checked_on_cache_path
+      result: pass
+      notes: |
+        Code path: fetch() (extends.rs:725). On the cache-is-fresh branch
+        (lines 738-753), verify_content() is called on the cached content
+        before returning it. On the stale-cache fallback branch (lines 797-812),
+        verify_content() is also called. Both code paths call verify_content()
+        before returning content. Verifier test seeds cache with content that
+        has a different sha256 than the supplied pin; confirms rejection warning.
+
+    - id: AC5
+      criterion: "Configured pubkey + valid ed25519 signature over obtained_content
+        admits the block."
+      verifier_tests:
+        - (code-path analysis; subprocess verification via AC6 path provides
+           indirect evidence of signature path wiring)
+      result: pass
+      notes: |
+        verify_content() (extends.rs:501-551): when entry.pubkey is present,
+        decode_verifying_key() is called, then fetch_sig(sig_url) is called,
+        then verifying_key.verify(obtained_content, &sig) is called. The
+        implementor's unit tests ac5_valid_signature_admits and
+        ac5_valid_pin_and_signature_admits both exercise this path with a real
+        ed25519 keypair and pass in the gate. The implementation is correct
+        by code-path inspection: the admit path returns Ok(true) after a
+        successful verify() call with no early return.
+
+    - id: AC6
+      criterion: "Configured pubkey + missing or invalid sidecar rejects content
+        and warns."
+      verifier_tests:
+        - verifier_ac6_missing_sidecar_rejects
+      result: pass
+      notes: |
+        Sub-case A (missing sidecar): fetch_sig callback returns Err() →
+        verify_content returns Err with "missing or unreachable signature sidecar"
+        message. Verifier test registers a pubkey without seeding a .sig sidecar;
+        confirms rejection warning appears in stderr.
+        Sub-case B (invalid signature): verifying_key.verify() returns Err →
+        verify_content returns Err. Confirmed by gate via implementor unit tests.
+        The all-zero pubkey is a valid ed25519 key (it is the compressed
+        y-coordinate of the identity point); trust --add succeeds and the
+        signature check path fires.
+
+    - id: AC7
+      criterion: "No configured pubkey means no sidecar fetch and no signature check."
+      verifier_tests:
+        - verifier_ac7_no_pubkey_no_checks_required
+      result: pass
+      notes: |
+        verify_content() (extends.rs:501): the signature check block is gated
+        on `if let Some(pubkey_hex) = &entry.pubkey`. When pubkey is None,
+        the block is skipped entirely; no fetch_sig callback is invoked.
+        Verifier test confirms no "signature" warning with no pubkey configured.
+        Implementor unit test ac7_no_pubkey_no_sig_check uses Cell::new(false)
+        to assert the callback is never called; passes in gate.
+
+    - id: AC8
+      criterion: "Legacy trust file (trusted = [\"url\"]) parses correctly, producing
+        TrustEntry with pubkey absent. No rewrite on read."
+      verifier_tests:
+        - verifier_ac8_legacy_trust_file_works
+      result: pass
+      notes: |
+        TrustFile dual-form deserialiser (extends.rs:284-319): TrustEntryOrString
+        untagged enum with Url(String) variant handles bare strings; From impl
+        maps them to TrustEntry { url, pubkey: None }. Legacy file is never
+        rewritten on read (write_trust() is only called by trust_add/remove).
+        Verifier test writes legacy TOML directly and verifies scan succeeds
+        without malformed warnings.
+
+    - id: AC9
+      criterion: "strict tier: upstream rule not shadowed by same-subject local rule
+        at match time."
+      verifier_tests:
+        - verifier_ac9_strict_tier_upstream_admitted
+      result: pass
+      notes: |
+        match_guardrails() (guardrails.rs:568-571): strict-tier rules are retained
+        unconditionally in the low-relevance filter regardless of score.
+        The implementor's unit test ac9_strict_upstream_not_shadowed_by_local
+        constructs a scenario where a local rule outscores the strict upstream
+        rule and verifies the strict rule is not dropped. Passes in gate.
+        Verifier subprocess test confirms the pipeline works end-to-end with
+        tier=strict.
+
+    - id: AC10
+      criterion: "advisory tier: upstream rule deprioritised relative to peer rules
+        at match time but still present."
+      verifier_tests:
+        - verifier_ac10_advisory_tier_upstream_admitted
+      result: pass
+      notes: |
+        match_guardrails() (guardrails.rs:530-534): advisory score is halved
+        (score / 2). Advisory rules are also protected by the low-relevance
+        filter at line 575. Implementor's unit test
+        ac10_advisory_upstream_deprioritised_vs_local_peer verifies the rule
+        is present and appears after the local peer rule. Passes in gate.
+        Verifier subprocess test confirms end-to-end pipeline with tier=advisory.
+
+    - id: AC11
+      criterion: "override tier: triple-equality implicit drop (BINDING: AC11_drop_syntax).
+        Sub-case A: matching SPO → upstream dropped. Sub-case B: no match → retained.
+        Sub-case C: no upstream to drop is a no-op, no error."
+      verifier_tests:
+        - verifier_ac11_override_tier_pipeline_completes
+      result: pass
+      notes: |
+        match_guardrails() (guardrails.rs:469-491): builds local_spo HashSet from
+        rules with tier None or Peer; drops upstream override rules whose SPO is
+        in the set. Sub-case A: implementor unit test
+        ac11a_override_upstream_dropped_when_spo_matches_local verifies the drop.
+        Sub-case B: ac11b_override_upstream_retained_when_no_local_spo_match
+        verifies retention. Sub-case C: ac11c_override_no_upstream_to_drop_is_noop
+        verifies no error. All three pass in gate. Verifier subprocess test
+        exercises the full pipeline with tier=override.
+
+    - id: AC12a
+      criterion: "Unknown trailing token (not @-prefixed, not tier=) produces
+        MalformedDirective with offending token named."
+      verifier_tests:
+        - verifier_ac12a_unknown_trailing_token_rejected
+      result: pass
+      notes: |
+        classify_directive() (extends.rs:227-233): the else branch returns
+        MalformedDirective { offending_token: token, reason: "unknown directive token" }.
+        Verifier test confirms "malformed" warning appears in stderr for a
+        directive with trailing token "foo".
+
+    - id: AC12b
+      criterion: "Unknown tier= value (not strict/advisory/override) produces
+        MalformedDirective. tier=peer also rejected (peer is not a writable token)."
+      verifier_tests:
+        - verifier_ac12b_unknown_tier_value_rejected
+      result: pass
+      notes: |
+        classify_directive() (extends.rs:213-226): the match on tier value has
+        arms for "strict", "advisory", "override" and a wildcard returning
+        MalformedDirective. "peer" falls into the wildcard. Both test cases
+        confirmed by implementor unit tests classify_unknown_tier_rejected and
+        classify_tier_peer_keyword_rejected (gate pass). Verifier subprocess
+        test confirms end-to-end warning for tier=unknown.
+
+    - id: AC12c
+      criterion: "Known tier= values (strict, advisory, override) accepted and
+        produce the corresponding Tier variant."
+      verifier_tests:
+        - verifier_ac12c_tier_strict_accepted
+      result: pass
+      notes: |
+        All three values tested by verifier_ac12c (strict) and the pipeline tests
+        for advisory/override. No malformed warning appears for any valid tier value.
+
+    - id: AC12d
+      criterion: "Duplicate @pin token (two @-prefixed tokens, both syntactically
+        valid) fail-closed: MalformedDirective naming the second."
+      verifier_tests:
+        - verifier_ac12d_duplicate_pin_fail_closed
+      result: pass
+      notes: |
+        classify_directive() (extends.rs:190-196): if pin.is_some() and another
+        @-prefixed token is seen, returns MalformedDirective naming the second
+        token with reason containing "duplicate". Verifier test confirms warning
+        containing "malformed" or "duplicate" is emitted.
+
+    - id: AC12e
+      criterion: "Duplicate tier= token (two tier= tokens, even with same value)
+        fail-closed: MalformedDirective naming the second."
+      verifier_tests:
+        - verifier_ac12e_duplicate_tier_fail_closed
+      result: pass
+      notes: |
+        classify_directive() (extends.rs:207-212): if tier.is_some() and another
+        tier= token is seen, returns MalformedDirective naming the second token.
+        Implementor unit tests classify_duplicate_tier_rejected and
+        classify_duplicate_tier_same_value_rejected both pass in gate.
+        Verifier subprocess test confirms the warning appears.
+
+    - id: AC12f
+      criterion: "Token order-independence: @pin then tier= and tier= then @pin
+        produce identical ParsedDirective."
+      verifier_tests:
+        - verifier_ac12f_order_independence_pin_then_tier_and_tier_then_pin
+      result: pass
+      notes: |
+        classify_directive() processes tokens in a for loop with independent
+        state variables `pin` and `tier`; order doesn't affect which variable
+        gets assigned. Both orderings produce the same result. Implementor's
+        classify_order_independence unit test also verifies this. Verifier
+        subprocess test exercises both orderings and confirms neither produces
+        a malformed warning.
+
+    - id: AC12g
+      criterion: "A valid 64-char lowercase hex pin token is accepted; the pin
+        field of the ParsedDirective is set to those 64 characters."
+      verifier_tests:
+        - verifier_ac12g_valid_64hex_pin_accepted
+      result: pass
+      notes: |
+        is_valid_pin_hex() (extends.rs:242-244): checks length == 64 and all
+        chars are ASCII hex digits. On success, pin is set to hex_part normalised
+        to lowercase. Verifier test seeds cache, computes exact sha256, uses it
+        as pin, and confirms no malformed warning.
+
+    - id: AC12h
+      criterion: "An @ character inside the URL token is not misclassified as a
+        pin token (it is whitespace-delimited tokens only)."
+      verifier_tests:
+        - verifier_ac12h_in_url_at_not_a_pin
+      result: pass
+      notes: |
+        The first token consumed by classify_directive() is the URL (tokens.next()),
+        and subsequent @-prefixed checks only apply to tokens after the first.
+        A URL like https://user@host/path.md is consumed as the first token in
+        full; the @ is part of the URL string, not a separate token. Verifier
+        test confirms no "malformed extends directive" warning for a URL with
+        in-URL @ character.
+
+    - id: AC13
+      criterion: "arai trust --add --pubkey records the key; trust listing shows
+        '(key configured)' for that URL and distinguishes it from plain URLs."
+      verifier_tests:
+        - verifier_ac13_trust_add_pubkey_and_listing
+      result: pass
+      notes: |
+        main.rs (lines 1047-1058): trust --add with pubkey calls trust_add()
+        which writes TrustEntry with pubkey set. main.rs (lines 1086-1091):
+        trust listing prints "(key configured)" when e.pubkey.is_some().
+        Verifier test confirms the listing output contains "key configured"
+        after trust --add --pubkey. Implementor unit tests ac13a and ac13b
+        also pass in gate.
+
+    - id: AC14
+      criterion: "Full local gate passes: cargo fmt --all --check clean, cargo
+        clippy --all-targets no new warnings, cargo test all pass."
+      verifier_tests:
+        - (gate run directly, not a named test)
+      result: pass
+      notes: |
+        Gate run results:
+          cargo fmt --all -- --check: PASS (exit 0, no diff)
+          cargo clippy --all-targets: PASS (5 pre-existing warnings, 0 new)
+          cargo test: PASS (486 total tests, 0 failures)
+        Cargo.toml diff from origin/main: single line addition of
+        ed25519-dalek = "2.1.1" — no other new dependencies.
+        src/lib.rs: does NOT exist (correctly deleted by composition pass).
+        tempfile: not in Cargo.toml dev-dependencies (correctly removed).
+
+  tests_added:
+    file: tests/verifier_extends_slice.rs
+    count: 23
+    method: subprocess (binary-level) with ARAI_BASE_DIR isolation, manual temp dirs
+    covers:
+      - AC1: verifier_ac1_bare_directive_no_trailing_tokens
+      - AC2: verifier_ac2_matching_pin_admits
+      - AC3 (tokeniser): verifier_ac3_malformed_pin_rejected_in_pipeline
+      - AC3 (fetch-verification): verifier_ac3_pin_mismatch_rejects
+      - AC4: verifier_ac4_pin_checked_on_cache_path
+      - AC6: verifier_ac6_missing_sidecar_rejects
+      - AC7: verifier_ac7_no_pubkey_no_checks_required
+      - AC8: verifier_ac8_legacy_trust_file_works
+      - AC9: verifier_ac9_strict_tier_upstream_admitted
+      - AC10: verifier_ac10_advisory_tier_upstream_admitted
+      - AC11: verifier_ac11_override_tier_pipeline_completes
+      - AC12a: verifier_ac12a_unknown_trailing_token_rejected
+      - AC12b: verifier_ac12b_unknown_tier_value_rejected
+      - AC12c: verifier_ac12c_tier_strict_accepted
+      - AC12d: verifier_ac12d_duplicate_pin_fail_closed
+      - AC12e: verifier_ac12e_duplicate_tier_fail_closed
+      - AC12f: verifier_ac12f_order_independence_pin_then_tier_and_tier_then_pin
+      - AC12g: verifier_ac12g_valid_64hex_pin_accepted
+      - AC12h: verifier_ac12h_in_url_at_not_a_pin
+      - AC13: verifier_ac13_trust_add_pubkey_and_listing
+      - resolve backward compat: verifier_resolve_backward_compat_hard_invariant
+      - per-directive isolation: verifier_per_directive_failure_isolation
+      - wiring order: verifier_wiring_order_tokenise_before_verify
+
+  overall: pass
+
+  findings:
+    - kind: other
+      summary: "AC5 verified by code-path analysis and implementor's unit tests, not
+        verifier subprocess test"
+      details: |
+        AC5 (valid ed25519 signature admits) cannot be tested end-to-end through
+        arai scan because the .sig sidecar is an HTTPS resource fetched by
+        fetch_sig_remote() — there is no subprocess-level way to inject a valid
+        ed25519 sidecar without a live HTTPS server. The implementor addressed this
+        correctly by making verify_content() accept a fetch_sig callback, allowing
+        unit-level testing with a test closure. The verifier confirmed correctness
+        via (a) code-path inspection of verify_content() — the admit path is
+        reached only after verifying_key.verify() succeeds, (b) the implementor's
+        unit tests ac5_valid_signature_admits and ac5_valid_pin_and_signature_admits
+        which both pass in the gate using real ed25519 keypairs. AC5 is verified
+        at the function boundary the contract specifies (verify_content).
+
+    - kind: other
+      summary: "AC9/AC10/AC11 tier-semantics verified at unit level, not subprocess"
+      details: |
+        The tier-semantics ACs (AC9 strict, AC10 advisory, AC11 override) are
+        implemented in match_guardrails() and verified by the implementor's 7
+        tier-aware unit tests in guardrails.rs, all of which pass in the gate.
+        The verifier's subprocess tests for these ACs verify the pipeline completes
+        without error for the respective tier directives, but cannot observe the
+        exact match-time ranking/drop behaviour through the scan command's stdout
+        (scan reports file processing, not individual guardrail rankings). The
+        unit-level tests in guardrails.rs are the authoritative verification for
+        these semantics — the verifier inspected the test scaffolding, confirmed
+        the test assertions match the contract specifications, and confirmed the
+        gate passes.
+
+  recommendation: approve
+  recommendation_notes: |
+    All 14 acceptance criteria pass. The full gate passes clean. The implementation
+    correctly implements:
+    - classify_directive() as a pure tokeniser with fail-closed duplicate/unknown
+      token handling and backward-compatible bare-URL path
+    - verify_content() with injectable fetch_sig callback (testable), pin check
+      and ed25519 signature check both fail-closed
+    - TrustFile dual-form deserialiser accepting legacy list-of-strings form
+    - tier provenance in Triple/Guardrail struct (additive, serde(default))
+    - match_guardrails() with strict/advisory/override/peer tier semantics
+    - store.rs migrate_v4 adding nullable tier/source_label columns
+    - resolve() wiring all three modules in correct order (tokenise → verify → provenance)
+    - arai trust --add --pubkey CLI surface
+    The only new crate dependency is ed25519-dalek = "2.1.1"; src/lib.rs does not
+    exist; tempfile was correctly removed from dev-dependencies.

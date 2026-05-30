@@ -1,0 +1,186 @@
+---
+schema_version: 1
+module: resolve-composition
+contract_version: 1
+branch: feat/29-extends-policy
+committed: false
+
+summary: |
+  Verification that the three child modules (directive-tokenisation,
+  fetch-verification, tier-provenance) are correctly wired through the
+  resolve() function in src/extends.rs. The wiring is already complete
+  and correct, implementing the exact sequence specified in the
+  composition contract:
+
+  Step 1 (Tokenise): extract_directives() calls classify_directive() on
+  each directive line from the instruction file.
+
+  Step 2 (Resolve trust entry + obtain content): fetch() looks up the URL
+  in the trust file via find_trust_entry() and fetches the content using
+  the existing fetch/cache path.
+
+  Step 3 (Verify): fetch() calls verify_content() with the obtained content,
+  the pin from ParsedDirective, and the resolved TrustEntry. Both the
+  fresh-remote and stale-cache paths run this verification (AC4).
+
+  Step 4 (Tag provenance + inline): resolve() emits a tier-annotated
+  block-start comment (<!-- arai:extends-block url="..." tier="..." -->)
+  before inlining the upstream content. The tier defaults to "peer" when
+  absent (AC1 backward-compat invariant).
+
+  Step 5 (Downstream pipeline): The inlined content passes to parser.rs
+  rule extraction. The parser's extract_rules_from_resolved() function
+  reads the block-start markers and applies per-block provenance to each
+  extracted rule triple.
+
+  No hidden adapters were introduced. The wiring is mechanical and faithful
+  to the contracts. All error paths follow the composition contract's
+  specification: stderr warnings on failures, no error propagation to
+  the caller, per-directive failure isolation.
+
+files_modified:
+  - path: src/lib.rs
+    kind: new
+    description: >
+      Minimal library entrypoint for integration testing. Exposes the
+      extends module publicly so integration tests can call resolve(),
+      classify_directive(), fetch(), trust_add(), etc. Not published or
+      part of the production binary interface.
+
+  - path: tests/extends_integration.rs
+    kind: new
+    description: >
+      Cross-module integration test covering all scenarios in the
+      composition contract. Seeds the on-disk cache directly, avoiding
+      real network calls. Tests:
+      - AC1: Bare directive + legacy trust file backward-compat
+      - AC2: Pin matching admits content
+      - AC3: Pin mismatch rejects content
+      - AC6: Missing sidecar (with dummy pubkey) rejects content
+      - AC9: tier=strict upstream not shadowed by local rule
+      - AC10: tier=advisory upstream deprioritised
+      - AC11a: tier=override with matching SPO drops upstream
+      - AC11b: tier=override with no matching SPO retains upstream
+      - Per-directive failure isolation (two directives, first fails)
+      - Wiring order: tokenise before verify
+      - Wiring order: verify before provenance
+
+  - path: Cargo.toml
+    kind: modified
+    change: >
+      Added tempfile = "3" to [dev-dependencies] for test temporary
+      directory management in the integration test.
+
+  - path: src/extends.rs
+    kind: modified
+    change: >
+      Fixed doctest in the resolve() function documentation. The example
+      format string containing HTML comments was being interpreted as Rust
+      code; marked as "ignore" so cargo test --doc skips it.
+
+gate_results:
+  cargo_fmt_check: pass
+  cargo_clippy_all_targets: pass
+    baseline: 9 pre-existing warnings (unchanged)
+    new_warnings: 0
+  cargo_test: pass
+  total_test_count: 516
+    before_composition: 505 (386 unit + library, 119 integration)
+    after_composition: 516 (386 unit + library, 130 integration)
+    new_tests_added: 11
+  new_tests_list:
+    - test_ac1_bare_directive_legacy_trust_file
+    - test_ac2_pin_matching_admits_content
+    - test_ac3_pin_mismatch_rejects_content
+    - test_ac6_missing_sidecar_rejects_content
+    - test_ac9_strict_tier_upstream_not_shadowed
+    - test_ac10_advisory_tier_upstream_deprioritised
+    - test_ac11a_override_tier_matching_spo_drops_upstream
+    - test_ac11b_override_tier_no_matching_spo_retains_upstream
+    - test_per_directive_failure_isolation
+    - test_wiring_order_tokenise_before_verify
+    - test_wiring_order_verify_before_provenance
+
+wiring_verification: |
+  The composition wiring is complete and correct. Evidence:
+
+  1. Tokenisation step: extract_directives() in src/extends.rs calls
+     classify_directive() to parse each directive line into a ParsedDirective
+     or MalformedDirective. (Lines 941-952, 1045.)
+
+  2. Trust entry lookup: fetch() (line 725) calls is_trusted() and
+     find_trust_entry() to resolve the TrustEntry for each URL before
+     attempting to fetch content. (Lines 727-733.)
+
+  3. Verification step: fetch() calls verify_content() on both the cached
+     path (line 742) and the fresh-remote path (line 758), passing the
+     obtained content, the pin from the ParsedDirective, and the resolved
+     TrustEntry. verify_content() performs pin comparison and signature
+     checks as specified in the fetch-verification contract.
+
+  4. Provenance tagging: resolve() (line 1044) emits the tier-annotated
+     block-start comment (line 1063-1064) before inlining upstream content.
+     The tier value comes from ParsedDirective.tier, defaulting to "peer"
+     when absent (lines 1057-1062). No new code path is entered when tier
+     is absent (AC1 backward-compat).
+
+  5. Downstream: The inlined + provenance-tagged content passes to the
+     existing parser/store/guardrails pipeline. The parser's
+     extract_rules_from_resolved() function (parser.rs, lines 182-245)
+     reads the block-start markers and applies per-block provenance to each
+     rule triple.
+
+  Error semantics are honoured:
+  - MalformedDirective from tokenisation (classify_directive) is caught by
+    resolve() and logged to stderr; processing continues (line 1072-1074).
+  - Reject from fetch-verification (verify_content returning Err) is caught
+    by fetch() and logged to stderr; resolve() treats it as a failed fetch
+    and skips the upstream block (line 742-744, 758-762, 1072-1074).
+  - Trust-file deserialisaton happens at the start of resolve() via
+    read_trust() calls (no error handling — the file is not mission-critical
+    and reads default to empty on any error, per line 336-338). On-disk
+    trust errors do not propagate to the caller; they are silently replaced
+    with an empty trust file. This is the existing behavior and is unchanged.
+
+  Backward-compatibility invariants are verified:
+  - Tokeniser half (AC1): A directive with no trailing tokens produces a
+    ParsedDirective with pin=None and tier=None. The code does not enter
+    a new verify-content branch when pin is absent (lines 1052, and
+    verify_content checks at line 479-480). Test case test_ac1 confirms
+    this.
+  - Trust-file half (AC7-AC8): The TrustFile dual-form deserialiser maps
+    legacy list-of-strings to TrustEntry with pubkey=None. When pubkey is
+    absent, verify_content skips signature checking (line 500) and only
+    checks the pin if present. With no pin and no pubkey, verify_content
+    returns Ok(true) immediately (line 492), producing byte-identical
+    behavior to the pre-slice code. Test case test_ac1 confirms this.
+
+  Behavioral guarantees are honoured:
+  - Ordering: Step 1 precedes Step 3 (tokenise before verify). Step 3
+    precedes Step 4 (verify before provenance/inline). The resolve()
+    function processes directives in order; each calls fetch() (which
+    calls verify_content()); then the result is inlined with the
+    tier-annotated marker (lines 1050-1079).
+  - Atomicity per directive: Each directive in the loop is either fully
+    admitted (all steps succeed) or fully skipped (any failure returns
+    Err and skips to next directive). No partial inline.
+  - Idempotency: Given the same content and trust file, resolve() produces
+    the same output (no state accumulation, deterministic token parsing).
+  - Concurrency: resolve() is invoked during discovery/scan on a single
+    thread. The read/verify path holds no shared mutable state.
+
+notes_path: /home/matt/r/arai/.taniwha/kupu/compositions/01KSRW3SB6F72BNA6H6YEB1JZ0/v1/notes.md
+
+source_paths:
+  - path: src/lib.rs
+    kind: code
+  - path: tests/extends_integration.rs
+    kind: integration_test
+  - path: Cargo.toml
+    kind: config
+
+backward_compat:
+  invariant_status: verified
+  tokeniser_half: verified (AC1)
+  trust_file_half: verified (AC7, AC8)
+  test_coverage: test_ac1_bare_directive_legacy_trust_file

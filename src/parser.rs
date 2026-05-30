@@ -36,6 +36,16 @@ pub struct Triple {
     /// want to send to a third-party endpoint.
     #[serde(skip_serializing_if = "is_false", default)]
     pub noenrich: bool,
+    /// Provenance: the tier of the upstream block this rule came from.
+    /// `None` for purely local rules, which are treated as `Tier::Peer`.
+    /// Set once at extraction time; never re-derived downstream.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tier: Option<crate::extends::Tier>,
+    /// Provenance: the URL of the upstream block this rule came from.
+    /// `None` for purely local rules.
+    /// Set once at extraction time; never re-derived downstream.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_label: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -116,7 +126,25 @@ pub const KNOWN_TOOLS: &[&str] = &[
 ];
 
 /// Extract guardrail rules from markdown content.
+///
+/// `tier` and `source_label` are optional provenance fields from the
+/// tier-provenance slice.  Pass `None` for both when extracting purely local
+/// rules — absent provenance is treated as `Tier::Peer` throughout the
+/// pipeline (backward-compat invariant AC1).
 pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> Vec<Triple> {
+    extract_rules_with_provenance(content, source_type, base_confidence, None, None)
+}
+
+/// Like [`extract_rules`] but stamps every extracted triple with the given
+/// upstream-block provenance.  Called from the `arai:extends` resolve path
+/// when inlining an admitted upstream block.
+pub fn extract_rules_with_provenance(
+    content: &str,
+    source_type: &str,
+    base_confidence: f64,
+    tier: Option<crate::extends::Tier>,
+    source_label: Option<String>,
+) -> Vec<Triple> {
     let (_frontmatter, body) = crate::discovery::parse_frontmatter(content);
     let items = extract_list_items(&body);
     let mut triples = Vec::new();
@@ -138,11 +166,141 @@ pub fn extract_rules(content: &str, source_type: &str, base_confidence: f64) -> 
                 layer: Some(layer),
                 expires_at,
                 noenrich,
+                tier: tier.clone(),
+                source_label: source_label.clone(),
             });
         }
     }
 
     triples
+}
+
+/// Extract rules from a resolved content string (one that may contain
+/// `<!-- arai:extends-block ... -->` provenance markers emitted by
+/// [`crate::extends::resolve`]).
+///
+/// Each `<!-- arai:extends-block url="..." tier="..." -->` followed by
+/// `<!-- end arai:extends -->` segment is extracted with per-block provenance
+/// (tier + source_label) stamped on each rule.  The local tail (everything
+/// after the last `<!-- end arai:extends -->`, or the whole string when there
+/// are no markers) is extracted with no provenance (Peer/no-label).
+///
+/// This is the provenance-aware variant of [`extract_rules`].  Callers that
+/// use the flat `resolve()` output should call this function so rules from
+/// upstream blocks are correctly stamped.
+#[allow(dead_code)]
+pub fn extract_rules_from_resolved(
+    content: &str,
+    source_type: &str,
+    base_confidence: f64,
+) -> Vec<Triple> {
+    use crate::extends::Tier;
+
+    // Split the resolved content into blocks at the extends-block markers.
+    // We parse the content line by line, tracking whether we are inside an
+    // upstream block and what its provenance is.
+    let mut triples = Vec::new();
+    let mut current_block_lines: Vec<&str> = Vec::new();
+    let mut current_tier: Option<Tier> = None;
+    let mut current_source_label: Option<String> = None;
+    let mut in_upstream_block = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Detect block-start marker:
+        // <!-- arai:extends-block url="<url>" tier="<tier>" -->
+        if let Some(provenance) = parse_extends_block_marker(trimmed) {
+            // Flush any accumulated lines (should be empty between blocks,
+            // but flush defensively to avoid losing content).
+            if !current_block_lines.is_empty() {
+                let block = current_block_lines.join("\n");
+                let mut block_triples = extract_rules_with_provenance(
+                    &block,
+                    source_type,
+                    base_confidence,
+                    current_tier.take(),
+                    current_source_label.take(),
+                );
+                triples.append(&mut block_triples);
+                current_block_lines.clear();
+            }
+            current_tier = provenance.0;
+            current_source_label = provenance.1;
+            in_upstream_block = true;
+            continue;
+        }
+
+        // Detect block-end marker: <!-- end arai:extends -->
+        if trimmed == "<!-- end arai:extends -->" {
+            if in_upstream_block {
+                let block = current_block_lines.join("\n");
+                let mut block_triples = extract_rules_with_provenance(
+                    &block,
+                    source_type,
+                    base_confidence,
+                    current_tier.take(),
+                    current_source_label.take(),
+                );
+                triples.append(&mut block_triples);
+                current_block_lines.clear();
+                in_upstream_block = false;
+            }
+            continue;
+        }
+
+        current_block_lines.push(line);
+    }
+
+    // Flush remaining content (the local tail, no provenance).
+    if !current_block_lines.is_empty() {
+        let block = current_block_lines.join("\n");
+        let mut block_triples =
+            extract_rules_with_provenance(&block, source_type, base_confidence, None, None);
+        triples.append(&mut block_triples);
+    }
+
+    triples
+}
+
+/// Parse an `<!-- arai:extends-block url="..." tier="..." -->` marker line.
+/// Returns `Some((tier, source_label))` on a successful parse, `None`
+/// otherwise.  Both fields are optional — an unknown tier falls back to
+/// Peer (never an error in the extraction path).
+fn parse_extends_block_marker(
+    line: &str,
+) -> Option<(Option<crate::extends::Tier>, Option<String>)> {
+    use crate::extends::Tier;
+
+    // Strip HTML comment delimiters.
+    let inner = line
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))?
+        .trim();
+
+    let rest = inner.strip_prefix("arai:extends-block")?.trim();
+
+    // Parse key="value" pairs.  We only need url= and tier=.
+    let url = extract_kv_attr(rest, "url")?;
+    let tier_str = extract_kv_attr(rest, "tier");
+
+    let tier = match tier_str.as_deref() {
+        Some("strict") => Some(Tier::Strict),
+        Some("advisory") => Some(Tier::Advisory),
+        Some("override") => Some(Tier::Override),
+        _ => None, // peer or absent → Peer default
+    };
+
+    Some((tier, Some(url)))
+}
+
+/// Extract the value of `key="value"` from an attribute string.  Returns
+/// `None` when the key is absent.  Only handles double-quoted values.
+fn extract_kv_attr(s: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=\"");
+    let start = s.find(&needle)? + needle.len();
+    let end = s[start..].find('"')? + start;
+    Some(s[start..end].to_string())
 }
 
 /// Strip a trailing `(expires YYYY-MM-DD)` or `(until YYYY-MM-DD)` annotation

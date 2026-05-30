@@ -1,0 +1,42 @@
+schema_version: 1
+handoff_id: 01KSRTT28PTQ2T2B3CRQKP3308
+role: leaf-implementation
+module: tier-provenance
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-29T03:04:08.550Z"
+  filename: "20260529T030408550Z"
+dispatched_at:
+  iso: "2026-05-29T03:04:08.550Z"
+  filename: "20260529T030408550Z"
+returned_at:
+  iso: "2026-05-29T03:21:32.312Z"
+  filename: "20260529T032132312Z"
+outcome:
+  produced: [implementation_manifest.yaml, notes.md]
+  re_raise: false
+  committed: false
+  files_modified_per_manifest: [src/extends.rs, src/parser.rs, src/store.rs, src/guardrails.rs]
+  files_modified_actual: [src/extends.rs, src/parser.rs, src/store.rs, src/guardrails.rs, src/canonicalize.rs, src/enrich.rs, src/hooks.rs, src/scenarios.rs]
+  manifest_discrepancy: "Manifest listed 4 files; 4 more (canonicalize/enrich/hooks/scenarios) were also touched — dispatcher verified these contain ONLY `tier: None, source_label: None` field initialisers (forced struct-literal ripple from additive Triple/Guardrail fields; zero logic changes)."
+  store_migration: "v4 — additive nullable tier/source_label columns; NULL = Peer/no-label"
+  gate: "fmt clean; clippy no new (9 baseline); 386 tests (379 + 7 new)"
+  summary: "Tier provenance threaded resolve()->parser->store->guardrails; strict no-shadow (AC9), advisory deprioritise (AC10), override triple-equality drop (AC11); Peer/absent = unchanged."
+build_order: "3 of 4 (sequential — cross-cutting; builds on leaves 1+2)"
+inputs:
+  - filename: contract.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/tier-provenance/v1.md
+  - filename: vocabulary.md
+    kind: vocabulary
+    source_path: .taniwha/kupu/vocabulary/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+expected_outputs:
+  - implementation_manifest.yaml
+  - re_raise.yaml  # only if contract is genuinely ambiguous
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

@@ -355,6 +355,10 @@ mod tests {
                 expires_at: None,
                 noenrich: false,
                 intent: None,
+
+                tier: None,
+
+                source_label: None,
             },
             100,
         )

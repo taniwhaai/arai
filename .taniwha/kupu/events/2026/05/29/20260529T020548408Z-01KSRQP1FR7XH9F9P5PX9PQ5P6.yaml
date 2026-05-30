@@ -1,0 +1,10 @@
+event_id: 01KSRQP1FR7XH9F9P5PX9PQ5P6
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T02:05:48.408Z
+  filename: 20260529T020548408Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KSRQ8P2DN4V6XYZDESIGN01", "produced": ["design_v4.md"], "re_raise": false, "design_version_target": 4, "tier": "small_multi_module", "modules": ["directive-tokenisation", "fetch-verification", "tier-provenance"], "composition": "resolve", "deferred_questions": ["override-drop surface syntax", "duplicate-token handling"]}'

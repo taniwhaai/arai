@@ -1,0 +1,10 @@
+event_id: 01KSRYU8K2BUILD0COMPLETE001
+kind: build_complete
+actor:
+  kind: orchestrator
+  name: orchestrator-invocation-26
+timestamp:
+  iso: 2026-05-29T04:11:36.000Z
+  filename: 20260529T041136000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"decision_id": "01KSRYU8K2BUILD0COMPLETE001", "triggered_by": "01KSRYTX4V76JRET2EBKQVA2JB", "verifier_handoff": "01KSRY2BWJB0MDH0FJ5WDTCP2S", "overall": "pass", "acs_passed": "AC1-AC14", "modules": 3, "compositions": 1, "gate": "fmt+clippy(0 new)+test 486/0", "next": "surface_to_user:completion_review"}'

@@ -1,0 +1,36 @@
+schema_version: 1
+module: directive-tokenisation
+contract_version: 1
+
+files_modified:
+  - path: src/extends.rs
+    description: >
+      Added Tier enum, ParsedDirective struct, MalformedDirective struct, and
+      classify_directive() pure function. Refactored parse_directive() to route
+      through classify_directive() via the new parse_directive_body() helper,
+      preserving the existing extract_urls() Vec<String> interface. Added 23
+      unit tests covering all ACs. No other files touched.
+
+gate_results:
+  fmt_check: pass
+  clippy_all_targets: pass  # zero new warnings; three pre-existing warnings in unrelated files remain
+  test: pass
+  test_count: 363 unit tests + 52 integration tests (all pass)
+  new_tests_added: 23
+
+summary: >
+  The directive-tokenisation module is implemented as a pure function
+  classify_directive(directive_line: &str) -> Result<ParsedDirective,
+  MalformedDirective> added to the existing src/extends.rs. The Tier enum
+  (Strict / Advisory / Override / Peer), ParsedDirective (url, pin: Option,
+  tier: Option<Tier>), and MalformedDirective (offending_token, reason) structs
+  are defined as public items in the same file. Token classification is
+  whitespace-delimited and order-independent: @<64hex> tokens set pin (duplicate
+  = fail-closed), tier=<value> tokens set tier (duplicate = fail-closed), and
+  any other token is rejected. The backward-compatibility invariant (AC1) is
+  honoured: a bare arai:extends <url> line with no trailing tokens produces a
+  ParsedDirective with pin=None and tier=None, entering no new code path. The
+  existing extract_urls() function continues to return Vec<String> by adapting
+  through the new parse_directive_body() + classify_directive() chain; malformed
+  directives are now emitted to stderr and skipped rather than silently ignored.
+  All 23 new unit tests pass and the full gate (fmt/clippy/test) is clean.

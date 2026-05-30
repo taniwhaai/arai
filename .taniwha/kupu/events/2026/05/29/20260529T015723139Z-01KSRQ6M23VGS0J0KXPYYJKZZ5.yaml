@@ -1,0 +1,10 @@
+event_id: 01KSRQ6M23VGS0J0KXPYYJKZZ5
+kind: build_started
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T01:57:23.139Z
+  filename: 20260529T015723139Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 6, "parent_brief_version": 5, "scope": "Issue #29 — arai:extends pinning + ed25519 signing + tiering (all three gaps)", "branch": "feat/29-extends-policy", "note": "Larger multi-module candidate; adds ed25519-dalek dep; tiering crosses into parser/store/guardrails. Full gate (fmt+clippy+test) required per #122 lesson."}'

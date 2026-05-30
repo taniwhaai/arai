@@ -1,0 +1,10 @@
+event_id: 01KSRQXB3CPQ6D2ACFZ9XFHYCS
+kind: design_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T02:09:47.628Z
+  filename: 20260529T020947628Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"design_version": 4, "parent_brief_version": 6, "tier": "small_multi_module", "modules": ["directive-tokenisation", "fetch-verification", "tier-provenance"], "composition": "resolve", "source_handoff": "01KSRQ8P2DN4V6XYZDESIGN01", "promotion_method": "verbatim cp + meta/project.yaml update (29153 bytes)"}'

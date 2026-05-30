@@ -1,0 +1,10 @@
+event_id: 01KSRY07HB62VY59V1MTCWDRW5
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-29T03:56:13.739Z
+  filename: 20260529T035613739Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "composition", "handoff_id": "01KSRXF0NVCVZTK9TRF2E1XTAE", "corrective": true, "supersedes": "01KSRW3SB6F72BNA6H6YEB1JZ0", "re_raise": false, "committed": false, "files_deleted": ["src/lib.rs"], "files_modified": ["Cargo.toml", "tests/extends_integration.rs"], "dispatcher_verified": {"fmt": "clean", "clippy": "9=baseline, none new", "test": "457 pass / 0 fail; extends_integration 11/11", "cargo_toml": "only ed25519-dalek vs main; tempfile gone", "lib_rs": "deleted"}}'

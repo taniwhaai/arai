@@ -439,6 +439,24 @@ fn extract_rule_phrases(object: &str) -> Vec<String> {
 /// Match guardrails against extracted terms, filtering by classified intent and timing.
 /// Results are ranked by relevance — rules whose object text overlaps with the
 /// command terms are ranked higher.
+///
+/// # Tier-provenance semantics (AC9, AC10, AC11)
+///
+/// - **Strict** (`tier=Some(Tier::Strict)`): upstream rules whose subject
+///   matches a local rule are not suppressed by the low-relevance filter.
+///   The upstream strict rule remains in the output even when a local rule
+///   with the same subject also matches and scores higher.
+///
+/// - **Advisory** (`tier=Some(Tier::Advisory)`): advisory upstream rules are
+///   ranked lower by halving their effective score before sorting.  They
+///   remain in the output but appear after peer/strict matches.
+///
+/// - **Override** (`tier=Some(Tier::Override)`): upstream rules whose
+///   subject-predicate-object triple exactly matches any local rule's SPO
+///   are dropped before scoring.  Local rules are surfaced normally.
+///
+/// - **Peer** (`tier=None` or `tier=Some(Tier::Peer)`): no behavioural change
+///   (AC1 backward-compat invariant).
 pub fn match_guardrails(
     guardrails: &[Guardrail],
     terms: &[String],
@@ -446,7 +464,33 @@ pub fn match_guardrails(
     tool_name: &str,
     hook_event: &str,
 ) -> Vec<(Guardrail, u8)> {
-    let mut matched: Vec<(Guardrail, usize)> = guardrails
+    use crate::extends::Tier;
+
+    // ── AC11 override pre-filter ──────────────────────────────────────────
+    // Build the set of (subject, predicate, object) triples from local rules
+    // (tier absent = Peer).  Any upstream override-tier rule whose SPO
+    // exactly matches a local triple is dropped.
+    let local_spo: std::collections::HashSet<(&str, &str, &str)> = guardrails
+        .iter()
+        .filter(|g| g.tier.is_none() || matches!(g.tier, Some(Tier::Peer)))
+        .map(|g| (g.subject.as_str(), g.predicate.as_str(), g.object.as_str()))
+        .collect();
+
+    let pre_filtered: Vec<&Guardrail> = guardrails
+        .iter()
+        .filter(|g| {
+            // Drop upstream override rules whose SPO matches a local rule.
+            if matches!(g.tier, Some(Tier::Override)) {
+                let spo = (g.subject.as_str(), g.predicate.as_str(), g.object.as_str());
+                if local_spo.contains(&spo) {
+                    return false; // AC11 sub-case A: drop matched upstream rule
+                }
+            }
+            true
+        })
+        .collect();
+
+    let mut matched: Vec<(Guardrail, usize)> = pre_filtered
         .iter()
         .filter(|g| {
             // Check timing — only fire rules meant for this hook event.  Intent
@@ -478,7 +522,18 @@ pub fn match_guardrails(
             // substring overlap from the subject alone.  See `relevance_score`
             // for the verb-mismatch and phrase-gate contracts.
             let score = relevance_score(&g.object, terms, command_phrases)?;
-            Some((g.clone(), score))
+
+            // AC10 advisory deprioritisation: halve the score so advisory
+            // rules sort below peer/strict rules with the same base score.
+            // They remain present but rank lower.  Score is floored at 0
+            // (already usize so it can't go negative).
+            let effective_score = if matches!(g.tier, Some(Tier::Advisory)) {
+                score / 2
+            } else {
+                score
+            };
+
+            Some(((*g).clone(), effective_score))
         })
         .collect();
 
@@ -491,10 +546,37 @@ pub fn match_guardrails(
         )
     });
 
-    // If we have high-relevance matches, suppress low-relevance ones
+    // If we have high-relevance matches, suppress low-relevance ones.
+    //
+    // Tier exceptions to the low-relevance filter:
+    //
+    //   AC9 (strict): A strict-tier upstream rule must NOT be suppressed by
+    //   this filter, even if a same-subject local rule outscores it.  The
+    //   upstream strict rule is always retained once it has passed relevance
+    //   scoring.
+    //
+    //   AC10 (advisory): An advisory-tier rule must NOT be dropped by this
+    //   filter — it is still surfaced, just ranked lower.  The deprioritised
+    //   score may push it below the top_score threshold, but the rule must
+    //   remain in the output.
     let top_score = matched.first().map(|(_, s)| *s).unwrap_or(0);
     if top_score > 1 {
-        matched.retain(|(_, s)| *s >= top_score);
+        matched.retain(|(g, s)| {
+            if *s >= top_score {
+                return true;
+            }
+            // Strict-tier upstream rules: retain regardless of score (AC9).
+            if matches!(g.tier, Some(Tier::Strict)) {
+                return true;
+            }
+            // Advisory-tier upstream rules: retain regardless of score (AC10).
+            // They already have their score halved — that's the deprioritisation.
+            // The filter must not additionally drop them.
+            if matches!(g.tier, Some(Tier::Advisory)) {
+                return true;
+            }
+            false
+        });
     }
 
     matched
@@ -951,6 +1033,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -964,6 +1050,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
         ];
 
@@ -1392,6 +1482,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
             crate::parser::Triple {
                 subject: "Git".to_string(),
@@ -1405,6 +1499,10 @@ mod tests {
                 layer: None,
                 expires_at: None,
                 noenrich: false,
+
+                tier: None,
+
+                source_label: None,
             },
         ];
 
@@ -1471,6 +1569,10 @@ mod tests {
             expires_at: None,
             noenrich: false,
             intent: None,
+
+            tier: None,
+
+            source_label: None,
         }
     }
 
@@ -1539,5 +1641,334 @@ mod tests {
         assert!(ctx.contains("- still: alembic must_not hand-write migrations"));
         assert!(ctx.contains("git never: force-push to main"));
         assert!(ctx.contains("[CLAUDE.md:42 layer-1]"));
+    }
+
+    // ── Tier-provenance acceptance criteria (AC9, AC10, AC11, AC1) ─────────
+
+    /// Helper: guardrail with an explicit tier.
+    fn mk_tiered(
+        triple_id: i64,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        tier: crate::extends::Tier,
+        source_label: &str,
+    ) -> Guardrail {
+        Guardrail {
+            triple_id,
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            confidence: 0.9,
+            source_file: source_label.to_string(),
+            file_path: source_label.to_string(),
+            layer: Some(1),
+            line_start: Some(1),
+            expires_at: None,
+            noenrich: false,
+            intent: Some(crate::intent::RuleIntent {
+                action: crate::intent::Action::General,
+                timing: crate::intent::Timing::ToolCall,
+                tools: vec!["*".to_string()],
+                allow_inverse: false,
+                enriched_by: "taxonomy".to_string(),
+                severity: crate::intent::Severity::Block,
+            }),
+            tier: Some(tier),
+            source_label: Some(source_label.to_string()),
+        }
+    }
+
+    /// Helper: local (Peer-tier) guardrail — no tier, no source_label.
+    fn mk_local(triple_id: i64, subject: &str, predicate: &str, object: &str) -> Guardrail {
+        Guardrail {
+            triple_id,
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            confidence: 0.9,
+            source_file: "CLAUDE.md".to_string(),
+            file_path: "CLAUDE.md".to_string(),
+            layer: Some(1),
+            line_start: Some(1),
+            expires_at: None,
+            noenrich: false,
+            intent: Some(crate::intent::RuleIntent {
+                action: crate::intent::Action::General,
+                timing: crate::intent::Timing::ToolCall,
+                tools: vec!["*".to_string()],
+                allow_inverse: false,
+                enriched_by: "taxonomy".to_string(),
+                severity: crate::intent::Severity::Block,
+            }),
+            tier: None,
+            source_label: None,
+        }
+    }
+
+    /// AC9 — strict tier: upstream rule is not shadowed by a same-subject
+    /// local rule.
+    ///
+    /// The test constructs a scenario where the local rule scores higher than
+    /// the strict upstream rule.  Without tier-aware filtering the score-based
+    /// suppress logic would drop the strict rule.  With AC9 enforcement it
+    /// must survive.
+    #[test]
+    fn ac9_strict_upstream_not_shadowed_by_local() {
+        use crate::extends::Tier;
+
+        // Local rule: high-overlap object ("force-push to main" scores 3
+        // against ["git", "push", "main"]).
+        let local = mk_local(1, "Git", "never", "force-push to main");
+        // Upstream strict rule: lower-overlap object ("review PR before
+        // merging" scores 0 against those terms).  Normally the score
+        // filter would drop this, but AC9 says strict rules survive.
+        let upstream_strict = mk_tiered(
+            2,
+            "Git",
+            "requires",
+            "review PR before merging",
+            Tier::Strict,
+            "https://example.com/policy.md",
+        );
+
+        let guardrails = vec![local, upstream_strict];
+        let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
+        let phrases = vec!["git push".to_string()];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        let ids: Vec<i64> = matched.iter().map(|(g, _)| g.triple_id).collect();
+
+        // Local high-scorer must be present.
+        assert!(
+            ids.contains(&1),
+            "AC9: local rule must fire; got ids={ids:?}"
+        );
+        // Strict upstream rule must NOT be dropped by the score filter (AC9).
+        assert!(
+            ids.contains(&2),
+            "AC9: strict upstream rule must survive score-filter shadow; got ids={ids:?}"
+        );
+    }
+
+    /// AC10 — advisory tier: advisory upstream rule appears lower priority
+    /// than a local peer rule with the same subject, and is not dropped.
+    ///
+    /// Score design: local "push without failing tests" scores 2 (push+tests);
+    /// advisory "push and tests must pass" has base 2, halved to 1.
+    /// top_score = 2; local ranks first; advisory is filter-protected and
+    /// must rank second.
+    #[test]
+    fn ac10_advisory_upstream_deprioritised_vs_local_peer() {
+        use crate::extends::Tier;
+
+        // Upstream advisory rule: base score 2 → halved to 1.
+        let upstream = mk_tiered(
+            1,
+            "Cargo",
+            "prefers",
+            "push and tests must pass",
+            Tier::Advisory,
+            "https://example.com/policy.md",
+        );
+        // Local peer rule: score 2 (no halving).
+        let local = mk_local(2, "Cargo", "never", "push without failing tests");
+
+        let guardrails = vec![upstream.clone(), local.clone()];
+        // "tests" is in both objects; "push" is in both; terms chosen to
+        // produce score 2 for both before advisory halving.
+        let terms = vec!["cargo".to_string(), "push".to_string(), "tests".to_string()];
+        let phrases: Vec<String> = vec![];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        // Advisory rule must be present (not absent — just lower priority).
+        let advisory_pos = matched.iter().position(|(g, _)| g.triple_id == 1);
+        let local_pos = matched.iter().position(|(g, _)| g.triple_id == 2);
+
+        assert!(
+            advisory_pos.is_some(),
+            "AC10: advisory upstream rule must still appear in output (not dropped)"
+        );
+        assert!(
+            local_pos.is_some(),
+            "AC10: local peer rule must appear in output"
+        );
+
+        // The advisory rule should sort after the local rule — deprioritisation.
+        let ap = advisory_pos.unwrap();
+        let lp = local_pos.unwrap();
+        assert!(
+            ap > lp,
+            "AC10: advisory rule (pos={ap}) must rank after local peer rule (pos={lp})"
+        );
+    }
+
+    /// AC11 sub-case A — override tier: upstream rule whose SPO exactly matches
+    /// a local rule is dropped.
+    #[test]
+    fn ac11a_override_upstream_dropped_when_spo_matches_local() {
+        use crate::extends::Tier;
+
+        // Upstream override rule: (Git, never, force-push to main).
+        let upstream = mk_tiered(
+            1,
+            "Git",
+            "never",
+            "force-push to main",
+            Tier::Override,
+            "https://example.com/policy.md",
+        );
+        // Local rule with EXACTLY the same SPO.
+        let local = mk_local(2, "Git", "never", "force-push to main");
+
+        let guardrails = vec![upstream, local];
+        let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
+        let phrases = vec!["git push".to_string()];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        let ids: Vec<i64> = matched.iter().map(|(g, _)| g.triple_id).collect();
+
+        // Upstream override rule must be DROPPED.
+        assert!(
+            !ids.contains(&1),
+            "AC11A: upstream override rule matching local SPO must be dropped; ids={ids:?}"
+        );
+        // Local rule is still surfaced.
+        assert!(
+            ids.contains(&2),
+            "AC11A: local rule must still be surfaced; ids={ids:?}"
+        );
+    }
+
+    /// AC11 sub-case B — override tier: upstream rule whose SPO does NOT match
+    /// any local rule is retained.
+    #[test]
+    fn ac11b_override_upstream_retained_when_no_local_spo_match() {
+        use crate::extends::Tier;
+
+        // Upstream override rule: (Git, never, force-push to main).
+        let upstream = mk_tiered(
+            1,
+            "Git",
+            "never",
+            "force-push to main",
+            Tier::Override,
+            "https://example.com/policy.md",
+        );
+        // Local rule with DIFFERENT SPO — no match, so upstream should be retained.
+        let local = mk_local(2, "Git", "requires", "signed commits");
+
+        let guardrails = vec![upstream, local];
+        let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
+        let phrases = vec!["git push".to_string()];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        let ids: Vec<i64> = matched.iter().map(|(g, _)| g.triple_id).collect();
+
+        // Upstream rule retained — no local rule has the same SPO.
+        assert!(
+            ids.contains(&1),
+            "AC11B: upstream override rule with no local SPO match must be retained; ids={ids:?}"
+        );
+    }
+
+    /// AC11 sub-case C — override tier with no upstream rule to drop is a no-op.
+    /// Local-only rules are unaffected even when the local SPO appears nowhere
+    /// upstream.  No error, no warning, no spurious drop.
+    #[test]
+    fn ac11c_override_no_upstream_to_drop_is_noop() {
+        // Only local rules — no upstream override rules present.
+        let local1 = mk_local(1, "Cargo", "never", "push without tests");
+        let local2 = mk_local(2, "Git", "requires", "signed commits");
+
+        let guardrails = vec![local1, local2];
+        let terms = vec!["cargo".to_string(), "push".to_string()];
+        let phrases: Vec<String> = vec![];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        // Both local rules should match; nothing is spuriously dropped.
+        assert!(
+            matched.iter().any(|(g, _)| g.triple_id == 1),
+            "AC11C: local rule 1 must still fire"
+        );
+    }
+
+    /// AC1 (tier-provenance half) — Peer tier (absent) produces no behavioural
+    /// change vs today.  Matching with all-Peer guardrails must behave
+    /// byte-identically to the pre-slice path (regression test).
+    #[test]
+    fn ac1_peer_tier_absent_produces_no_behaviour_change() {
+        // Three local rules, all with tier=None (Peer default).
+        let g1 = mk_local(1, "Git", "never", "force-push to main");
+        let g2 = mk_local(2, "Cargo", "always", "run tests before push");
+        let g3 = mk_local(3, "Alembic", "forbids", "hand-write migrations");
+
+        let guardrails = vec![g1, g2, g3];
+        let terms = vec!["git".to_string(), "push".to_string(), "main".to_string()];
+        let phrases = vec!["git push".to_string()];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        // Git rule matches; nothing is spuriously dropped, deprioritised, or
+        // retained due to tier logic.
+        let git_matched = matched.iter().any(|(g, _)| g.triple_id == 1);
+        assert!(
+            git_matched,
+            "AC1: local (Peer) git rule must still fire with no tier-provenance changes"
+        );
+
+        // Cargo and Alembic rules don't match these terms — behaviour unchanged.
+        let cargo_matched = matched.iter().any(|(g, _)| g.triple_id == 2);
+        assert!(
+            !cargo_matched,
+            "AC1: cargo rule should not fire on git push terms"
+        );
+    }
+
+    /// AC9 regression: strict upstream rule with a score below the top score
+    /// is NOT suppressed by the low-relevance filter.
+    #[test]
+    fn ac9_strict_not_suppressed_by_score_filter() {
+        use crate::extends::Tier;
+
+        // High-scoring local rule.
+        let local = mk_local(1, "Git", "never", "force-push to main branch");
+        // Strict upstream rule with same subject but lower-scoring object text.
+        let upstream_strict = mk_tiered(
+            2,
+            "Git",
+            "requires",
+            "PR review",
+            Tier::Strict,
+            "https://example.com/p.md",
+        );
+
+        let guardrails = vec![local, upstream_strict];
+        // Terms chosen so the local rule scores highly (4 overlapping words)
+        // and the strict rule scores lower (1 word overlap on "git").
+        let terms = vec![
+            "git".to_string(),
+            "push".to_string(),
+            "main".to_string(),
+            "branch".to_string(),
+        ];
+        let phrases = vec!["git push".to_string()];
+
+        let matched = match_guardrails(&guardrails, &terms, &phrases, "Bash", "PreToolUse");
+
+        let ids: Vec<i64> = matched.iter().map(|(g, _)| g.triple_id).collect();
+
+        // Local high-scorer should be present.
+        assert!(ids.contains(&1), "local high-score rule must fire: {ids:?}");
+        // Strict upstream must NOT be suppressed by the score filter (AC9).
+        assert!(
+            ids.contains(&2),
+            "AC9 strict upstream must survive score filter: {ids:?}"
+        );
     }
 }
