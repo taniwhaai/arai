@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_id: 01KSYCONTRACTV5DERIV0000001
+role: contract-derivation
+module: brand-palette-styling
+parent_design_version: 5
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-05-31T03:36:07.371Z"
+  filename: "20260531T033607371Z"
+dispatched_at:
+  iso: "2026-05-31T03:36:07.371Z"
+  filename: "20260531T033607371Z"
+returned_at:
+  iso: "2026-05-31T03:39:14.883Z"
+  filename: "20260531T033914883Z"
+outcome:
+  produced: [contract-brand-palette-styling-v1.md]
+  re_raise: false
+  summary: "Single contract for brand-palette-styling: ColorVerdict/StyledSpan shapes, gate precedence, foreground-only, no-stoplight, machine-consumed carve-out as structural guarantee; AC1-AC10 given/when/then; AC10 full-gate verifier obligation."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: design_v5.md
+    kind: design_doc
+    source_path: .taniwha/kupu/design/v5.md
+  - filename: project_context.yaml
+    kind: project_context
+expected_outputs:
+  - contract-brand-palette-styling-v1.md
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2

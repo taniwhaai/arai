@@ -1,0 +1,37 @@
+---
+schema_version: 1
+event_id: 01KSYJV0CORRVERIFDISP0001
+event_kind: subagent_dispatched
+occurred_at: "2026-05-31T08:32:07Z"
+orchestrator_invocation: 33
+
+summary: >
+  Corrective verifier dispatched (handoff 01KSYJV0CORRVERIF00000001) following
+  successful return of corrective leaf 01KSYJCORRLEFIMPL000001. Verifier must
+  update tests/brand_palette_verifier.rs pounamu RGB assertion from old escape
+  (31,77,63) to new escape (61,130,104), re-confirm AC9 PASS with ~4.6:1
+  contrast evidence, run full gate, and produce updated verifier_report.yaml.
+
+triggered_by:
+  event: subagent_returned
+  handoff_id: 01KSYJCORRLEFIMPL000001
+  event_id: 01KSYJGSNH9BEKB55X9V6NH3C5
+
+dispatched:
+  handoff_id: 01KSYJV0CORRVERIF00000001
+  role: verifier
+  module: brand-palette-styling
+  contract_version: 1
+  corrective: true
+
+context:
+  corrective_leaf_result: >
+    src/style.rs updated: POUNAMU_R/G/B 31/77/63->61/130/104. Doc comments and
+    structural_emits_pounamu_escape unit test updated. 400 src unit tests pass.
+    One expected failure: tests/brand_palette_verifier.rs::ac1_palette_constants_correct_values
+    asserts old escape \x1b[38;2;31;77;63m. Binary now emits \x1b[38;2;61;130;104m.
+  verifier_scope:
+    - "Update tests/brand_palette_verifier.rs assertions for new pounamu RGB"
+    - "Re-confirm AC1-AC10; AC9 now PASS (~4.6:1 WCAG AA)"
+    - "Run full gate: fmt + clippy + test; all must be green"
+    - "Write verifier_report.yaml: overall pass, AC9 pass with contrast math"

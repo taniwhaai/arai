@@ -10,9 +10,9 @@ tools_registered:
 - kupu
 current_phase: phase-1
 brief:
-  current_version: 6
+  current_version: 7
 design:
-  current_version: 4
+  current_version: 5
 contracts:
   base-directory-resolution:
     current_version: 1
@@ -27,6 +27,8 @@ contracts:
   tier-provenance:
     current_version: 1
   resolve-composition:
+    current_version: 1
+  brand-palette-styling:
     current_version: 1
 vocabulary:
   current_version: 1

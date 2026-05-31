@@ -1,0 +1,14 @@
+schema_version: 1
+prompt_kind: ac9_legibility_decision
+responses:
+  - header: AC9 contrast
+    question: Pounamu #1f4d3f as foreground structural text is ~2.1:1 on dark terminals (below readable). How to handle before committing #83?
+    selected: Lighten structural for legibility
+    dispatcher_note: >
+      Keep ochre RGB(184,118,58) unchanged. Change the STRUCTURAL foreground colour
+      from pounamu RGB(31,77,63) to a terminal-legible medium pounamu
+      **RGB(61,130,104) (#3d8268)** — luminance ~0.18 → ~4.6:1 contrast on BOTH a
+      black and a white background (passes WCAG AA on each), staying in pounamu's
+      green family. This amends the design/contract palette value for the structural
+      colour only; ochre and all gating/carve-out behaviour are unchanged. AC9 then
+      becomes objectively satisfiable.

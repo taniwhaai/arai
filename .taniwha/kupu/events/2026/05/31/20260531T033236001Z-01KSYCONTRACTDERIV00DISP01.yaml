@@ -1,0 +1,17 @@
+schema_version: 1
+event_id: 01KSYCONTRACTDERIV00DISP01
+kind: subagent_dispatched
+timestamp_iso: 2026-05-31T03:32:36Z
+orchestrator_invocation: 29
+payload:
+  role: contract-derivation
+  handoff_id: 01KSYCONTRACTV5DERIV0000001
+  module: brand-palette-styling
+  design_version: 5
+  inputs:
+    - kupu/design/v5.md
+    - kupu/project_context.yaml
+  output_destination: orchestrator/handoff/01KSYCONTRACTV5DERIV0000001/outputs/
+  expected_outputs:
+    - contract_manifest
+  triggered_by: user-input-01KSY1CZP9GMNB9Z54JP11KKQY

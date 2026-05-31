@@ -1,0 +1,13 @@
+schema_version: 1
+event_id: 01KSYORCH29DECIDEDISPATCH1
+kind: decision_recorded
+timestamp_iso: 2026-05-31T03:32:36Z
+orchestrator_invocation: 29
+payload:
+  decision_id: 01KSYCONTRACTDERIV000DEC001
+  kind: scope_change
+  triggered_by: user-input-01KSY1CZP9GMNB9Z54JP11KKQY
+  summary: >
+    Design v5 approved (clean Approve, no notes). Build advances from
+    design-pending-approval to pre-derivation. Contract-derivation dispatched
+    for brand-palette-styling (handoff 01KSYCONTRACTV5DERIV0000001).

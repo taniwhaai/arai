@@ -1,0 +1,12 @@
+schema_version: 1
+family: contract
+module: brand-palette-styling
+current_version: 1
+versions:
+- version: 1
+  recorded_at:
+    iso: 2026-05-31T03:45:00.000Z
+    filename: 20260531T034500000Z
+  parent_design_version: 5
+  parent_omitted: false
+  schema_version: 1

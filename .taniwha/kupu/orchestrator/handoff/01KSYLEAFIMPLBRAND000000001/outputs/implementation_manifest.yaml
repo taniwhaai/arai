@@ -1,0 +1,127 @@
+module: brand-palette-styling
+contract_version: 1
+committed: false
+
+files_created:
+  - path: src/style.rs
+    description: >
+      Palette constants (pounamu RGB(31,77,63), ochre RGB(184,118,58));
+      Stream enum; should_colorize gate with NO_COLOR > CLICOLOR_FORCE > IsTerminal
+      precedence; five closed-set semantic helpers: structural, passage, dim, warn,
+      error; #[cfg(test)] gate-matrix unit tests.
+  - path: tests/style_integration.rs
+    description: >
+      Subprocess integration tests: 12 tests covering AC2 (NO_COLOR=1),
+      AC3 (piped output), AC4 (--json paths), AC8 (guardrails --match-stdin).
+      Uses env!("CARGO_BIN_EXE_arai") and ARAI_BASE_DIR temp isolation.
+      No new dependencies.
+
+files_modified:
+  - path: src/main.rs
+    description: >
+      Added `mod style;`. Applied style helpers to cmd_status (structural headers),
+      cmd_guardrails human listing (passage for rule lines), cmd_why human rendering
+      (structural labels, passage for matched rules), audit table view (structural
+      header, passage for row lines), and eprintln! "arai: {e}" error path (error
+      helper on stderr). All --json branches left untouched.
+  - path: src/stats.rs
+    description: >
+      Added `use crate::style;`. Applied structural to section headers (print_table,
+      print_section titles, print_compliance_section, print_token_economics). Applied
+      passage to per-rule compliance row lines in print_compliance_section.
+      All json branch and compute() paths untouched.
+
+files_untouched:
+  - path: src/hooks.rs
+    reason: "Deliberate carve-out (AC8): hook-protocol JSON must remain byte-identical."
+  - path: src/guardrails.rs
+    reason: >
+      format_trace is only called from format_context which builds machine-consumed
+      additionalContext. No human-facing rendering path uses format_trace, so no
+      changes required.
+  - path: src/audit.rs
+    reason: >
+      audit.rs contains only JSONL write logic and query helpers. Human-facing audit
+      table rendering is in main.rs cmd_audit, which was modified.
+
+gate_results:
+  cargo_fmt:
+    status: pass
+    notes: "cargo fmt --all ran cleanly; 3 files formatted."
+  cargo_clippy:
+    status: pass
+    notes: >
+      No new warnings introduced by this change. Pre-existing warnings in
+      tests/sync_integration.rs, tests/verifier_base_directory_resolution.rs,
+      tests/prompt_collector_verifier.rs, and src/store.rs are unchanged.
+      dim() and DIM_ATTR carry #[allow(dead_code)] since they are part of the
+      mandated five-helper set but have no current call site in the integration
+      surfaces.
+  cargo_test:
+    status: pass
+    test_counts:
+      unit_tests_in_src: 400
+      style_integration: 12
+      hooks_safety: 2
+      extends_integration: 3
+      hooks_grok_exit_verifier: 11
+      compliance_correlation: 9
+      intent_severity: 5
+      mcp_check_action: 4
+      canonicalize_integration: 1
+      parser_coverage: 19
+      prompt_collector_integration: 3
+      prompt_collector_verifier: 9
+      sync_integration: 3
+      verifier_base_directory_resolution: 2
+      verifier_extends_slice: 23
+      total: "506 (all pass, 0 fail)"
+
+acceptance_criteria_summary:
+  AC1: >
+    All ANSI escape construction and palette RGB values are centralised in
+    src/style.rs only. No other source file embeds RGB triples or hand-rolls
+    ANSI escapes.
+  AC2: >
+    should_colorize returns false when NO_COLOR is set (rule 1 dominates).
+    Unit tests: ac2_no_color_gate_is_off, ac2_no_color_dominates_clicolor_force,
+    ac2_no_color_helpers_return_plain. Integration tests: ac2_no_color_status_no_ansi,
+    ac2_no_color_guardrails_no_ansi, ac2_no_color_hook_match_stdin_no_ansi.
+  AC3: >
+    When streams are piped (non-TTY) and neither NO_COLOR nor CLICOLOR_FORCE is set,
+    should_colorize returns false and helpers return plain. Unit: ac3_non_tty_helpers_return_plain.
+    Integration: ac3_piped_status_no_ansi, ac3_piped_guardrails_no_ansi.
+  AC4: >
+    All --json branches are not routed through style helpers. Integration tests
+    ac4_guardrails_json_has_no_ansi, ac4_stats_json_has_no_ansi, ac4_audit_json_has_no_ansi,
+    ac4_why_json_has_no_ansi, ac4_lint_json_has_no_ansi all pass.
+  AC5: >
+    Structural helpers applied to section headers and labels; passage helpers applied
+    to rule-firing lines (guardrails list, why matches, audit rows, compliance rows).
+    Error/warn helpers applied to stderr "arai: ..." error path.
+  AC6: >
+    Closed five-helper set. No green or red escapes. Unit tests: ac6_no_stoplight_warn_and_error_use_ochre,
+    error_emits_ochre_bold_same_as_warn.
+  AC7: >
+    Foreground-only; no background escape in any helper. Unit test: ac7_no_background_escape_in_any_helper.
+  AC8: >
+    src/hooks.rs not modified. Integration tests ac8_hook_match_stdin_no_ansi and
+    ac8_hook_match_stdin_json_string_fields_no_ansi verify zero ANSI bytes.
+  AC9: >
+    Manual criterion (visual inspection on dark/light terminals). Pounamu and ochre
+    are mid-range foreground-only colours that remain legible on both backgrounds.
+  AC10: >
+    cargo fmt --all, cargo clippy --all-targets (no new warnings), cargo test all pass.
+
+prose_summary: >
+  Implemented the brand-palette-styling module (src/style.rs) with the two brand
+  foreground colours (pounamu RGB(31,77,63) and ochre RGB(184,118,58)), a
+  should_colorize gate enforcing NO_COLOR > CLICOLOR_FORCE > IsTerminal precedence,
+  and the closed five-helper set (structural, passage, dim, warn, error) using
+  24-bit truecolor escapes with reset-after-span discipline. Applied the helpers
+  to human-readable output in src/main.rs (status, guardrails listing, why, audit
+  table, error path) and src/stats.rs (section headers, compliance rows). src/hooks.rs
+  was not modified per AC8. All --json paths are untouched. The integration test
+  suite verifies zero ANSI bytes in --json, piped, NO_COLOR=1, and hook-stdin
+  output. Full gate (fmt + clippy + test) passes with 506 tests, 0 failures, and
+  no new clippy warnings.

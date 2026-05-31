@@ -1,0 +1,11 @@
+schema_version: 1
+event_id: 01KSYCONTRACTPROMOTED0001
+kind: contract_written
+timestamp_iso: 2026-05-31T03:45:00.000Z
+payload:
+  module: brand-palette-styling
+  version: 1
+  parent_design_version: 5
+  canonical_path: kupu/contracts/brand-palette-styling/v1.md
+  source_handoff: 01KSYCONTRACTV5DERIV0000001
+  acs: [AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC9, AC10]
