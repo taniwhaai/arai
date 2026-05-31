@@ -18,6 +18,7 @@ mod scenarios;
 mod session;
 mod stats;
 mod store;
+mod style;
 mod sync;
 mod telemetry;
 mod upgrade;
@@ -436,7 +437,8 @@ fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("arai: {e}");
+        let col = style::should_colorize(style::Stream::Stderr);
+        eprintln!("{}", style::error(&format!("arai: {e}"), col));
         std::process::exit(1);
     }
 }
@@ -448,11 +450,13 @@ fn cmd_status() -> Result<(), String> {
     let count = db.guardrail_count().map_err(|e| e.to_string())?;
     let last_scan = db.get_meta("last_scan").map_err(|e| e.to_string())?;
 
-    println!("Arai status");
+    let col = style::should_colorize(style::Stream::Stdout);
+
+    println!("{}", style::structural("Arai status", col));
     println!("  Rules:      {count}");
     println!("  Sources:    {} file(s)", files.len());
 
-    println!("  Integration");
+    println!("  {}", style::structural("Integration", col));
     println!("    Hooks:    Claude Code + Grok TUI (native)");
     println!("              • .claude/settings.json");
     println!("              • .grok/hooks/arai.json");
@@ -477,7 +481,13 @@ fn cmd_status() -> Result<(), String> {
     if !issues.duplicates.is_empty() || !issues.opposing.is_empty() {
         println!();
         if !issues.duplicates.is_empty() {
-            println!("  Duplicate rules ({}):", issues.duplicates.len());
+            println!(
+                "  {}",
+                style::structural(
+                    &format!("Duplicate rules ({}):", issues.duplicates.len()),
+                    col
+                )
+            );
             for d in issues.duplicates.iter().take(10) {
                 println!("    - {} {}: {}", d.subject, d.predicate, d.object,);
                 for src in &d.sources {
@@ -489,7 +499,13 @@ fn cmd_status() -> Result<(), String> {
             }
         }
         if !issues.opposing.is_empty() {
-            println!("  Opposing predicates ({}):", issues.opposing.len());
+            println!(
+                "  {}",
+                style::structural(
+                    &format!("Opposing predicates ({}):", issues.opposing.len()),
+                    col
+                )
+            );
             for o in issues.opposing.iter().take(10) {
                 println!(
                     "    - {} (predicates: {})",
@@ -514,12 +530,16 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
         let out = serde_json::to_string_pretty(&rules).map_err(|e| e.to_string())?;
         println!("{out}");
     } else {
+        let col = style::should_colorize(style::Stream::Stdout);
         if rules.is_empty() {
             println!("No guardrails found. Run `arai init` first.");
             return Ok(());
         }
         for r in &rules {
-            println!("- {} {}: {}", r.subject, r.predicate, r.object);
+            println!(
+                "- {}",
+                style::passage(&format!("{} {}: {}", r.subject, r.predicate, r.object), col)
+            );
         }
     }
     Ok(())
@@ -925,9 +945,16 @@ fn cmd_audit(
     }
 
     // Table view: one line per firing, rule names condensed.
+    let col = style::should_colorize(style::Stream::Stdout);
     println!(
-        "{:<20} {:<13} {:<8} {:<7} summary",
-        "time", "event", "tool", "rules"
+        "{}",
+        style::structural(
+            &format!(
+                "{:<20} {:<13} {:<8} {:<7} summary",
+                "time", "event", "tool", "rules"
+            ),
+            col
+        )
     );
     println!("{}", "─".repeat(80));
     for e in &entries {
@@ -944,10 +971,11 @@ fn cmd_audit(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let preview_short: String = preview.chars().take(50).collect();
-        println!(
+        let row = format!(
             "{:<20} {:<13} {:<8} {:<7} {}",
             ts, ev, tool, rule_count, preview_short
         );
+        println!("{}", style::passage(&row, col));
     }
     println!(
         "\n  {} firing(s) shown.  Log at {}/audit/{}/",
@@ -1552,9 +1580,18 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
         return Ok(());
     }
 
-    println!("  tool:   {}", result.tool_name);
-    println!("  event:  {}", result.event);
-    println!("  terms:  {}", result.terms.join(", "));
+    let col = style::should_colorize(style::Stream::Stdout);
+    println!(
+        "  {}   {}",
+        style::structural("tool:", col),
+        result.tool_name
+    );
+    println!("  {}  {}", style::structural("event:", col), result.event);
+    println!(
+        "  {}  {}",
+        style::structural("terms:", col),
+        result.terms.join(", ")
+    );
     if result.skipped {
         println!("  status: skipped (tool is on the bypass list)");
         return Ok(());
@@ -1588,13 +1625,14 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
             .layer
             .map(|l| format!("  [{}]", audit::layer_label(l)))
             .unwrap_or_default();
-        println!(
-            "  • [{sev:6}] {subj} {pred}: {obj}  ({pct}% match){layer_suffix}",
+        let rule_line = format!(
+            "  \u{2022} [{sev:6}] {subj} {pred}: {obj}  ({pct}% match){layer_suffix}",
             sev = severity,
             subj = g.subject,
             pred = g.predicate,
             obj = g.object,
         );
+        println!("{}", style::passage(&rule_line, col));
         println!("       from {src}{line_suffix}");
     }
     Ok(())

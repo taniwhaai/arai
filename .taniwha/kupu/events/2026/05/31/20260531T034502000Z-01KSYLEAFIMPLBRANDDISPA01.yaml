@@ -1,0 +1,12 @@
+schema_version: 1
+event_id: 01KSYLEAFIMPLBRANDDISPA01
+kind: subagent_dispatched
+timestamp_iso: 2026-05-31T03:45:02.000Z
+payload:
+  handoff_id: 01KSYLEAFIMPLBRAND000000001
+  role: leaf-implementation
+  module: brand-palette-styling
+  contract_version: 1
+  inputs:
+    - kupu/contracts/brand-palette-styling/v1.md
+    - kupu/project_context.yaml

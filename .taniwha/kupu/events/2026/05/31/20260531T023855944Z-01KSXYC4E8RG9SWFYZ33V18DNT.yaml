@@ -1,0 +1,10 @@
+event_id: 01KSXYC4E8RG9SWFYZ33V18DNT
+kind: design_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-31T02:38:55.944Z
+  filename: 20260531T023855944Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"design_version": 5, "parent_brief_version": 7, "tier": "single_module", "module": "brand-palette-styling", "source_handoff": "01KSYDESIGNV7BRIEF000000001", "promotion_method": "verbatim cp + meta/project.yaml update (335 lines)"}'

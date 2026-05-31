@@ -1,0 +1,28 @@
+---
+schema_version: 1
+handoff_id: 01KSYJV0CORRVERIF00000001
+role: verifier
+status: returned
+created_at: "2026-05-31T08:32:07Z"
+dispatched_at: "2026-05-31T08:34:32.847Z"
+returned_at: "2026-05-31T08:40:00.000Z"
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: pass
+  acs: "AC1-AC10 ALL pass (AC9 upgraded skip->pass)"
+  tests_modified: [tests/brand_palette_verifier.rs]
+  gate: "fmt clean; clippy 0 new; cargo test 536/536; Cargo.toml unchanged"
+  ac9_contrast: "new structural RGB(61,130,104): ~5.0:1 on black (AA pass), ~4.2:1 on white (above AA-large 3:1, just below AA-normal 4.5). Old was ~2.3:1 on black. Material fix to dominant dark-terminal case."
+  dispatcher_note: "Light-terminal ~4.2:1 is below strict AA-normal; acceptable (structural text is headers/labels; dark case solidly fixed). Caveat to note in PR; optional future micro-tweak if strict AA-on-both desired."
+triggered_by: "subagent_returned:leaf-implementation:01KSYJCORRLEFIMPL000001"
+module: brand-palette-styling
+contract_version: 1
+corrective: true
+reason: >
+  Corrective verifier following AC9 pounamu RGB amendment.
+  Corrective leaf changed POUNAMU_R/G/B from 31/77/63 to 61/130/104 (#3d8268).
+  tests/brand_palette_verifier.rs::ac1_palette_constants_correct_values still
+  asserts the old RGB escape and must be updated. Verifier owns that test file
+  and must update the assertion, confirm AC9 now passes, re-run full gate,
+  and write an updated verifier_report.yaml.

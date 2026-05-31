@@ -1,0 +1,40 @@
+schema_version: 1
+handoff_id: 01KSYDESIGNV7BRIEF000000001
+role: design-doc
+target_node: cli-palette
+parent_brief_version: 7
+model: opus
+status: returned
+created_at:
+  iso: "2026-05-30T22:39:10.690Z"
+  filename: "20260530T223910690Z"
+dispatched_at:
+  iso: "2026-05-30T22:39:10.690Z"
+  filename: "20260530T223910690Z"
+returned_at:
+  iso: "2026-05-31T02:35:19.783Z"
+  filename: "20260531T023519783Z"
+outcome:
+  produced: [design_doc.md]
+  re_raise: false
+  tier: single_module
+  module: brand-palette-styling
+  summary: "Design v5: single_module `style` — foreground-only pounamu/ochre palette, should_colorize gate (NO_COLOR>CLICOLOR_FORCE>IsTerminal), semantic helpers; hooks.rs named carve-out (AC8); AC1-AC10."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: brief.md
+    kind: brief
+    source_path: .taniwha/kupu/brief/v7.md
+  - filename: project_context.yaml
+    kind: project_context
+    note: redacted
+  - filename: design_v4_reference.md
+    kind: prior_design_version
+    note: style reference only
+expected_outputs:
+  - design_doc.md
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

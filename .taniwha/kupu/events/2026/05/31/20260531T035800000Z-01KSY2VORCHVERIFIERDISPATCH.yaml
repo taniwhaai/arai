@@ -1,0 +1,10 @@
+event_id: 01KSY2VORCHVERIFIERDISPATCH
+kind: subagent_dispatched
+actor:
+  kind: orchestrator
+  invocation: 31
+timestamp:
+  iso: 2026-05-31T03:58:00.000Z
+  filename: 20260531T035800000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "module": "brand-palette-styling", "handoff_id": "01KSY2P6JDP96787BK9YHF2VCM", "contract_version": 1, "triggered_by": "01KSY2MJB7PQDH6VNRAPJJ64F2", "inputs": ["contract-brand-palette-styling-v1.md", "project_context.yaml", "implementation_manifest.yaml"], "key_check": "AC8: zero ANSI in guardrails --match-stdin even with CLICOLOR_FORCE=1"}'

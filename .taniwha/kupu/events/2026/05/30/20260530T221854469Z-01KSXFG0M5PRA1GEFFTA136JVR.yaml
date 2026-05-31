@@ -1,0 +1,10 @@
+event_id: 01KSXFG0M5PRA1GEFFTA136JVR
+kind: build_started
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-30T22:18:54.469Z
+  filename: 20260530T221854469Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 7, "parent_brief_version": 6, "scope": "Issue #83 — pounamu/ochre brand palette across CLI output (semantic, foreground-only, NO_COLOR/TTY/--json gated; hook JSON carve-out)", "branch": "feat/83-cli-palette", "note": "Hand-rolled truecolor, no new dependency. Likely single_module/small tier (style module + mechanical call-site application). Full gate + subprocess tests required."}'

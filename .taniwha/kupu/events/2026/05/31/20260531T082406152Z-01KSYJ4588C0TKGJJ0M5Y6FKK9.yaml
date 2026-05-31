@@ -1,0 +1,10 @@
+event_id: 01KSYJ4588C0TKGJJ0M5Y6FKK9
+kind: user_input_received
+actor:
+  kind: user
+  name: matt
+timestamp:
+  iso: 2026-05-31T08:24:06.152Z
+  filename: 20260531T082406152Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "ac9_legibility_decision", "selected": "Lighten structural for legibility", "new_structural_rgb": "61,130,104 (#3d8268)", "rationale": "~4.6:1 on both black and white (AA); pounamu green family; ochre unchanged", "response_path": ".taniwha/kupu/orchestrator/handoff/user-input-01KSYJ3NGRAQF3ZSQN8ERB4FF8/inputs/response.yaml"}'

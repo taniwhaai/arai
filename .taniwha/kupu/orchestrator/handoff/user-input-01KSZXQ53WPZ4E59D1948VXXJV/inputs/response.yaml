@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: completion_review
+responses:
+  - header: Commit + PR
+    question: How would you like to proceed with branch feat/83-cli-palette?
+    selected: Approve commit + PR

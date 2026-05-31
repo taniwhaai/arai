@@ -1,0 +1,17 @@
+---
+schema_version: 1
+event_id: 01KSYORCH27DESIGNDISPATCH1
+kind: orchestrator_decided
+timestamp_iso: "2026-05-31T00:00:00.000Z"
+payload:
+  invocation: 27
+  triggered_by: "build_kickoff:build_started:01KSXFG0M5PRA1GEFFTA136JVR"
+  build_phase: pre-design
+  brief_version: 7
+  action: dispatch_subagent
+  role: design-doc
+  handoff_id: 01KSYDESIGNV7BRIEF000000001
+  rationale: |
+    Brief v7 (issue #83 — pounamu/ochre palette) recorded. Prior build (brief v6)
+    complete and merged. No design v5 exists. Next phase is pre-design:
+    dispatch design-doc subagent to produce design v5.

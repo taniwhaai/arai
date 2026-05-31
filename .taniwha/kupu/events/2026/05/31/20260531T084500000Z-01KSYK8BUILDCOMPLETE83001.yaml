@@ -1,0 +1,10 @@
+event_id: 01KSYK8BUILDCOMPLETE83001
+kind: build_completed
+actor:
+  kind: orchestrator
+  name: ephemeral-orchestrator
+timestamp:
+  iso: 2026-05-31T08:45:00.000Z
+  filename: 20260531T084500000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"issue": "#83", "branch": "feat/83-cli-palette", "module": "brand-palette-styling", "tier": "single_module", "overall": "pass", "acs": "AC1-AC10 all pass", "tests": "536/536", "new_deps": 0, "decision_id": "01KSYK8BUILDCOMPLETE83001", "next": "surface_to_user:completion_review"}'

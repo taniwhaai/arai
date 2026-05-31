@@ -1,0 +1,10 @@
+event_id: 01KSY1V5TCQQFYCQKJCEN8BEH6
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-31T03:39:34.604Z
+  filename: 20260531T033934604Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KSYCONTRACTV5DERIV0000001", "module": "brand-palette-styling", "re_raise": false, "produced": ["contract-brand-palette-styling-v1.md"]}'

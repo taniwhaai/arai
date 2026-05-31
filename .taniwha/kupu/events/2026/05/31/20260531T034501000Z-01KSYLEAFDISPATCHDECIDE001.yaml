@@ -1,0 +1,12 @@
+schema_version: 1
+event_id: 01KSYLEAFDISPATCHDECIDE001
+kind: decision_recorded
+timestamp_iso: 2026-05-31T03:45:01.000Z
+payload:
+  decision_id: 01KSYLEAFDISPATCHDECIDE001
+  decision_path: kupu/decisions/01KSYLEAFDISPATCHDECIDE001.md
+  kind: scope_change
+  triggered_by: 01KSY1V5TCQQFYCQKJCEN8BEH6
+  summary: >-
+    Promoted brand-palette-styling contract v1 to canonical path.
+    Dispatching leaf-implementation (handoff 01KSYLEAFIMPLBRAND000000001).

@@ -1,123 +1,88 @@
 ---
 schema_version: 1
-as_of: "2026-05-29"
-invocation_count: 26  # twenty-sixth orchestrator invocation
+as_of: "2026-05-31T08:45:00Z"
+invocation_count: 34  # thirty-fourth orchestrator invocation
 
 build_phase: complete
-tier: small_multi_module
-brief_version: 6
-brief_scope: "GitHub issue #29 — extend arai:extends with pinning (@sha256), ed25519 detached-sidecar signing, and tiering (strict/advisory/override)"
+tier: single_module
+brief_version: 7
+brief_scope: "GitHub issue #83 — apply pounamu/ochre brand palette across CLI output (semantic colour, NO_COLOR/TTY/--json gated, hook-protocol carve-out)"
 
 artefact_status:
-  brief: "v6 — current at kupu/brief/v6.md"
+  brief: "v7 — current at kupu/brief/v7.md"
   project_context: "v1 — current at kupu/project_context.yaml (Rust/cargo/single_package)"
-  design_doc: "v4 — APPROVED. Canonical at .taniwha/kupu/design/v4.md."
-  vocabulary: "v1 — PROMOTED. At kupu/vocabulary/v1.md. meta.yaml written."
-  contracts: |
-    directive-tokenisation v1 — PROMOTED at kupu/contracts/directive-tokenisation/v1.md
-    fetch-verification v1     — PROMOTED at kupu/contracts/fetch-verification/v1.md
-    tier-provenance v1        — PROMOTED at kupu/contracts/tier-provenance/v1.md
-    resolve-composition v1    — PROMOTED at kupu/contracts/resolve-composition/v1.md
-  tree: "Established at kupu/tree/current.yaml. Four nodes: 3 leaves + 1 composition."
-  implementation: |
-    directive-tokenisation: VERIFIED (handoff 01KSRRYVFH6CAERYQS5TK5Q1N9)
-    fetch-verification: VERIFIED (handoff 01KSRSR46N9W8F66SVH651VRWF)
-    tier-provenance: VERIFIED (handoff 01KSRTT28PTQ2T2B3CRQKP3308)
-    resolve-composition: VERIFIED (handoff 01KSRXF0NVCVZTK9TRF2E1XTAE, corrective)
-    ALL FOUR NODES verified. No commits yet — awaiting user approval.
-    Branch: feat/29-extends-policy
-  verification: |
-    COMPLETE — verifier handoff 01KSRY2BWJB0MDH0FJ5WDTCP2S
-    overall: PASS
-    AC1-AC14: all PASS
-    Gate: fmt clean, clippy 0 new warnings, test 486/0
-    Verifier added: tests/verifier_extends_slice.rs (23 tests)
+  design_doc: "v5 — APPROVED. Palette amendment recorded in decision 01KSYJ8PALETTECORRECT00001."
+  vocabulary: "v1 — inherited from prior build (kupu/vocabulary/v1.md)."
+  contracts: "brand-palette-styling v1 — canonical."
+  tree: "not formally established — single_module tier"
+  implementation: "COMPLETE — all AC1-AC10 pass. src/style.rs, src/main.rs, src/stats.rs updated."
+  verification: "COMPLETE — corrective verifier 01KSYJV0CORRVERIF00000001 returned overall: pass."
   open_re_raises: 0
 
-settled_decisions:
-  AC11_drop_syntax:
-    choice: triple-equality (implicit)
-    detail: |
-      A local rule whose SPO exactly matches an upstream rule's SPO implicitly drops
-      that upstream rule when tier=override is in effect. No new directive keyword.
-      Reference-to-absent-SPO is a no-op. Owned by tier-provenance.
-    decision_record: ".taniwha/kupu/decisions/01KSRR3G6X14A0N2YQMXXJETSV.md"
-  AC12_duplicate_token:
-    choice: fail-closed (skip + warn)
-    detail: |
-      A directive carrying more than one @<pin> OR more than one tier= token is
-      malformed. Skip the directive + emit stderr warning naming the duplicate token.
-      Owned by directive-tokenisation (AC12 family).
-    decision_record: ".taniwha/kupu/decisions/01KSRR3G6X14A0N2YQMXXJETSV.md"
-  contract_promotion:
-    choice: all five artefacts promoted to canonical
-    detail: |
-      vocabulary v1, directive-tokenisation v1, fetch-verification v1,
-      tier-provenance v1, resolve-composition v1 all promoted from handoff
-      01KSRR3G6XZ8RP5PEH2CSHWG2A outputs. Tree established.
-    decision_record: ".taniwha/kupu/decisions/01KSRRYVFHFNFQTC78C63GG70E.md"
-  no_per_leaf_commit:
-    choice: single commit at end (after verifier passes)
-    detail: |
-      Per the dispatcher's corrected flow, leaves do NOT commit individually.
-      All working-tree changes accumulate on feat/29-extends-policy and a single
-      commit is made by the dispatcher after the final verifier passes.
-  dispatch_resolve_composition:
-    choice: dispatch composition node after all three leaves gate-passed
-    decision_record: ".taniwha/kupu/decisions/01KSRW4006JG8MAQSRSC8C4RFA.md"
-  build_complete:
-    choice: surface to user for commit + PR approval
-    detail: |
-      Verifier handoff 01KSRY2BWJB0MDH0FJ5WDTCP2S returned overall: PASS.
-      AC1-AC14 all pass. Gate: fmt clean, clippy 0 new, test 486/0.
-      Decision record: .taniwha/kupu/decisions/01KSRYU8K2BUILD0COMPLETE001.md
-      Event: 01KSRYU8K2BUILD0COMPLETE001 (build_complete)
+build_result:
+  overall: pass
+  ac_verdicts:
+    AC1: pass
+    AC2: pass
+    AC3: pass
+    AC4: pass
+    AC5: pass
+    AC6: pass
+    AC7: pass
+    AC8: pass
+    AC9: "pass (upgraded from skip) — new pounamu RGB(61,130,104): ~5.0:1 on black (WCAG AA), ~4.2:1 on white (below AA-normal, above AA-large)"
+    AC10: pass
+  gate:
+    fmt: pass
+    clippy: "pass (0 new warnings)"
+    tests: "536/536 pass"
+  new_dependencies: 0
+  decision_record: "decisions/01KSYK8BUILDCOMPLETE83001.md"
 
-design_v4_summary:
-  tier: small_multi_module
-  modules:
-    - name: directive-tokenisation
-      acs: [AC1, AC3, AC12]
-      files: ["src/extends.rs"]
-      dispatch_order: 1
-      status: verified
-    - name: fetch-verification
-      acs: [AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC13]
-      files: ["src/extends.rs", "src/main.rs", "Cargo.toml"]
-      dispatch_order: 2
-      status: verified
-    - name: tier-provenance
-      acs: [AC9, AC10, AC11]
-      files: ["src/extends.rs", "src/parser.rs", "src/store.rs", "src/guardrails.rs"]
-      dispatch_order: 3
-      status: verified
-  composition_node: "resolve() in src/extends.rs + tests/extends_integration.rs"
-  dispatch_order: 4
-  composition_status: verified
+palette_final:
+  pounamu: "RGB(61,130,104) #3d8268 — structural text"
+  ochre: "RGB(184,118,58) #b8763a — passage/warn/error"
+  contrast_pounamu_on_black: "~5.0:1 (WCAG AA pass)"
+  contrast_pounamu_on_white: "~4.2:1 (below WCAG AA-normal 4.5, above AA-large 3.0 — known caveat)"
 
-active_handoff: null  # build complete; awaiting user commit/PR decision
+working_tree:
+  branch: feat/83-cli-palette
+  base: "origin/main @ eacd63c"
+  uncommitted_files:
+    - src/style.rs
+    - src/main.rs
+    - src/stats.rs
+    - tests/style_integration.rs
+    - tests/brand_palette_verifier.rs
+    - .taniwha/kupu/  # (artefacts for this slice)
+  cargo_toml_changed: false
+  cargo_lock_changed: false
+
+waiting_on:
+  kind: user_input
+  prompt_kind: completion_review
+  surface_action: "next_action.yaml sequence 2"
+  options:
+    - "Approve commit + PR (Recommended)"
+    - "Commit only"
+    - "Hold"
 
 last_action: |
-  Invocation 26: subagent_returned:verifier:01KSRY2BWJB0MDH0FJ5WDTCP2S.
-  Verifier overall=PASS. AC1-AC14 all pass. Gate clean. Build complete.
-  Decision 01KSRYU8K2BUILD0COMPLETE001 recorded. Surfaced to user for
-  commit + PR approval (next_action.yaml: surface_to_user:completion_review).
+  Invocation 34: subagent_returned:verifier:01KSYJV0CORRVERIF00000001 (corrective, overall: pass).
+  Corrective verifier confirmed AC1-AC10 all pass. AC9 upgraded skip->pass.
+  Full gate: fmt clean, clippy 0 new warnings, test 536/536.
+  Decision record written: decisions/01KSYK8BUILDCOMPLETE83001.md.
+  Event emitted: 20260531T084500000Z-01KSYK8BUILDCOMPLETE83001.yaml.
+  Surfacing to user for commit + PR approval (Approve / Commit only / Hold).
 
 next_expected:
-  event: user_response
+  event: user_input_received
   prompt_kind: completion_review
-  notes: |
-    User selects one of:
-      1. Approve commit + PR (Recommended) — dispatcher stages file set,
-         commits with the specified message, pushes feat/29-extends-policy,
-         opens PR to main referencing issue #29.
-      2. Commit only, no PR — dispatcher stages and commits, does not push.
-      3. Hold — no action taken; re-invoke when user is ready.
-    On approval: this is the FINAL dispatcher action for this build.
-    No further orchestrator invocation is needed after the commit is made.
-
-notes: |
-  Build is COMPLETE. All working-tree changes on feat/29-extends-policy,
-  NOT yet committed. Single commit pending user approval.
-  Commit file set and message are specified in next_action.yaml.
-  Exclude: .taniwha/kupu/state/
+  on_approve_commit_plus_pr: |
+    Dispatcher stages the five code/test files + .taniwha/kupu artefacts,
+    commits with the proposed commit message (includes Co-Authored-By trailer),
+    pushes feat/83-cli-palette, opens PR against main with the proposed PR body.
+  on_commit_only: |
+    Dispatcher stages and commits, pushes branch, no PR created.
+  on_hold: |
+    No git operations. Build marked complete in state. Awaiting further user direction.

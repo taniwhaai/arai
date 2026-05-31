@@ -1,0 +1,82 @@
+module: brand-palette-styling
+contract_version: 1
+corrective: true
+reason: "AC9 legibility amendment — structural pounamu RGB(31,77,63)->RGB(61,130,104)"
+committed: false
+
+files_modified:
+  - path: src/style.rs
+    description: >
+      Changed POUNAMU_R/G/B constants from 31/77/63 to 61/130/104 (#3d8268).
+      Updated doc comment on `structural` helper: ESC[38;2;31;77;63m ->
+      ESC[38;2;61;130;104m. Updated unit test `structural_emits_pounamu_escape`
+      to assert \x1b[38;2;61;130;104m. Palette constant comment updated to
+      RGB(61, 130, 104). No other files changed.
+
+new_rgb:
+  pounamu:
+    r: 61
+    g: 130
+    b: 104
+    hex: "#3d8268"
+    contrast_ratio_on_black: "~4.6:1"
+    contrast_ratio_on_white: "~4.6:1"
+  ochre:
+    r: 184
+    g: 118
+    b: 58
+    hex: "#b8763a"
+    notes: "UNCHANGED"
+
+gate_results:
+  cargo_fmt:
+    status: pass
+    notes: "cargo fmt --all ran cleanly; no diff produced."
+  cargo_clippy:
+    status: pass
+    notes: >
+      No new warnings introduced by this change. Pre-existing warnings in
+      tests/verifier_base_directory_resolution.rs, tests/prompt_collector_verifier.rs,
+      tests/sync_integration.rs, and src/store.rs are unchanged.
+  cargo_test:
+    status: partial_expected_failure
+    unit_tests_pass: 400
+    unit_tests_fail: 0
+    brand_palette_verifier_pass: 29
+    brand_palette_verifier_fail: 1
+    verifier_failure_detail: >
+      tests/brand_palette_verifier.rs::ac1_palette_constants_correct_values FAILED.
+      The test asserts the old pounamu escape ESC[38;2;31;77;63m in the `arai status`
+      binary output; the binary now emits ESC[38;2;61;130;104m. This is the sole
+      failure and is solely attributable to the RGB change. All 29 other
+      brand_palette_verifier tests pass. All 400 src unit tests pass.
+    overall_verdict: >
+      PASS for all tests not in brand_palette_verifier, EXPECTED_FAIL for the
+      one verifier assertion that pins the old RGB.
+
+verifier_assertions_now_stale:
+  - file: tests/brand_palette_verifier.rs
+    test: ac1_palette_constants_correct_values
+    assertion: >
+      Asserts binary stdout contains "\x1b[38;2;31;77;63m" (old pounamu escape).
+      Must be updated to "\x1b[38;2;61;130;104m" to match the new RGB.
+    action_required: "Verifier re-dispatch must update this assertion."
+
+acceptance_criteria_summary:
+  AC9: >
+    Pounamu foreground colour changed from RGB(31,77,63) (~2.1:1 on black, fails
+    WCAG AA) to RGB(61,130,104) (~4.6:1 on both black and white, passes WCAG AA).
+    Unit test structural_emits_pounamu_escape updated and passes with new escape.
+  AC10: >
+    cargo fmt (pass), cargo clippy no new warnings (pass), cargo test 400/400
+    src unit tests pass. brand_palette_verifier has exactly one expected failure
+    due to the RGB change — the sole stale RGB assertion.
+
+prose_summary: >
+  Corrective amendment for AC9 legibility. Changed POUNAMU_R/G/B from 31/77/63
+  to 61/130/104 in src/style.rs, updated the associated doc comment and the
+  structural_emits_pounamu_escape unit test to assert the new escape sequence.
+  Ochre, all gate helpers, carve-outs, and all other source files are untouched.
+  Full gate passes except for the single expected brand_palette_verifier assertion
+  that pins the old RGB value — that assertion must be updated by the verifier
+  re-dispatch.

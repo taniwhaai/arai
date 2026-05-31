@@ -1,0 +1,28 @@
+event_id: 01KSXY8ORCHDECIDE000000028
+kind: orchestrator_decided
+actor:
+  kind: orchestrator
+  invocation: 28
+timestamp:
+  iso: 2026-05-31T02:40:00.000Z
+  filename: 20260531T024000000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  triggered_by: subagent_returned:design-doc:01KSYDESIGNV7BRIEF000000001
+  build_phase: design-pending-approval
+  actions:
+    - sequence: 1
+      action: write_artefact
+      kind: design
+      new_version: 5
+      source: kupu/orchestrator/handoff/01KSYDESIGNV7BRIEF000000001/outputs/design_doc.md
+      destination: kupu/design/v5.md
+    - sequence: 2
+      action: surface_to_user
+      prompt_kind: design_doc_approval
+      mode: structured
+      question_count: 1
+  reasoning: >
+    Design v5 returned from subagent with no re-raise. Tier single_module
+    confirmed. Canonical write + user approval required before contract
+    derivation can proceed.

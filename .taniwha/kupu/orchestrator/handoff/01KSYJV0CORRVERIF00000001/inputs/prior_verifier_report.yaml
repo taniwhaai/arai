@@ -1,0 +1,268 @@
+---
+verifier_report:
+  contract:
+    module: brand-palette-styling
+    version: 1
+  implementation:
+    version: 1
+    source_paths:
+      - src/style.rs
+      - src/main.rs
+      - src/stats.rs
+      - src/hooks.rs
+
+  gate_results:
+    cargo_fmt_check:
+      command: "cargo fmt --all -- --check"
+      exit_code: 0
+      status: pass
+      notes: >
+        No formatting diffs. One formatting issue was found in the verifier's
+        own test file (brand_palette_verifier.rs) during authoring and corrected
+        before the gate was run. The implementation files themselves passed
+        fmt check cleanly.
+    cargo_clippy:
+      command: "cargo clippy --all-targets"
+      exit_code: 0
+      status: pass
+      notes: >
+        Five warnings reported, all pre-existing and not attributable to this
+        change: prompt_collector_verifier.rs (implicit_saturating_sub),
+        src/store.rs (cloned_ref_to_slice_refs, two instances),
+        verifier_base_directory_resolution.rs (let_and_return),
+        sync_integration.rs (useless_format).
+        No new warnings from src/style.rs, src/main.rs, or src/stats.rs.
+        dim() and DIM_ATTR carry #[allow(dead_code)] as noted in the
+        implementation manifest.
+    cargo_test:
+      command: "cargo test"
+      exit_code: 0
+      status: pass
+      test_counts:
+        unit_tests_in_src: 400
+        brand_palette_verifier: 30
+        style_integration: 12
+        hooks_safety: 2
+        extends_integration: 3
+        hooks_grok_exit_verifier: 11
+        compliance_correlation: 9
+        intent_severity: 5
+        mcp_check_action: 4
+        canonicalize_integration: 1
+        parser_coverage: 19
+        prompt_collector_integration: 3
+        prompt_collector_verifier: 9
+        sync_integration: 3
+        verifier_base_directory_resolution: 2
+        verifier_extends_slice: 23
+        total: "536 (all pass, 0 fail)"
+
+  dependency_check:
+    cargo_toml_diff_vs_origin_main: none
+    notes: >
+      Cargo.toml is byte-identical to origin/main. No new dependencies
+      introduced. No colour crate, no temp-dir crate, no terminal crate.
+
+  acceptance_criteria:
+    - id: AC1
+      criterion: >
+        All ANSI escape construction and palette RGB values live only in
+        src/style.rs. No other source file embeds the pounamu (31,77,63)
+        or ochre (184,118,58) RGB triples or hand-rolls truecolor escapes.
+      verifier_tests:
+        - ac1_no_ansi_escape_literal_outside_style_rs
+        - ac1_hooks_rs_not_modified
+        - ac1_palette_constants_correct_values
+      result: pass
+      notes: >
+        Static scan of all src/*.rs files confirmed no file other than style.rs
+        contains ANSI escape string literals or palette RGB patterns.
+        src/hooks.rs does not import or reference the style module.
+        Binary output under CLICOLOR_FORCE=1 produces the exact pounamu
+        truecolor sequence ESC[38;2;31;77;63m in status output, confirming
+        the constant values are centralised and correct.
+
+    - id: AC2
+      criterion: >
+        NO_COLOR present in the environment (any value) produces zero ANSI
+        bytes in all command output. NO_COLOR dominates CLICOLOR_FORCE.
+      verifier_tests:
+        - ac2_no_color_status_zero_esc
+        - ac2_no_color_guardrails_zero_esc
+        - ac2_no_color_dominates_clicolor_force
+        - ac2_no_color_hook_stdin_zero_esc
+      result: pass
+      notes: >
+        All four tests pass. NO_COLOR=1 produces zero ESC bytes in status,
+        guardrails, and hook stdin output. NO_COLOR=1 combined with
+        CLICOLOR_FORCE=1 still produces zero ESC bytes, confirming rule 1
+        dominates rule 2.
+
+    - id: AC3
+      criterion: >
+        Non-terminal stream (piped, no CLICOLOR_FORCE) produces zero ANSI
+        bytes. CLICOLOR_FORCE=1 forces colour on for human commands.
+      verifier_tests:
+        - ac3_piped_status_zero_esc
+        - ac3_piped_guardrails_zero_esc
+        - ac3_clicolor_force_produces_esc_for_human_commands
+      result: pass
+      notes: >
+        Subprocess pipe (non-TTY) produces zero ESC bytes in all tested
+        commands (the default in all run_arai calls). CLICOLOR_FORCE=1
+        correctly forces colour on for the human status command, confirming
+        the gate's three-rule precedence is wired end-to-end.
+
+    - id: AC4
+      criterion: >
+        Every --json output variant (audit, stats, why, guardrails, lint)
+        contains zero ESC bytes in standard output, including when
+        CLICOLOR_FORCE=1 is set.
+      verifier_tests:
+        - ac4_guardrails_json_zero_esc
+        - ac4_stats_json_zero_esc
+        - ac4_audit_json_zero_esc
+        - ac4_why_json_zero_esc
+        - ac4_lint_json_zero_esc
+        - ac4_guardrails_json_with_clicolor_force_zero_esc
+        - ac4_stats_json_with_clicolor_force_zero_esc
+      result: pass
+      notes: >
+        All seven tests pass. All --json stdout paths produce zero ESC bytes
+        both without any colour env vars (piped, rule 3 = off) and with
+        CLICOLOR_FORCE=1 (rule 2 = on would normally force colour).
+        The structural guarantee that --json paths are never routed through
+        style helpers is confirmed: even when the gate would return on,
+        these paths emit no ESC bytes because they bypass the style module
+        entirely. Note: stderr on --json commands may contain coloured error
+        text when the command fails and CLICOLOR_FORCE=1 is set (the
+        main() error handler uses style::error() on stderr). This is not
+        an AC4 violation — AC4 specifies standard output only.
+
+    - id: AC5
+      criterion: >
+        Structural text routes through structural(), passage moments through
+        passage(), error notices through error()/warn(). No --json branch
+        routes through any helper.
+      verifier_tests:
+        - ac5_status_emits_colour_when_forced
+        - ac5_guardrails_human_emits_colour_when_forced
+      result: pass
+      notes: >
+        Source inspection of src/main.rs confirms: cmd_status uses
+        style::structural() for headers at lines 455, 459, 487, 489, 503;
+        cmd_guardrails uses style::passage() for rule lines at line 541;
+        cmd_why uses style::structural() for labels at lines 1586-1594 and
+        style::passage() for matched rule lines at line 1635; cmd_audit
+        uses style::structural() for the table header at line 951 and
+        style::passage() for row lines at line 978. The main() error handler
+        uses style::error() at line 441. All --json branches return before
+        calling any style helper. src/stats.rs uses style::structural() for
+        section headers and style::passage() is absent (compliance rows are
+        not currently styled with passage — this is within AC5's scope as
+        the contract gives call-site routing discretion).
+        Binary confirms: CLICOLOR_FORCE=1 causes status to emit ESC bytes.
+
+    - id: AC6
+      criterion: >
+        No helper emits green or red. warn and error use ochre (184,118,58)
+        with bold. Exactly five helpers in the closed set.
+      verifier_tests:
+        - ac6_style_rs_has_no_green_rgb
+        - ac6_style_rs_has_no_red_rgb
+        - ac6_warn_and_error_use_ochre_not_red
+        - ac6_five_helper_set_closed_in_style_rs
+      result: pass
+      notes: >
+        Production code in style.rs (above the #[cfg(test)] boundary)
+        contains no green or red RGB triples. The fg() function is only
+        ever called with POUNAMU constants (31,77,63) or OCHRE constants
+        (184,118,58). Exactly 6 pub fn in style.rs (5 helpers + should_colorize).
+        error() delegates to warn(), both using ochre + bold. Binary test
+        confirms: when an error is triggered with CLICOLOR_FORCE=1, stderr
+        contains ESC[38;2;184;118;58m (ochre), not any red escape.
+
+    - id: AC7
+      criterion: >
+        No helper ever emits a background-colour escape (48;2, 40-47, 100-107).
+        Foreground-only unconditionally.
+      verifier_tests:
+        - ac7_no_background_escape_in_style_rs
+        - ac7_binary_output_has_no_background_escapes_when_forced
+      result: pass
+      notes: >
+        Production code in style.rs contains no 48;2 (truecolor background)
+        or 40-47 range background escape construction. Binary output under
+        CLICOLOR_FORCE=1 contains no 48; or 40m-47m patterns.
+
+    - id: AC8
+      criterion: >
+        guardrails --match-stdin (hook-protocol) stdout contains zero ESC
+        bytes even when CLICOLOR_FORCE=1 is set. src/hooks.rs is not modified.
+        All string fields in the JSON response are ANSI-free.
+      verifier_tests:
+        - ac8_hook_stdin_zero_esc_bytes
+        - ac8_hook_stdin_with_clicolor_force_zero_esc
+        - ac8_hook_stdin_json_fields_no_ansi
+      result: pass
+      notes: >
+        The crux test (CLICOLOR_FORCE=1 + piped hook stdin) passes: zero ESC
+        bytes in stdout. src/hooks.rs does not import the style module and
+        contains no ANSI literal strings. The guarantee is structural: hooks.rs
+        is listed as untouched and the verifier confirmed this via source
+        inspection. JSON field check passes (empty response for an isolated
+        env with no guardrails; the test handles both empty and non-empty
+        cases).
+
+    - id: AC9
+      criterion: >
+        Readable on dark and light terminals (human visual inspection).
+      verifier_tests:
+        - ac9_manual_criterion_acknowledged
+      result: skip
+      notes: >
+        This criterion requires human visual inspection and cannot be
+        automated. The pounamu RGB(31,77,63) and ochre RGB(184,118,58) are
+        mid-range values that avoid near-black and near-white extremes, making
+        legibility failures on standard dark/light backgrounds unlikely.
+        The verifier marks this skip per contract: "This criterion requires
+        human visual inspection."
+
+    - id: AC10
+      criterion: >
+        cargo fmt --check, cargo clippy, cargo test all exit 0. No new
+        clippy warnings from this change.
+      verifier_tests:
+        - ac10_gate_marker
+      result: pass
+      notes: >
+        All three gate commands pass. cargo fmt --all -- --check exits 0.
+        cargo clippy --all-targets exits 0 with five pre-existing warnings,
+        none attributable to this change. cargo test runs 536 tests, 0 fail.
+
+  overall: pass
+
+  findings:
+    - kind: other
+      summary: "AC4 stderr note — not a violation"
+      details: >
+        When a --json command fails (e.g. why --json without an initialised DB)
+        and CLICOLOR_FORCE=1 is set, the error message on stderr contains ANSI
+        colour bytes (ochre + bold from style::error()). This is correct
+        behaviour: the human-readable error notification on stderr is
+        intentionally coloured via the error() helper per AC5. AC4 specifies
+        only standard output must be ESC-free; it does not prohibit coloured
+        error messages on stderr. The guarantee holds.
+
+    - kind: other
+      summary: "AC9 manually acknowledged — not automated"
+      details: >
+        AC9 is a manual visual criterion and receives a 'skip' verdict per the
+        contract's own note. All other ACs are automated and pass.
+
+  tests_added: tests/brand_palette_verifier.rs (30 tests)
+
+  recommendation: >
+    Implementation passes. All automatable ACs (AC1-AC8, AC10) pass.
+    AC9 is manual and skipped per contract. No implementation bugs found.
+    The overall verdict is pass. The implementation may be marked current.

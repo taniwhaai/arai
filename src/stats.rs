@@ -14,6 +14,7 @@
 
 use crate::audit;
 use crate::config::Config;
+use crate::style;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -425,12 +426,14 @@ pub fn run(
 }
 
 fn print_table(stats: &Stats, top: usize, by_rule_only: bool) {
+    let col = style::should_colorize(style::Stream::Stdout);
+
     if stats.total_firings == 0 && stats.by_rule_compliance.is_empty() {
         println!("No audit entries.  Rules haven't fired yet, or --since excluded everything.");
         return;
     }
 
-    println!("Arai stats");
+    println!("{}", style::structural("Arai stats", col));
     println!("  Total firings: {}", stats.total_firings);
     if let (Some(start), Some(end)) = (&stats.window_start, &stats.window_end) {
         if start == end {
@@ -442,24 +445,24 @@ fn print_table(stats: &Stats, top: usize, by_rule_only: bool) {
     println!();
 
     if by_rule_only {
-        print_compliance_section(&stats.by_rule_compliance, top);
-        print_token_economics(&stats.token_economics);
+        print_compliance_section(&stats.by_rule_compliance, top, col);
+        print_token_economics(&stats.token_economics, col);
         return;
     }
 
-    print_section("Top rules", &stats.by_rule, top);
-    print_compliance_section(&stats.by_rule_compliance, top);
-    print_token_economics(&stats.token_economics);
-    print_section("By tool", &stats.by_tool, top);
-    print_section("By event", &stats.by_event, top);
-    print_section("By day", &stats.by_day, top);
+    print_section("Top rules", &stats.by_rule, top, col);
+    print_compliance_section(&stats.by_rule_compliance, top, col);
+    print_token_economics(&stats.token_economics, col);
+    print_section("By tool", &stats.by_tool, top, col);
+    print_section("By event", &stats.by_event, top, col);
+    print_section("By day", &stats.by_day, top, col);
 }
 
-fn print_section(title: &str, rows: &[(String, usize)], top: usize) {
+fn print_section(title: &str, rows: &[(String, usize)], top: usize, col: bool) {
     if rows.is_empty() {
         return;
     }
-    println!("{title}");
+    println!("{}", style::structural(title, col));
     let max_count = rows.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
     let shown = rows.iter().take(top);
     for (label, count) in shown {
@@ -473,13 +476,13 @@ fn print_section(title: &str, rows: &[(String, usize)], top: usize) {
     println!();
 }
 
-fn print_token_economics(t: &TokenEconomics) {
+fn print_token_economics(t: &TokenEconomics, col: bool) {
     // Skip the section entirely when there's nothing to report — avoids
     // bragging "0 tokens saved" on first runs.
     if t.suppressed_repeats == 0 && t.blocked_obeyed == 0 && t.advisory_obeyed == 0 {
         return;
     }
-    println!("Token economics (estimates)");
+    println!("{}", style::structural("Token economics (estimates)", col));
     if t.suppressed_repeats > 0 {
         let saved = t.suppressed_repeats * TOKENS_PER_SUPPRESSION;
         println!(
@@ -509,12 +512,12 @@ fn print_token_economics(t: &TokenEconomics) {
     println!();
 }
 
-fn print_compliance_section(rows: &[RuleCompliance], top: usize) {
+fn print_compliance_section(rows: &[RuleCompliance], top: usize, col: bool) {
     if rows.is_empty() {
         return;
     }
     let any_outcomes = rows.iter().any(|r| r.obeyed + r.ignored + r.unclear > 0);
-    println!("Per-rule compliance");
+    println!("{}", style::structural("Per-rule compliance", col));
     if !any_outcomes {
         println!(
             "  (no Compliance events yet — Pre/Post correlation produces these on PostToolUse)"
@@ -534,10 +537,11 @@ fn print_compliance_section(rows: &[RuleCompliance], top: usize) {
             Some(v) if v < 0.6 && (r.obeyed + r.ignored) >= 2 => " ⚠",
             _ => "",
         };
-        println!(
+        let rule_line = format!(
             "  {:>5} {:>6} {:>7} {:>7} {:>7}  {} {}: {}{}",
             r.fires, r.obeyed, r.ignored, r.unclear, ratio, r.subject, r.predicate, r.object, flag,
         );
+        println!("{}", style::passage(&rule_line, col));
     }
     if rows.len() > top {
         println!("        … {} more", rows.len() - top);

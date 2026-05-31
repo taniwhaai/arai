@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: design_doc_approval
+responses:
+  - header: Design approval
+    question: Does design v5 (single_module brand-palette-styling for #83) accurately represent what you want built?
+    selected: Approve

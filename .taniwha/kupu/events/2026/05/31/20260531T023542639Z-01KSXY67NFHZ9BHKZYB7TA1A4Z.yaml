@@ -1,0 +1,10 @@
+event_id: 01KSXY67NFHZ9BHKZYB7TA1A4Z
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-05-31T02:35:42.639Z
+  filename: 20260531T023542639Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KSYDESIGNV7BRIEF000000001", "produced": ["design_doc.md"], "re_raise": false, "design_version_target": 5, "tier": "single_module", "module": "brand-palette-styling"}'

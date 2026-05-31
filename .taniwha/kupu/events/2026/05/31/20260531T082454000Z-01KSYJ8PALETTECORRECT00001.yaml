@@ -1,0 +1,17 @@
+event_id: 01KSYJ8PALETTECORRECT00001
+kind: decision_recorded
+actor:
+  kind: orchestrator
+  invocation: 32
+timestamp:
+  iso: 2026-05-31T08:24:54Z
+  filename: 20260531T082454000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  decision_id: 01KSYJ8PALETTECORRECT00001
+  kind: contract_amendment
+  summary: >
+    Palette amendment: structural pounamu RGB(31,77,63) -> RGB(61,130,104).
+    Triggered by user AC9 legibility decision (event 01KSYJ4588C0TKGJJ0M5Y6FKK9).
+    Contrast: ~2.1:1 (dark, fails AA) -> ~4.6:1 on both black and white (passes AA).
+    Ochre, gating, carve-out, ACs unchanged.
