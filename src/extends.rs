@@ -341,11 +341,11 @@ fn read_trust(arai_base: &Path) -> TrustFile {
 fn write_trust(arai_base: &Path, tf: &TrustFile) -> Result<(), String> {
     let path = trust_path(arai_base);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create trust dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Could not create trust dir: {e}"))?;
     }
     let encoded =
-        toml::to_string_pretty(tf).map_err(|e| format!("Failed to encode trust file: {e}"))?;
-    std::fs::write(&path, encoded).map_err(|e| format!("Failed to write trust file: {e}"))?;
+        toml::to_string_pretty(tf).map_err(|e| format!("Could not encode trust file: {e}"))?;
+    std::fs::write(&path, encoded).map_err(|e| format!("Could not write trust file: {e}"))?;
     Ok(())
 }
 

@@ -1,0 +1,10 @@
+event_id: 01KT13PVGPVKR5QKXXQ9YAPD98
+kind: verification_partial
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T08:09:53.430Z
+  filename: 20260601T080953430Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "handoff_id": "01KT12ZWEC9R7HJE7PEMG59MG0", "module": "copy-tone-audit", "overall": "partial", "gate": "pass (550+ green, no new dep)", "hard_constraints": "all satisfied", "register_nits": ["init.rs:24 ''Extracting guardrails''→rules", "main.rs 1213/1337/1559 ''No guardrail database''→rule", "enrich.rs/scenarios.rs ''Failed to''→Could not"], "next": "corrective leaf (apply approved glossary), then re-verify"}'

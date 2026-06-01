@@ -759,7 +759,7 @@ pub fn format_context(
     seen_set: &std::collections::HashSet<i64>,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push("Arai guardrails:".to_string());
+    lines.push("Arai rules:".to_string());
     let limit = matched.len().min(MAX_RULES_PER_HOOK);
     for (g, pct) in &matched[..limit] {
         if seen_set.contains(&g.triple_id) {

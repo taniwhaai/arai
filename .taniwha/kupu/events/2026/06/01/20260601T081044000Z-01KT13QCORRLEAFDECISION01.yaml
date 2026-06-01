@@ -1,0 +1,18 @@
+---
+schema_version: 1
+event_id: 01KT13QCORRLEAFDECISION01
+kind: decision_recorded
+timestamp: "2026-06-01T08:10:44Z"
+payload:
+  decision_id: 01KT13QCORRLEAFDECISION01
+  kind: re_raise_resolution
+  triggered_by: "01KT13PVGPVKR5QKXXQ9YAPD98"
+  summary: >
+    Corrective leaf dispatched for AC6 glossary-consistency nits.
+    Three fix categories: init.rs step header, main.rs unit-term (x3),
+    enrich.rs + scenarios.rs Failed-to strings. Gate green, no new user
+    decision needed.
+  affects:
+    - kind: implementation
+      module: copy-tone-audit
+      from_version: 1

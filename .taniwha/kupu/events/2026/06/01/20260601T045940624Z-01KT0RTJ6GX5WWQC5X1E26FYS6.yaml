@@ -1,0 +1,10 @@
+event_id: 01KT0RTJ6GX5WWQC5X1E26FYS6
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T04:59:40.624Z
+  filename: 20260601T045940624Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KT0RDESIGNV9DESIGN00001", "produced": ["design_v7.md"], "re_raise": false, "design_version_target": 7, "tier": "single_module", "module": "copy-tone-audit"}'

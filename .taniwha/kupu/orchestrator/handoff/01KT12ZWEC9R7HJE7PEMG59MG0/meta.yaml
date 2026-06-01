@@ -1,0 +1,43 @@
+schema_version: 1
+handoff_id: 01KT12ZWEC9R7HJE7PEMG59MG0
+role: verifier
+module: copy-tone-audit
+parent_contract_version: 1
+model: sonnet
+status: returned
+returned_at: "2026-06-01T08:10:00.000Z"
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: partial
+  gate: "PASS — fmt clean; clippy 0 new (6 pre-existing); cargo test 550+ green; Cargo.toml/lock unchanged"
+  hard_constraints: "all satisfied — behaviour unchanged, JSON keys/enums byte-identical, style.rs untouched, no new dep, no 'we', no test asserts old wording"
+  register_nits_AC6:
+    - "src/init.rs:24 'Extracting guardrails...' — unit term should be 'rules'"
+    - "src/main.rs:1213,1337,1559 'No guardrail database found.' — unit term should be 'rule'"
+    - "src/enrich.rs (~10) + src/scenarios.rs:89 retain 'Failed to' on user-visible paths (register rule 2)"
+  disposition: "Corrective leaf to apply the approved glossary (guardrail→rule unit term) + Could-not on the remaining user-visible errors; then re-verify. No user decision needed (completing the approved spec)."
+created_at:
+  iso: "2026-06-01T08:05:00.000Z"
+  filename: "20260601T080500000Z"
+dispatched_at:
+  iso: "2026-06-01T08:05:00.000Z"
+  filename: "20260601T080500000Z"
+inputs:
+  - filename: contract-copy-tone-audit-v1.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/copy-tone-audit/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+    source_path: .taniwha/kupu/project_context.yaml
+  - filename: implementation_manifest.yaml
+    kind: implementation_manifest
+    source_path: .taniwha/kupu/orchestrator/handoff/01KT11YFKQZDZT37B6H0381XXY/outputs/implementation_manifest.yaml
+  - filename: voice_md_path.txt
+    kind: implementation_manifest
+    note: "docs/voice.md created by leaf; read from repo working tree"
+expected_outputs:
+  - verifier_report.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

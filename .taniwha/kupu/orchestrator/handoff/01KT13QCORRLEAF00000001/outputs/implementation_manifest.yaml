@@ -1,0 +1,57 @@
+committed: false
+
+files_modified:
+  - path: src/init.rs
+    changes:
+      - line: 24
+        before: '    println!("\n  Extracting guardrails...");'
+        after:  '    println!("\n  Extracting rules...");'
+
+  - path: src/main.rs
+    changes:
+      - lines: [1213, 1337, 1559]
+        before: 'return Err("No guardrail database found.  Run `arai init` first.".to_string());'
+        after:  'return Err("No rule database found.  Run `arai init` first.".to_string());'
+        note: all three occurrences replaced via replace_all
+
+  - path: src/scenarios.rs
+    changes:
+      - line: 89
+        before: '.map_err(|e| format!("Failed to read scenario file {}: {e}", path.display()))?;'
+        after:  '.map_err(|e| format!("Could not read scenario file {}: {e}", path.display()))?;'
+      - line: 165
+        before: '"No guardrail database found.  Run `arai init` first before running scenario tests."'
+        after:  '"No rule database found.  Run `arai init` first before running scenario tests."'
+        note: also applies unit-term fix; same pattern as main.rs; user-visible error path
+
+  - path: src/enrich.rs
+    changes:
+      - description: "All Failed to -> Could not on user-visible error strings (12 occurrences)"
+        strings_changed:
+          - '"Failed to create ONNX session builder: {e}"' -> '"Could not create ONNX session builder: {e}"'
+          - '"Failed to set optimization level: {e}"'      -> '"Could not set optimization level: {e}"'
+          - '"Failed to load model: {e}"'                  -> '"Could not load model: {e}"'
+          - '"Failed to load tokenizer: {e}"'              -> '"Could not load tokenizer: {e}"'
+          - '"Failed to create model directory: {e}"'      -> '"Could not create model directory: {e}"'
+          - '"Failed to run curl: {e}"'                    -> '"Could not run curl: {e}"'
+          - '"Failed to create input_ids tensor: {e}"'     -> '"Could not create input_ids tensor: {e}"'
+          - '"Failed to create attention_mask tensor: {e}"'-> '"Could not create attention_mask tensor: {e}"'
+          - '"Failed to create token_type_ids tensor: {e}"'-> '"Could not create token_type_ids tensor: {e}"'
+          - '"Failed to extract tensor: {e}"'              -> '"Could not extract tensor: {e}"'
+          - '"Failed to parse JSON: {e}\n\..."'            -> '"Could not parse JSON: {e}\n\..."'
+          - '"Failed to read API response: {e}"'           -> '"Could not read API response: {e}"'
+          - '"Failed to parse API response as JSON: {e}"'  -> '"Could not parse API response as JSON: {e}"'
+          - '"Failed to read {path}: {e}"'                 -> '"Could not read {path}: {e}"'
+          - '"Failed to run '\''{binary}'\'': {e}"'        -> '"Could not run '\''{binary}'\'': {e}"'
+          - '"Failed to run '\''{binary}'\'' with stdin: {e}"' -> '"Could not run '\''{binary}'\'' with stdin: {e}"'
+
+tests_updated: []
+# Lockstep grep found zero test assertions on any of the old strings.
+
+gate_results:
+  fmt_check: clean
+  clippy: 0 new warnings (2 pre-existing in src/store.rs, unrelated)
+  test:
+    suites: 18
+    passed: 584
+    failed: 0

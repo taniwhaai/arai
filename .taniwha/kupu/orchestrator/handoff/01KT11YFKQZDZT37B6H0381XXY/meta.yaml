@@ -1,0 +1,42 @@
+schema_version: 1
+handoff_id: 01KT11YFKQZDZT37B6H0381XXY
+role: leaf-implementation
+module: copy-tone-audit
+parent_contract_version: 1
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-06-01T07:43:56.302Z"
+  filename: "20260601T074356302Z"
+dispatched_at:
+  iso: "2026-06-01T07:43:56.302Z"
+  filename: "20260601T074356302Z"
+returned_at:
+  iso: "2026-06-01T07:50:00.000Z"
+  filename: "20260601T075000000Z"
+outcome:
+  produced: [implementation_manifest.yaml]
+  re_raise: false
+  committed: false
+  files_created: [docs/voice.md]
+  files_modified: [src/hooks.rs, src/guardrails.rs, src/init.rs, src/main.rs, src/stats.rs, src/store.rs, src/upgrade.rs, src/extends.rs, README.md]
+  lockstep_tests_updated: 0
+  lockstep_note: "No test asserted any changed human string (tests check JSON structural fields, not prose) — verified by grep."
+  no_new_dependency: true
+  gate: "fmt clean; clippy 2 pre-existing (0 new); cargo test all suites green"
+  dispatcher_checks: "scope within bounded surfaces (extra files = user-visible error strings); JSON keys/enums untouched (only reason/context VALUES changed); diff 46/-48 wording-only; register reads consistent restrained-declarative; glossary consistent (rule(s) / Arai / no 'we')."
+build_order: "single_module — sole leaf (editorial retune)"
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: contract-copy-tone-audit-v1.md
+    kind: contract
+    source_path: .taniwha/kupu/contracts/copy-tone-audit/v1.md
+  - filename: project_context.yaml
+    kind: project_context
+expected_outputs:
+  - implementation_manifest.yaml
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2

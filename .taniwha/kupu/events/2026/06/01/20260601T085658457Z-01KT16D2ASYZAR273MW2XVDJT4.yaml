@@ -1,0 +1,10 @@
+event_id: 01KT16D2ASYZAR273MW2XVDJT4
+kind: commit_landed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T08:56:58.457Z
+  filename: 20260601T085658457Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"branch": "feat/85-copy-tone", "commit": "8a2fc66", "issue_ref": "85", "parent_issue": "64", "pr_number": 142, "pr_url": "https://github.com/taniwhaai/arai/pull/142", "base_branch": "main", "files": ["docs/voice.md", "src/hooks.rs", "src/guardrails.rs", "src/init.rs", "src/main.rs", "src/stats.rs", "src/store.rs", "src/upgrade.rs", "src/extends.rs", "src/scenarios.rs", "src/enrich.rs", "README.md"], "no_new_dependency": true, "behaviour": "unchanged (wording only)"}'

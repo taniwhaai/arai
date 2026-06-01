@@ -1,0 +1,10 @@
+event_id: 01KT11X69BBQ1WST13H30S7GV2
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T07:38:23.915Z
+  filename: 20260601T073823915Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KT11CONTRACTDERIVE00001", "module": "copy-tone-audit", "re_raise": false, "produced": ["contract-copy-tone-audit-v1.md"]}'

@@ -77,15 +77,15 @@ pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, S
 
     // Initialize ONNX Runtime
     let mut session = ort::session::Session::builder()
-        .map_err(|e| format!("Failed to create ONNX session builder: {e}"))?
+        .map_err(|e| format!("Could not create ONNX session builder: {e}"))?
         .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
-        .map_err(|e| format!("Failed to set optimization level: {e}"))?
+        .map_err(|e| format!("Could not set optimization level: {e}"))?
         .commit_from_file(&model_path)
-        .map_err(|e| format!("Failed to load model: {e}"))?;
+        .map_err(|e| format!("Could not load model: {e}"))?;
 
     // Load tokenizer
     let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-        .map_err(|e| format!("Failed to load tokenizer: {e}"))?;
+        .map_err(|e| format!("Could not load tokenizer: {e}"))?;
 
     // Pre-compute archetype embeddings
     println!("    Computing archetype embeddings...");
@@ -188,7 +188,7 @@ fn ensure_model_downloaded(arai_base_dir: &Path) -> Result<PathBuf, String> {
     }
 
     std::fs::create_dir_all(&model_dir)
-        .map_err(|e| format!("Failed to create model directory: {e}"))?;
+        .map_err(|e| format!("Could not create model directory: {e}"))?;
 
     if !model_path.exists() {
         println!("    Downloading model ({MODEL_NAME})...");
@@ -208,7 +208,7 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     let output = std::process::Command::new("curl")
         .args(["-sL", "-o", &dest.to_string_lossy(), url])
         .output()
-        .map_err(|e| format!("Failed to run curl: {e}"))?;
+        .map_err(|e| format!("Could not run curl: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -261,11 +261,11 @@ fn embed_single(
     let len = ids.len();
 
     let ids_tensor = ort::value::Tensor::from_array(([1, len], ids))
-        .map_err(|e| format!("Failed to create input_ids tensor: {e}"))?;
+        .map_err(|e| format!("Could not create input_ids tensor: {e}"))?;
     let mask_tensor = ort::value::Tensor::from_array(([1, len], mask))
-        .map_err(|e| format!("Failed to create attention_mask tensor: {e}"))?;
+        .map_err(|e| format!("Could not create attention_mask tensor: {e}"))?;
     let type_tensor = ort::value::Tensor::from_array(([1, len], type_ids))
-        .map_err(|e| format!("Failed to create token_type_ids tensor: {e}"))?;
+        .map_err(|e| format!("Could not create token_type_ids tensor: {e}"))?;
 
     let outputs = session
         .run(ort::inputs![ids_tensor, mask_tensor, type_tensor])
@@ -276,7 +276,7 @@ fn embed_single(
 
     let (shape, raw_data) = output
         .try_extract_tensor::<f32>()
-        .map_err(|e| format!("Failed to extract tensor: {e}"))?;
+        .map_err(|e| format!("Could not extract tensor: {e}"))?;
 
     // Mean pooling: average across sequence length dimension
     let hidden_size = *shape.last().unwrap_or(&384) as usize;
@@ -405,7 +405,7 @@ fn parse_and_apply(
         Err(e) => {
             save_failed_response(arai_base_dir, response);
             return Err(format!(
-                "Failed to parse JSON: {e}\n\
+                "Could not parse JSON: {e}\n\
                  Full response saved to: {}/last-enrich-response.json",
                 arai_base_dir.display()
             ));
@@ -735,10 +735,10 @@ fn call_chat_completions(config: &ApiConfig, prompt: &str) -> Result<String, Str
         .into_body()
         .as_reader()
         .read_to_string(&mut response_str)
-        .map_err(|e| format!("Failed to read API response: {e}"))?;
+        .map_err(|e| format!("Could not read API response: {e}"))?;
 
     let response_body: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|e| format!("Failed to parse API response as JSON: {e}"))?;
+        .map_err(|e| format!("Could not parse API response as JSON: {e}"))?;
 
     // Extract content from OpenAI chat completions response
     response_body
@@ -759,7 +759,7 @@ fn call_chat_completions(config: &ApiConfig, prompt: &str) -> Result<String, Str
 /// Import enrichment from a JSON file (same format as LLM output).
 pub fn enrich_from_file(store: &Store, path: &str, arai_base_dir: &Path) -> Result<usize, String> {
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
 
     let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
     parse_and_apply(store, &guardrails, &content, arai_base_dir)
@@ -986,7 +986,7 @@ fn run_llm_command(cmd: &str, prompt: &str) -> Result<String, String> {
         .args(args)
         .arg(prompt)
         .output()
-        .map_err(|e| format!("Failed to run '{binary}': {e}"))?;
+        .map_err(|e| format!("Could not run '{binary}': {e}"))?;
 
     if !output.status.success() {
         // Some CLIs want prompt on stdin instead
@@ -1003,7 +1003,7 @@ fn run_llm_command(cmd: &str, prompt: &str) -> Result<String, String> {
                 }
                 child.wait_with_output()
             })
-            .map_err(|e| format!("Failed to run '{binary}' with stdin: {e}"))?;
+            .map_err(|e| format!("Could not run '{binary}' with stdin: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

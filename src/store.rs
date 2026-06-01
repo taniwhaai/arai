@@ -20,11 +20,11 @@ impl Store {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create DB directory: {e}"))?;
+                .map_err(|e| format!("Could not create DB directory: {e}"))?;
         }
 
         let conn =
-            Connection::open(db_path).map_err(|e| format!("Failed to open database: {e}"))?;
+            Connection::open(db_path).map_err(|e| format!("Could not open database: {e}"))?;
 
         // Connection PRAGMAs.  journal_mode=WAL and synchronous=NORMAL are
         // persistent (set on the database file once); temp_store=MEMORY and
@@ -37,12 +37,12 @@ impl Store {
              PRAGMA temp_store = MEMORY;
              PRAGMA foreign_keys = ON;",
         )
-        .map_err(|e| format!("Failed to set PRAGMAs: {e}"))?;
+        .map_err(|e| format!("Could not set PRAGMAs: {e}"))?;
 
         let store = Store { conn };
         store
             .run_migrations()
-            .map_err(|e| format!("Failed to run migrations: {e}"))?;
+            .map_err(|e| format!("Could not run migrations: {e}"))?;
         Ok(store)
     }
 

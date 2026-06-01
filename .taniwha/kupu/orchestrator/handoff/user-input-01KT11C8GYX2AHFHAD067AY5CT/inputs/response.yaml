@@ -1,0 +1,6 @@
+schema_version: 1
+prompt_kind: design_doc_approval
+responses:
+  - header: Design approval
+    question: Does design v7 (restrained-declarative voice retune, #85) capture the voice and scope you want?
+    selected: Approve

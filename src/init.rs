@@ -21,7 +21,7 @@ pub fn run() -> Result<(), String> {
         );
     }
 
-    println!("\n  Extracting guardrails...");
+    println!("\n  Extracting rules...");
     let db = store::Store::open(&cfg.db_path())?;
 
     let mut total_rules = 0;
@@ -96,7 +96,7 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
-    println!("\n  Done. Arai is now watching your rules (Claude + Grok TUI).");
+    println!("\n  Arai is enforcing this project's rules (Claude Code and Grok TUI).");
     Ok(())
 }
 
@@ -111,9 +111,9 @@ pub fn deinit() -> Result<(), String> {
     }
 
     let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("Failed to read settings.json: {e}"))?;
+        .map_err(|e| format!("Could not read settings.json: {e}"))?;
     let mut settings: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings.json: {e}"))?;
+        .map_err(|e| format!("Could not parse settings.json: {e}"))?;
 
     let mut removed = 0;
 
@@ -139,9 +139,9 @@ pub fn deinit() -> Result<(), String> {
     }
 
     let output = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+        .map_err(|e| format!("Could not serialize settings: {e}"))?;
     std::fs::write(&settings_path, output)
-        .map_err(|e| format!("Failed to write settings.json: {e}"))?;
+        .map_err(|e| format!("Could not write settings.json: {e}"))?;
 
     if removed > 0 {
         println!("  Removed {removed} Arai hook(s) from .claude/settings.json");
@@ -158,7 +158,7 @@ pub fn deinit() -> Result<(), String> {
         }
     }
 
-    println!("  Arai is no longer watching this project.");
+    println!("  Arai is no longer enforcing this project's rules.");
     Ok(())
 }
 
@@ -202,14 +202,14 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     // Ensure .claude directory exists
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create .claude directory: {e}"))?;
+            .map_err(|e| format!("Could not create .claude directory: {e}"))?;
     }
 
     // Read existing settings or start fresh
     let mut settings: Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)
-            .map_err(|e| format!("Failed to read settings.json: {e}"))?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings.json: {e}"))?
+            .map_err(|e| format!("Could not read settings.json: {e}"))?;
+        serde_json::from_str(&content).map_err(|e| format!("Could not parse settings.json: {e}"))?
     } else {
         serde_json::json!({})
     };
@@ -228,9 +228,9 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
 
     // Write back
     let output = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+        .map_err(|e| format!("Could not serialize settings: {e}"))?;
     std::fs::write(&settings_path, output)
-        .map_err(|e| format!("Failed to write settings.json: {e}"))?;
+        .map_err(|e| format!("Could not write settings.json: {e}"))?;
 
     Ok(())
 }
@@ -242,7 +242,7 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
 
     // Ensure the directory exists
     std::fs::create_dir_all(&hooks_dir)
-        .map_err(|e| format!("Failed to create .grok/hooks directory: {e}"))?;
+        .map_err(|e| format!("Could not create .grok/hooks directory: {e}"))?;
 
     let hook_file = hooks_dir.join("arai.json");
 
@@ -251,7 +251,7 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
     let hooks_obj = grok_hooks
         .get_mut("hooks")
         .and_then(|v| v.as_object_mut())
-        .ok_or("Failed to create hooks object")?;
+        .ok_or("Could not create hooks object")?;
 
     for (event, matcher) in ARAI_HOOK_REGISTRATIONS {
         let event_arr = hooks_obj
@@ -289,9 +289,9 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
     }
 
     let output = serde_json::to_string_pretty(&grok_hooks)
-        .map_err(|e| format!("Failed to serialize Grok hook file: {e}"))?;
+        .map_err(|e| format!("Could not serialize Grok hook file: {e}"))?;
     std::fs::write(&hook_file, output)
-        .map_err(|e| format!("Failed to write .grok/hooks/arai.json: {e}"))?;
+        .map_err(|e| format!("Could not write .grok/hooks/arai.json: {e}"))?;
 
     Ok(())
 }

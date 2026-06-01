@@ -1,0 +1,23 @@
+---
+schema_version: 1
+event_id: 01KT14REVERIFYDISP047
+kind: subagent_dispatched
+timestamp: "2026-06-01T08:30:00Z"
+orchestrator_invocation: 47
+triggered_by: "subagent_returned:leaf-implementation:01KT13QCORRLEAF00000001"
+
+payload:
+  role: verifier
+  handoff_id: 01KT14REVERIFY000000000001
+  module: copy-tone-audit
+  contract_version: 1
+  description: >
+    Re-verifier dispatched after corrective leaf 01KT13QCORRLEAF00000001 fixed
+    all three AC6 glossary nits. Re-verify AC1–AC10 with focus on AC6 (glossary
+    consistency now clean), AC8 (behaviour unchanged), and AC10 (full gate).
+    Expected overall: pass.
+  inputs:
+    - contract v1
+    - project_context v1
+    - prior_verifier_report (01KT12ZWEC9R7HJE7PEMG59MG0)
+    - implementation_manifest (01KT13QCORRLEAF00000001)

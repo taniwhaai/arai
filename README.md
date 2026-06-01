@@ -1,8 +1,6 @@
 # Arai
 
-**Instruction files that actually work.** One command. Runs locally. Zero cost.
-
-Arai makes your AI coding assistant instruction files structurally enforceable — not just suggestions that get forgotten as context grows.
+Arai enforces AI coding assistant instruction files (CLAUDE.md, AGENTS.md, .cursorrules, and others) via native hooks. Rules derived from prohibitive language block the tool call outright; advisory rules inject the relevant constraint at the point it applies.
 
 ![Arai blocking a forbidden command at the PreToolUse hook](demos/block.gif)
 

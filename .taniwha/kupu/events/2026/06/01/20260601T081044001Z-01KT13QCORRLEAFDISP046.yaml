@@ -1,0 +1,19 @@
+---
+schema_version: 1
+event_id: 01KT13QCORRLEAFDISP046
+kind: orchestrator_decided
+timestamp: "2026-06-01T08:10:44Z"
+payload:
+  invocation: 46
+  triggered_by: "subagent_returned:verifier:01KT12ZWEC9R7HJE7PEMG59MG0"
+  decision_id: 01KT13QCORRLEAFDECISION01
+  action: dispatch_subagent
+  role: leaf-implementation
+  handoff_id: 01KT13QCORRLEAF00000001
+  rationale: >
+    Verifier returned overall: partial. Gate green, hard constraints met.
+    Three AC6 glossary-consistency nits remain unfixed in src/init.rs,
+    src/main.rs, src/enrich.rs, src/scenarios.rs. Corrective leaf dispatched
+    scoped to string-literal changes only at those 4 files. No user decision
+    needed — approved spec covers all sites. Small recovery loop (corrective
+    leaf + re-verify = 2 dispatches), under threshold for user pause.

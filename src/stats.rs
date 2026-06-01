@@ -429,7 +429,7 @@ fn print_table(stats: &Stats, top: usize, by_rule_only: bool) {
     let col = style::should_colorize(style::Stream::Stdout);
 
     if stats.total_firings == 0 && stats.by_rule_compliance.is_empty() {
-        println!("No audit entries.  Rules haven't fired yet, or --since excluded everything.");
+        println!("No audit entries.  No rules have fired yet, or --since excluded everything.");
         return;
     }
 

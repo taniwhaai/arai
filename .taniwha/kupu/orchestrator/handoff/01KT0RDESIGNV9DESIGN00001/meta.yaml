@@ -1,0 +1,36 @@
+---
+schema_version: 1
+handoff_id: 01KT0RDESIGNV9DESIGN00001
+role: design-doc
+status: returned
+created_at: "2026-06-01T04:55:00Z"
+dispatched_at: "2026-06-01T04:56:03.753Z"
+returned_at: "2026-06-01T04:59:20.468Z"
+outcome:
+  produced: [design_v7.md]
+  re_raise: false
+  tier: single_module
+  module: copy-tone-audit
+  summary: "Design v7: restrained-declarative voice retune; VoiceSpec (6 rules) + glossary committed as docs/voice.md; real before/after exemplars; behaviour-unchanged + tests-in-lockstep constraints; per-AC verifier map; AC1-AC10."
+orchestrator_invocation: 41
+model: claude-opus-4-5
+
+inputs:
+  - kind: brief
+    source_path: kupu/brief/v9.md
+    copied_to: inputs/brief_v9.md
+  - kind: project_context
+    source_path: kupu/project_context.yaml
+    copied_to: inputs/project_context.yaml
+    note: "Expose language/repo_style/conventions only — not toolchain commands"
+  - kind: prior_design_version
+    source_path: kupu/design/v6.md
+    copied_to: inputs/design_v6_reference.md
+    note: "Style reference for document format only — not content extension"
+
+expected_outputs:
+  - kind: design_doc
+    path: outputs/design_v7.md
+
+brief_version: 9
+target_design_version: 7
