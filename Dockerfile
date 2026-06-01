@@ -39,6 +39,12 @@ RUN cargo build --release --locked
 # ---------- Runtime stage ----------
 FROM debian:bookworm-slim AS runtime
 
+# OCI labels. `image.source` is what GitHub uses to auto-link the ghcr
+# package back to this repo, so it surfaces in the repo's Packages sidebar.
+LABEL org.opencontainers.image.source="https://github.com/taniwhaai/arai"
+LABEL org.opencontainers.image.description="Arai — enforce AI coding instruction files (CLAUDE.md, AGENTS.md, .cursorrules) via hooks."
+LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
 # ca-certificates: needed for `arai:extends` HTTPS fetches of trusted upstream
 # policy files. Nothing else reaches the network on the hook hot path.
 RUN apt-get update && apt-get install -y --no-install-recommends \
