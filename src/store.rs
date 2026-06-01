@@ -1186,7 +1186,12 @@ mod tests {
             source_label: None,
         };
         store
-            .upsert_file("CLAUDE.md", "- a", &[t.clone()], "claude_md_project")
+            .upsert_file(
+                "CLAUDE.md",
+                "- a",
+                std::slice::from_ref(&t),
+                "claude_md_project",
+            )
             .unwrap();
         store
             .upsert_file(
@@ -1720,7 +1725,7 @@ mod tests {
             source_label: None,
         };
         store
-            .upsert_file("CLAUDE.md", "x", &[t.clone()], "test")
+            .upsert_file("CLAUDE.md", "x", std::slice::from_ref(&t), "test")
             .unwrap();
         store
             .disable_rule("git", "never", "force-push to main")
