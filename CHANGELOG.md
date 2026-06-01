@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-02
+
+First stable release. The CLI surface, hook protocol, and on-disk
+formats (audit log, `arai.toml`, severity overrides) are now stable and
+follow semantic versioning.
+
+### Added
+
+- *(dist)* Publish the npm wrapper to GitHub Packages alongside npmjs
+
 ## [0.2.28] - 2026-06-01
 
 ### Added
