@@ -13,6 +13,7 @@ follow semantic versioning.
 ### Added
 
 - *(dist)* Publish the npm wrapper to GitHub Packages alongside npmjs
+- *(dist)* Publish a container image to ghcr.io on release
 
 ## [0.2.28] - 2026-06-01
 
