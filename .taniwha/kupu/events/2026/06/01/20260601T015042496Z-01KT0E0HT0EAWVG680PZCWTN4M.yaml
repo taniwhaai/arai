@@ -1,0 +1,10 @@
+event_id: 01KT0E0HT0EAWVG680PZCWTN4M
+kind: build_completed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T01:50:42.496Z
+  filename: 20260601T015042496Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 8, "issue_ref": "84", "tier": "single_module", "module": "gateway-outcome-glyphs", "verifier": "pass (AC1-AC10)", "no_new_dependency": true, "pr": "https://github.com/taniwhaai/arai/pull/141", "tests": "584/584"}'

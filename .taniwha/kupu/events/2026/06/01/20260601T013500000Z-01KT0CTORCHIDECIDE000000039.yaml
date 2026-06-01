@@ -1,0 +1,10 @@
+event_id: 01KT0CTORCHIDECIDE000000039
+kind: orchestrator_decided
+actor:
+  kind: orchestrator
+  invocation: 39
+timestamp:
+  iso: 2026-06-01T01:35:00.000Z
+  filename: 20260601T013500000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"triggered_by": "subagent_returned:leaf-implementation:01KT0BMTR2H69NN8FD0MQWCVZ6", "action": "dispatch_subagent", "role": "verifier", "module": "gateway-outcome-glyphs", "handoff_id": "01KT0CTPJNW34D2SD5PRD1SV5G", "contract_version": 1, "branch": "feat/84-gateway-glyphs", "rationale": "leaf gate green (fmt+clippy+test 555/555); single_module tier mandates verifier dispatch before complete"}'

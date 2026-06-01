@@ -1,0 +1,10 @@
+event_id: 01KT0DHX763P69P111HZ0923Y6
+kind: verification_passed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T01:42:42.662Z
+  filename: 20260601T014242662Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "handoff_id": "01KT0CTPJNW34D2SD5PRD1SV5G", "module": "gateway-outcome-glyphs", "overall": "pass", "acs": "AC1-AC10 all pass", "tests_added": ["tests/gateway_glyphs_verifier.rs"], "gate": "fmt+clippy(0 new)+test 584/584; no new dep", "carveouts": "hook zero-ANSI (literal false); --json glyph-free; ochre only when colorize"}'

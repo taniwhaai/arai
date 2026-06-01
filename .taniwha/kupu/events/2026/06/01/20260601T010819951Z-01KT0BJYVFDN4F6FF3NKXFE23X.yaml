@@ -1,0 +1,10 @@
+event_id: 01KT0BJYVFDN4F6FF3NKXFE23X
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T01:08:19.951Z
+  filename: 20260601T010819951Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KT0B51P5GZW77R4DJE63C9D9", "module": "gateway-outcome-glyphs", "re_raise": false, "produced": ["contract-gateway-outcome-glyphs-v1.md"]}'

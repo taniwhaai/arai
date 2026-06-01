@@ -1,0 +1,10 @@
+event_id: 01KT0EORCHIDECIDE000000040
+kind: orchestrator_decided
+actor:
+  kind: orchestrator
+  invocation: 40
+timestamp:
+  iso: 2026-06-01T02:00:00.000Z
+  filename: 20260601T020000000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"triggered_by": "01KT0DHX763P69P111HZ0923Y6 (verification_passed verifier 01KT0CTPJNW34D2SD5PRD1SV5G)", "action": "surface_to_user", "prompt_kind": "completion_review", "decision_record": "01KT0EBUILDCOMPLETE84001", "module": "gateway-outcome-glyphs", "branch": "feat/84-gateway-glyphs", "gate": "fmt+clippy(0 new)+test 584/584; no new dep; all AC1-AC10 pass", "rationale": "single_module tier: verifier pass => build complete; surface for commit+PR approval"}'

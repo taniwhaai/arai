@@ -1,12 +1,13 @@
 ---
 schema_version: 1
-orchestrator_invocation: 34
-generated_at: "2026-05-31T08:45:00Z"
-triggered_by: "subagent_returned:verifier:01KSYJV0CORRVERIF00000001 (corrective, overall: pass)"
+orchestrator_invocation: 40
+generated_at: "2026-06-01T02:00:00Z"
+triggered_by: "subagent_returned:verifier:01KT0CTPJNW34D2SD5PRD1SV5G"
 
-# Build phase: COMPLETE. Surface to user for commit + PR approval.
-# All AC1-AC10 pass. Full gate green. 536/536 tests. Zero new deps.
-# Decision record: decisions/01KSYK8BUILDCOMPLETE83001.md
+# Brief v8 / issue #84 — gateway-derived outcome glyphs
+# Verifier returned overall: PASS (all AC1-AC10 pass).
+# Single_module tier complete. Decision record written.
+# Surface to user for commit + PR approval.
 
 actions:
 
@@ -14,151 +15,147 @@ actions:
     action: record_decision
     decision:
       kind: scope_change
-      triggered_by: "01KSYK0FW6BQW4FZCZ6TNJ5QZ4 (verification_passed: corrective verifier)"
+      triggered_by: "01KT0DHX763P69P111HZ0923Y6 (verification_passed: verifier 01KT0CTPJNW34D2SD5PRD1SV5G)"
       affects:
         - kind: tree
-          id: brand-palette-styling
+          id: gateway-outcome-glyphs
           from_version: null
           to_version: 1
-    # Decision file already written by orchestrator:
-    # .taniwha/kupu/decisions/01KSYK8BUILDCOMPLETE83001.md
-    # Dispatcher: update decisions index if one exists; otherwise no further action needed.
-    decision_id: 01KSYK8BUILDCOMPLETE83001
+      body: |
+        Decision record already written to disk by orchestrator subagent:
+        .taniwha/kupu/decisions/01KT0EBUILDCOMPLETE84001.md
+    note: |
+      Decision record pre-written by orchestrator subagent before emitting this action.
+      Dispatcher does not need to re-write it.
 
   - sequence: 2
     action: surface_to_user
     prompt_kind: completion_review
     mode: structured
     context: |
-      Issue #83 (brand-palette-styling) is implementation-complete and fully
-      verified. All AC1-AC10 pass. Full gate green: cargo fmt clean, cargo
-      clippy 0 new warnings, cargo test 536/536 (0 fail). No new dependencies.
+      The verifier returned overall: PASS for issue #84 (gateway-outcome-glyphs).
+      All AC1-AC10 pass. Gate: cargo fmt clean, clippy 0 new warnings, cargo test
+      584/584, Cargo.toml unchanged (zero new dependencies).
 
-      Working tree on branch feat/83-cli-palette (off origin/main @ eacd63c)
-      contains the following uncommitted changes:
-        - src/style.rs                    (new — brand palette module)
-        - src/main.rs                     (modified — human output through style helpers)
-        - src/stats.rs                    (modified — stats output through style helpers)
-        - tests/style_integration.rs      (new — 12 integration tests)
-        - tests/brand_palette_verifier.rs (new — 30 AC tests, verifier-authored)
-        - .taniwha/kupu artefacts for this slice (handoffs, decisions, events)
+      Working tree on branch feat/84-gateway-glyphs (off origin/main @ c10fb9e) is
+      ready to commit and raise as a PR. No commits exist yet.
 
-      Cargo.toml and Cargo.lock are UNCHANGED and must NOT be staged.
+      Files to stage (DO NOT use git add -A):
+        src/style.rs
+        src/main.rs
+        src/stats.rs
+        src/hooks.rs
+        tests/brand_palette_verifier.rs
+        tests/gateway_outcome_glyphs.rs
+        tests/gateway_glyphs_verifier.rs
+        .taniwha/kupu/decisions/01KT0EBUILDCOMPLETE84001.md
+        .taniwha/kupu/events/2026/06/01/20260601T020000000Z-01KT0EORCHIDECIDE000000040.yaml
+        .taniwha/kupu/orchestrator/current_state.yaml
+        .taniwha/kupu/orchestrator/next_action.yaml
 
-      -----------------------------------------------------------------------
-      PROPOSED COMMIT MESSAGE (use verbatim on branch feat/83-cli-palette):
+      DO NOT stage: .taniwha/kupu/state/ or Cargo.toml or Cargo.lock
 
-        feat(style): add pounamu/ochre semantic colour palette for CLI output (#83)
+      Commit message (copy verbatim):
+      ----
+      feat(style): add gateway outcome glyphs for blocked/allowed/warned (#84)
 
-        Introduces src/style.rs with a two-colour semantic palette (pounamu green
-        for structural text, ochre for passage/warn/error) applied foreground-only
-        with WCAG-aware truecolor escapes. Gating: NO_COLOR (env) > TTY-detect >
-        CLICOLOR_FORCE > plain. The hook-protocol path (guardrails --match-stdin)
-        and all --json outputs remain ANSI-free even under CLICOLOR_FORCE=1, so
-        machine consumers are unaffected. Structural pounamu was lightened from
-        RGB(31,77,63) to RGB(61,130,104) for dark-terminal readability (~5.0:1 vs
-        black, WCAG AA pass). 536/536 tests pass; zero new dependencies.
+      Adds should_use_unicode() and outcome_glyph() to src/style.rs, reusing the
+      #83 palette/gate. Glyph set: blocked ●·│✕ / allowed │●│ / warned ●·│ with
+      ASCII fallbacks. Unicode detection via ARAI_ASCII/NO_UNICODE env vars and
+      UTF-8 locale check (TTY-independent). Hook output passes literal false for
+      colorize — glyph chars but zero ANSI even under CLICOLOR_FORCE=1. --json
+      paths carry no glyphs (structural carve-out). Ochre applied to ✕ only when
+      colorize=true, reusing #83 passage() helper. Audit-chain ✓/✗ markers
+      untouched. 584 tests pass, zero new dependencies.
 
-        Closes #83. Part of parent #64.
+      Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+      ----
 
-        Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+      PR: feat/84-gateway-glyphs → main
+      PR title: feat(style): gateway outcome glyphs for blocked/allowed/warned (#84)
+      PR references: Closes #84, parent #64
 
-      -----------------------------------------------------------------------
-      PROPOSED PR TITLE:
-        feat(style): pounamu/ochre semantic palette for CLI output (#83)
+    pr_body: |
+      ## Summary
 
-      PROPOSED PR BODY (use verbatim):
+      Adds gateway-derived outcome glyphs to Arai's human-readable output surfaces,
+      replacing generic warning/blocked icons with a coherent visual vocabulary that
+      mirrors the gateway metaphor.
 
-        ## Summary
+      ### Glyph set
 
-        Adds a semantic two-colour palette to Arai's CLI output (closes #83,
-        part of parent #64).
+      | Outcome | Unicode | ASCII fallback |
+      |---------|---------|----------------|
+      | Blocked | `●·│✕` | `o.\|x` |
+      | Allowed | `│●│` | `\|o\|` |
+      | Warned (Warn + Inform) | `●·│` | `o.\|` |
 
-        - **`src/style.rs`** — new module; single source of truth for all ANSI
-          truecolor construction. Five public helpers: `structural()`, `passage()`,
-          `error()`, `warn()`, `should_colorize()`. Palette: pounamu
-          RGB(61,130,104) for structural text; ochre RGB(184,118,58) for
-          passage moments, warnings, and errors. Foreground-only unconditionally —
-          no background escapes anywhere.
+      Visual weight matches severity: blocked is heaviest (4 chars + cross), warned is
+      medium (dot adjacent, no cross), allowed is lightest (dot passing through).
 
-        - **Gating hierarchy** (highest priority wins): `NO_COLOR` present →
-          strip all; non-TTY stdout and no `CLICOLOR_FORCE` → strip all;
-          `CLICOLOR_FORCE=1` → force on; interactive TTY → on. `NO_COLOR`
-          dominates `CLICOLOR_FORCE`.
+      ### Unicode detection (`should_use_unicode`)
 
-        - **Machine-consumer carve-out**: the hook-protocol path
-          (`guardrails --match-stdin`) and every `--json` flag output remain
-          ANSI-free even when `CLICOLOR_FORCE=1` is set. `src/hooks.rs` is not
-          modified and does not import the style module — the carve-out is
-          structural, not conditional.
+      Precedence chain: `ARAI_ASCII` (non-empty) → ASCII; `NO_UNICODE` (non-empty) →
+      ASCII; locale priority `LC_ALL > LC_CTYPE > LANG` (first non-empty, UTF-8 check);
+      missing/empty locale vars → ASCII. Deliberately TTY-independent — no `isatty`
+      call, so piped output honours the same locale as interactive output.
 
-        - **AC9 legibility decision**: structural pounamu was lightened from
-          the original RGB(31,77,63) (#1f4d3f) to RGB(61,130,104) (#3d8268)
-          following a user-directed readability review. WCAG 2.1 contrast
-          (verifier-computed): ~5.0:1 on black (passes WCAG AA >=4.5:1);
-          ~4.2:1 on white (below WCAG AA-normal 4.5:1, above AA-large 3:1).
-          The old value was ~2.3:1 on black (failing AA). The white-terminal
-          gap (~4.2:1 vs 4.5:1) is a known caveat; AC9 calls for human visual
-          inspection rather than a specific numeric threshold, and the new
-          value is visibly improved on both common terminal backgrounds.
+      ### Palette reuse from #83
 
-        - **Zero new dependencies**: Cargo.toml is unchanged from `origin/main`.
-          No colour crate, no terminal crate, no temp-dir crate.
+      The ochre cross (`✕`, `passage("\u{2715}", true)`) reuses `#83`'s `passage()`
+      helper and the `should_colorize()` gate. Colour only appears on the blocked
+      glyph, and only when `colorize=true`. All other glyph characters carry no colour.
 
-        ## Test coverage
+      ### Carve-outs
 
-        | Suite | Tests |
-        |-------|-------|
-        | Unit tests (src/) | 400 |
-        | brand_palette_verifier | 30 |
-        | style_integration | 12 |
-        | All other suites | 94 |
-        | **Total** | **536 (all pass)** |
+      - **Hook output** (`src/hooks.rs`): all `outcome_glyph` calls pass literal `false`
+        for the `colorize` argument — glyph characters appear in Pre/Post human strings
+        but zero ANSI escape bytes are emitted, even under `CLICOLOR_FORCE=1`.
+      - **`--json` output**: no `outcome_glyph` call exists on any JSON code path
+        (`cmd_audit`, `cmd_why`, `stats::run()`). The carve-out is structural, not a
+        conditional — glyph-free by design.
+      - **Audit-chain `✓`/`✗` integrity markers** in `src/main.rs` are left untouched
+        (different semantic — hash-chain verification, not outcome display).
 
-        Full gate: `cargo fmt --check` clean, `cargo clippy` 0 new warnings,
-        `cargo test` 536/536.
+      ### Integration surfaces
 
-        Generated with [Claude Code](https://claude.com/claude-code)
+      - `src/main.rs`: `cmd_audit` and `cmd_why` human-output paths prefix each row
+        with `outcome_glyph(outcome, unicode, col)`.
+      - `src/stats.rs`: `print_compliance_section` replaces the generic `⚠` literal
+        with `outcome_glyph(Outcome::Warn, unicode, col)`.
+      - `src/hooks.rs`: Pre/Post human strings prefixed with glyphs; `colorize` is
+        hard-coded to `false` (zero ANSI guarantee).
 
-      -----------------------------------------------------------------------
+      ### Zero new dependencies
+
+      `src/style.rs` is extended in-place. `Cargo.toml` and `Cargo.lock` are
+      unchanged.
+
+      ### Test coverage
+
+      584 tests pass (0 failures). New tests:
+
+      - `tests/gateway_outcome_glyphs.rs` — 35 leaf-authored tests (AC1-AC10
+        implementation coverage)
+      - `tests/gateway_glyphs_verifier.rs` — 29 verifier-authored tests (independent
+        verification of every AC, including subprocess tests for the zero-ANSI
+        carve-out under `CLICOLOR_FORCE=1`)
+
+      Gate: `cargo fmt --check` clean, `cargo clippy --all-targets` 0 new warnings,
+      `cargo test` 584/584.
+
+      Closes #84. Parent: #64.
+
+      🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
     questions:
-      - header: Commit + PR
-        question: How would you like to proceed with branch feat/83-cli-palette?
+      - header: Commit and PR
+        question: How would you like to proceed with the completed #84 implementation?
         multi_select: false
         options:
           - label: Approve commit + PR (Recommended)
-            description: >
-              Stage the five code/test files (src/style.rs, src/main.rs,
-              src/stats.rs, tests/style_integration.rs,
-              tests/brand_palette_verifier.rs) plus the .taniwha/kupu artefacts
-              for this slice. Commit with the message above. Open a PR against
-              main with the PR title and body above. Do NOT use git add -A.
-              Do NOT stage Cargo.toml or Cargo.lock (unchanged).
-              Do NOT stage .taniwha/kupu/state/.
+            description: Stage the listed files, commit with the provided message, push feat/84-gateway-glyphs, and open a PR against main referencing #84.
           - label: Commit only
-            description: >
-              Stage and commit the same file set, but do not open a PR yet.
-              Push branch feat/83-cli-palette to origin but no PR will be
-              created until you say so.
+            description: Stage and commit locally on feat/84-gateway-glyphs but do not push or open a PR yet.
           - label: Hold
-            description: >
-              Do not commit or push. Leave the working tree as-is for manual
-              review before any git operations.
-
-    # Explicit file list for the dispatcher when "Approve commit + PR" or "Commit only":
-    # Stage:
-    #   src/style.rs
-    #   src/main.rs
-    #   src/stats.rs
-    #   tests/style_integration.rs
-    #   tests/brand_palette_verifier.rs
-    #   .taniwha/kupu/orchestrator/handoff/  (all handoff artefacts for this slice)
-    #   .taniwha/kupu/decisions/01KSYK8BUILDCOMPLETE83001.md
-    #   .taniwha/kupu/events/2026/05/31/20260531T084500000Z-01KSYK8BUILDCOMPLETE83001.yaml
-    #   .taniwha/kupu/orchestrator/current_state.yaml
-    #   .taniwha/kupu/orchestrator/next_action.yaml
-    # Do NOT stage:
-    #   Cargo.toml
-    #   Cargo.lock
-    #   .taniwha/kupu/state/
+            description: Leave the working tree uncommitted; record the build as complete but take no git action now.

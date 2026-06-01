@@ -1,88 +1,79 @@
 ---
 schema_version: 1
-as_of: "2026-05-31T08:45:00Z"
-invocation_count: 34  # thirty-fourth orchestrator invocation
+as_of: "2026-06-01T02:00:00Z"
+invocation_count: 40  # fortieth orchestrator invocation
 
-build_phase: complete
+build_phase: complete_pending_user_approval
 tier: single_module
-brief_version: 7
-brief_scope: "GitHub issue #83 — apply pounamu/ochre brand palette across CLI output (semantic colour, NO_COLOR/TTY/--json gated, hook-protocol carve-out)"
+brief_version: 8
+brief_scope: "GitHub issue #84 — replace generic warning/blocked icons with gateway-derived outcome glyphs (bar+dot set), ASCII fallbacks, reuse #83 src/style.rs palette/gate"
 
-artefact_status:
-  brief: "v7 — current at kupu/brief/v7.md"
-  project_context: "v1 — current at kupu/project_context.yaml (Rust/cargo/single_package)"
-  design_doc: "v5 — APPROVED. Palette amendment recorded in decision 01KSYJ8PALETTECORRECT00001."
-  vocabulary: "v1 — inherited from prior build (kupu/vocabulary/v1.md)."
-  contracts: "brand-palette-styling v1 — canonical."
-  tree: "not formally established — single_module tier"
-  implementation: "COMPLETE — all AC1-AC10 pass. src/style.rs, src/main.rs, src/stats.rs updated."
-  verification: "COMPLETE — corrective verifier 01KSYJV0CORRVERIF00000001 returned overall: pass."
-  open_re_raises: 0
-
-build_result:
-  overall: pass
-  ac_verdicts:
-    AC1: pass
-    AC2: pass
-    AC3: pass
-    AC4: pass
-    AC5: pass
-    AC6: pass
-    AC7: pass
-    AC8: pass
-    AC9: "pass (upgraded from skip) — new pounamu RGB(61,130,104): ~5.0:1 on black (WCAG AA), ~4.2:1 on white (below AA-normal, above AA-large)"
-    AC10: pass
-  gate:
-    fmt: pass
-    clippy: "pass (0 new warnings)"
-    tests: "536/536 pass"
-  new_dependencies: 0
-  decision_record: "decisions/01KSYK8BUILDCOMPLETE83001.md"
-
-palette_final:
-  pounamu: "RGB(61,130,104) #3d8268 — structural text"
-  ochre: "RGB(184,118,58) #b8763a — passage/warn/error"
-  contrast_pounamu_on_black: "~5.0:1 (WCAG AA pass)"
-  contrast_pounamu_on_white: "~4.2:1 (below WCAG AA-normal 4.5, above AA-large 3.0 — known caveat)"
-
-working_tree:
-  branch: feat/83-cli-palette
-  base: "origin/main @ eacd63c"
-  uncommitted_files:
-    - src/style.rs
+prior_slice:
+  brief_version: 7
+  issue: "#83 — pounamu/ochre brand palette"
+  status: COMPLETE AND MERGED
+  pr: "#140"
+  design_version: 5
+  relevant_files:
+    - src/style.rs  # #83 introduced this; design v6 extends it
     - src/main.rs
     - src/stats.rs
-    - tests/style_integration.rs
-    - tests/brand_palette_verifier.rs
-    - .taniwha/kupu/  # (artefacts for this slice)
-  cargo_toml_changed: false
-  cargo_lock_changed: false
 
-waiting_on:
-  kind: user_input
+artefact_status:
+  brief: "v8 — current at kupu/brief/v8.md"
+  project_context: "v1 — current at kupu/project_context.yaml (Rust/cargo/single_package)"
+  design_doc: "v6 — current at kupu/design/v6.md. USER APPROVED (invocation 37)."
+  vocabulary: "v1 — inherited (kupu/vocabulary/v1.md)"
+  contracts: "v1 — kupu/contracts/gateway-outcome-glyphs/v1.md (PROMOTED, invocation 38)"
+  tree: "not established as formal tree — single_module, leaf only"
+  open_re_raises: 0
+
+verification_result:
+  handoff_id: 01KT0CTPJNW34D2SD5PRD1SV5G
+  overall: PASS
+  all_acs: "AC1-AC10 all pass"
+  gate: "fmt+clippy(0 new)+test 584/584; Cargo.toml unchanged; no new dep"
+  verifier_tests_added: 29  # tests/gateway_glyphs_verifier.rs
+  event_recorded: "01KT0DHX763P69P111HZ0923Y6 (verification_passed)"
+  decision_record: "01KT0EBUILDCOMPLETE84001.md"
+
+working_tree:
+  branch: feat/84-gateway-glyphs
+  base: "origin/main @ c10fb9e"
+  committed: false
+  files_changed_vs_main:
+    - src/style.rs        # new should_use_unicode() + outcome_glyph()
+    - src/main.rs         # cmd_audit + cmd_why human paths
+    - src/stats.rs        # print_compliance_section warned glyph
+    - src/hooks.rs        # Pre/Post human strings, colorize=false literal
+    - tests/brand_palette_verifier.rs   # updated #83 verifier assertions
+    - tests/gateway_outcome_glyphs.rs   # new — 35 leaf tests
+    - tests/gateway_glyphs_verifier.rs  # new — 29 verifier tests
+
+pending_user_decision:
+  action: surface_to_user
   prompt_kind: completion_review
-  surface_action: "next_action.yaml sequence 2"
-  options:
-    - "Approve commit + PR (Recommended)"
-    - "Commit only"
-    - "Hold"
+  question: "Approve commit + PR (Recommended) / Commit only / Hold"
+  on_approve_commit_and_pr: |
+    Stage listed files (see next_action.yaml), commit with provided message,
+    push feat/84-gateway-glyphs, open PR against main referencing #84.
+    Commit message ends with Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+    PR body ends with the standard Claude Code footer.
+  on_commit_only: |
+    Stage and commit locally; no push, no PR.
+  on_hold: |
+    No git action; record build complete in state only.
 
 last_action: |
-  Invocation 34: subagent_returned:verifier:01KSYJV0CORRVERIF00000001 (corrective, overall: pass).
-  Corrective verifier confirmed AC1-AC10 all pass. AC9 upgraded skip->pass.
-  Full gate: fmt clean, clippy 0 new warnings, test 536/536.
-  Decision record written: decisions/01KSYK8BUILDCOMPLETE83001.md.
-  Event emitted: 20260531T084500000Z-01KSYK8BUILDCOMPLETE83001.yaml.
-  Surfacing to user for commit + PR approval (Approve / Commit only / Hold).
+  Invocation 40: Verifier returned overall:PASS (AC1-AC10 all pass, gate green).
+  Wrote decision record 01KT0EBUILDCOMPLETE84001.md.
+  Recorded orchestrator_decided event 01KT0EORCHIDECIDE000000040.
+  Emitted surface_to_user for commit + PR approval.
 
 next_expected:
-  event: user_input_received
+  event: user_responded
   prompt_kind: completion_review
-  on_approve_commit_plus_pr: |
-    Dispatcher stages the five code/test files + .taniwha/kupu artefacts,
-    commits with the proposed commit message (includes Co-Authored-By trailer),
-    pushes feat/83-cli-palette, opens PR against main with the proposed PR body.
-  on_commit_only: |
-    Dispatcher stages and commits, pushes branch, no PR created.
-  on_hold: |
-    No git operations. Build marked complete in state. Awaiting further user direction.
+  on_response: |
+    Dispatcher executes the user's choice (commit+PR / commit-only / hold).
+    No further orchestrator invocation needed unless user selects Hold and
+    wants to resume later, or a follow-up re-raise surfaces post-PR.

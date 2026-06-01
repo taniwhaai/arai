@@ -1,0 +1,10 @@
+event_id: 01KT0AWAS1R3EP7THK89CW65KQ
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T00:55:58.497Z
+  filename: 20260601T005558497Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "design-doc", "handoff_id": "01KT0BDESIGNV8BRIEF000000001", "produced": ["design_doc.md"], "re_raise": false, "design_version_target": 6, "tier": "single_module", "module": "gateway-outcome-glyphs", "placement": "extend src/style.rs"}'

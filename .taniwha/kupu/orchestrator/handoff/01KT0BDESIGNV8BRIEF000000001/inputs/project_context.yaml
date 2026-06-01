@@ -1,0 +1,20 @@
+# Redacted project_context for the design-doc subagent (layout + conventions only).
+project_context:
+  language:
+    name: rust
+  repo_style:
+    kind: single_package
+    module_layout: "src/{module}.rs"
+    notes: |
+      Single Cargo crate at the repo root. Modules are flat .rs files under src/.
+      Tests live as `#[cfg(test)] mod tests { ... }` at the bottom of each source
+      file; cross-module integration tests go under tests/ and drive the built
+      binary via std::process::Command on env!("CARGO_BIN_EXE_arai").
+  conventions:
+    naming: snake
+    code_style_notes: |
+      rustfmt + clippy defaults. Result<T, String> for fallible library functions.
+      Doc comments on public items; avoid panics in library code.
+      Note: src/style.rs already exists (from issue #83) and exposes should_colorize
+      + ochre helpers (passage/error); reuse these for the ochre cross. std::io::IsTerminal
+      and std::env are available — no crate needed for TTY/locale detection.

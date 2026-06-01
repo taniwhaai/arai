@@ -1,0 +1,28 @@
+event_id: 01KT0BDESIGNV8BRIEF000000001
+kind: subagent_dispatched
+actor:
+  kind: orchestrator
+  invocation: 35
+timestamp:
+  iso: 2026-06-01T00:50:00.000Z
+  filename: 20260601T005000000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload:
+  role: design-doc
+  handoff_id: 01KT0BDESIGNV8BRIEF000000001
+  brief_version: 8
+  design_version_expected: 6
+  triggered_by: "build_kickoff:brief_v8:01KT0AFDKHQ79SP099Z9VW7W0D"
+  inputs:
+    - kind: brief
+      path: .taniwha/kupu/brief/v8.md
+    - kind: project_context
+      path: .taniwha/kupu/project_context.yaml
+    - kind: prior_design_version
+      path: .taniwha/kupu/design/v5.md
+  output_destination: .taniwha/kupu/orchestrator/handoff/01KT0BDESIGNV8BRIEF000000001/outputs/
+  key_decisions_delegated:
+    - tier declaration (expected single_module; agent must justify)
+    - module placement (extend style.rs vs new glyph.rs)
+    - public API names and signatures
+    - hook carve-out enforcement strategy

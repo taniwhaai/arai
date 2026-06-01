@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::intent::Severity;
 use crate::store::{Guardrail, Store};
-use crate::{audit, compliance, config, guardrails, prompt_collector, session, store};
+use crate::{audit, compliance, config, guardrails, prompt_collector, session, store, style};
 use serde_json::Value;
 use std::io::Read;
 
@@ -908,27 +908,47 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // the hookSpecificOutput + permissionDecision shape.
     let host = detect_host(&hook); // `hook` is in scope from handle_stdin_impl
 
+    // Gateway glyphs on the hook path: colorize=false ALWAYS (no ANSI colour
+    // ever emitted on the hook path — carve-out #1).  unicode derived from
+    // locale/env in the usual way; the glyph characters themselves are safe
+    // when piped.
+    let hook_unicode = style::should_use_unicode();
+    // Outcome for the additionalContext glyph: Block when deny, Warn when at
+    // least one matched rule has block/warn severity, Inform otherwise.
+    let ctx_outcome = if blocking {
+        style::Outcome::Block
+    } else {
+        match top_severity {
+            Severity::Block | Severity::Warn => style::Outcome::Warn,
+            Severity::Inform => style::Outcome::Inform,
+        }
+    };
+    let ctx_glyph = style::outcome_glyph(ctx_outcome, hook_unicode, false);
+    let prefixed_context = format!("{ctx_glyph} {context}");
+
     let response = match (result.event.as_str(), blocking) {
         ("PreToolUse", true) => {
-            let reason = deny_reason(&result.matched);
+            let raw_reason = deny_reason(&result.matched);
+            let block_glyph = style::outcome_glyph(style::Outcome::Block, hook_unicode, false);
+            let reason = format!("{block_glyph} {raw_reason}");
             match host {
-                Host::Grok => emit_grok_decision(false, Some(&reason), &context),
-                _ => emit_claude_decision(false, Some(&reason), &context),
+                Host::Grok => emit_grok_decision(false, Some(&reason), &prefixed_context),
+                _ => emit_claude_decision(false, Some(&reason), &prefixed_context),
             }
         }
         ("PreToolUse", false) => match host {
-            Host::Grok => emit_grok_decision(true, None, &context),
-            _ => emit_claude_decision(true, None, &context),
+            Host::Grok => emit_grok_decision(true, None, &prefixed_context),
+            _ => emit_claude_decision(true, None, &prefixed_context),
         },
         ("PostToolUse", _) => serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": format!("[Post-action review] {context}")
+                "additionalContext": format!("[Post-action review] {prefixed_context}")
             }
         }),
         _ => {
             // Default / unknown events fall back to Claude shape for safety
-            emit_claude_decision(true, None, &context)
+            emit_claude_decision(true, None, &prefixed_context)
         }
     };
 

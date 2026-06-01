@@ -1,0 +1,11 @@
+---
+schema_version: 1
+module: gateway-outcome-glyphs
+current_version: 1
+versions:
+  - version: 1
+    path: contracts/gateway-outcome-glyphs/v1.md
+    parent_design_version: 6
+    produced_by_handoff: 01KT0B51P5GZW77R4DJE63C9D9
+    promoted_at: "2026-06-01T01:15:00Z"
+    status: current
