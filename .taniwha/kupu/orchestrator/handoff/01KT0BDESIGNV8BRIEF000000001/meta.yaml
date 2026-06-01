@@ -1,0 +1,41 @@
+schema_version: 1
+handoff_id: 01KT0BDESIGNV8BRIEF000000001
+role: design-doc
+target_node: gateway-glyphs
+parent_brief_version: 8
+model: opus
+status: returned
+created_at:
+  iso: "2026-06-01T00:52:26.852Z"
+  filename: "20260601T005226852Z"
+dispatched_at:
+  iso: "2026-06-01T00:52:26.852Z"
+  filename: "20260601T005226852Z"
+returned_at:
+  iso: "2026-06-01T00:55:37.530Z"
+  filename: "20260601T005537530Z"
+outcome:
+  produced: [design_doc.md]
+  re_raise: false
+  tier: single_module
+  module: gateway-outcome-glyphs
+  placement: "extend src/style.rs (reuses #83 should_colorize + ochre)"
+  summary: "Design v6: outcome_glyph + should_use_unicode in style.rs; binding glyph set; hook colorize=false chars-only carve-out; --json glyph-free; audit-verify ✓/✗ untouched; AC1-AC10."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: brief.md
+    kind: brief
+    source_path: .taniwha/kupu/brief/v8.md
+  - filename: project_context.yaml
+    kind: project_context
+    note: redacted
+  - filename: design_v5_reference.md
+    kind: prior_design_version
+    note: style reference only
+expected_outputs:
+  - design_doc.md
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

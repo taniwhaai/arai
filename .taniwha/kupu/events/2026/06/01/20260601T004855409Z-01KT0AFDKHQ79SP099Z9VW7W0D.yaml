@@ -1,0 +1,10 @@
+event_id: 01KT0AFDKHQ79SP099Z9VW7W0D
+kind: build_started
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T00:48:55.409Z
+  filename: 20260601T004855409Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 8, "parent_brief_version": 7, "scope": "Issue #84 — gateway-derived outcome glyphs (bar+dot set) for Pre/Post; ASCII fallback; reuse #83 palette/gate; hook = glyph chars but no ANSI", "branch": "feat/84-gateway-glyphs", "note": "Follow-on to #83. Zero new dependency. Likely single_module. Full gate + subprocess tests; dispatcher eyeballs manual AC9 glyph legibility/ASCII fallback."}'

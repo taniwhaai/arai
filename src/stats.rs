@@ -527,15 +527,22 @@ fn print_compliance_section(rows: &[RuleCompliance], top: usize, col: bool) {
         "  {:>5} {:>6} {:>7} {:>7} {:>7}  rule",
         "fires", "obeyed", "ignored", "unclear", "ratio",
     );
+    let unicode = style::should_use_unicode();
     for r in rows.iter().take(top) {
         let ratio = match r.ratio {
             Some(v) => format!("{:>6.0}%", v * 100.0),
             None => "  —  ".to_string(),
         };
-        // Visual nudge for rules the model is routing around.
-        let flag = match r.ratio {
-            Some(v) if v < 0.6 && (r.obeyed + r.ignored) >= 2 => " ⚠",
-            _ => "",
+        // Visual nudge for rules the model is routing around — use the
+        // warned glyph in place of the generic ⚠.
+        let flag: String = match r.ratio {
+            Some(v) if v < 0.6 && (r.obeyed + r.ignored) >= 2 => {
+                format!(
+                    " {}",
+                    style::outcome_glyph(style::Outcome::Warn, unicode, col)
+                )
+            }
+            _ => String::new(),
         };
         let rule_line = format!(
             "  {:>5} {:>6} {:>7} {:>7} {:>7}  {} {}: {}{}",

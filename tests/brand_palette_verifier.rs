@@ -141,19 +141,33 @@ fn ac1_no_ansi_escape_literal_outside_style_rs() {
 
 #[test]
 fn ac1_hooks_rs_not_modified() {
-    // AC1/AC8: src/hooks.rs must not import or use the style module.
+    // AC1/AC8 (updated for PR #84): src/hooks.rs may import `style` for the
+    // gateway-glyph functions (outcome_glyph, should_use_unicode), but must
+    // still never contain ANSI escape literals — the glyph call-site is
+    // hard-coded with colorize=false so no colour bytes ever reach hook output.
     let hooks = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hooks.rs"),
     )
     .expect("read src/hooks.rs");
-    assert!(
-        !hooks.contains("crate::style") && !hooks.contains("use crate::style"),
-        "AC1/AC8: src/hooks.rs must not reference the style module"
-    );
+    // No raw ANSI escape literals in hooks.rs (the original carve-out stands).
     assert!(
         !hooks.contains("\\x1b") && !hooks.contains("\\033"),
         "AC1/AC8: src/hooks.rs must not contain ANSI escape literals"
     );
+    // The style colour-helper functions (structural, passage, dim, warn, error)
+    // must not be called from hooks.rs — only the glyph functions are allowed.
+    for colour_helper in &[
+        "style::structural",
+        "style::passage",
+        "style::dim",
+        "style::warn(",
+        "style::error(",
+    ] {
+        assert!(
+            !hooks.contains(colour_helper),
+            "AC1/AC8: src/hooks.rs must not call style colour helper {colour_helper}"
+        );
+    }
 }
 
 // ── AC2: NO_COLOR produces zero ANSI output ───────────────────────────────────
@@ -432,11 +446,20 @@ fn ac6_five_helper_set_closed_in_style_rs() {
         );
     }
 
-    // Count pub fn declarations — exactly 5 semantic helpers + should_colorize gate.
+    // Also assert the gateway-glyph functions added in PR #84 are present.
+    for gateway_fn in &["should_use_unicode", "outcome_glyph"] {
+        assert!(
+            style.contains(&format!("pub fn {gateway_fn}(")),
+            "AC6: style.rs must export pub fn {gateway_fn} (added in PR #84)"
+        );
+    }
+
+    // Count pub fn declarations — 5 semantic helpers + should_colorize gate
+    // + 2 gateway-glyph functions (should_use_unicode, outcome_glyph) added in PR #84.
     let pub_fn_count = style.matches("pub fn ").count();
     assert_eq!(
-        pub_fn_count, 6, // 5 helpers + should_colorize
-        "AC6: style.rs must have exactly 6 pub fn (5 helpers + should_colorize), found {pub_fn_count}"
+        pub_fn_count, 8, // 5 helpers + should_colorize + should_use_unicode + outcome_glyph
+        "AC6: style.rs must have exactly 8 pub fn (5 helpers + should_colorize + 2 glyph fns), found {pub_fn_count}"
     );
 }
 

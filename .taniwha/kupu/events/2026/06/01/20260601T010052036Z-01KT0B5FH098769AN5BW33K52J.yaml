@@ -1,0 +1,14 @@
+---
+schema_version: 1
+event_id: 01KT0B5FH098769AN5BW33K52J
+kind: orchestrator_decided
+timestamp_iso: 2026-06-01T01:00:52Z
+orchestrator_invocation: 37
+triggered_by: "user_input_received:design_doc_approval:01KT0B3J1WXN6V7TX9D558WBX0"
+action_taken: dispatch_subagent
+role: contract-derivation
+handoff_id: 01KT0B51P5GZW77R4DJE63C9D9
+decision_id: 01KT0B56QHN9JWXWZB7077PSM5
+summary: >
+  User approved design v6 (no notes). Dispatching contract-derivation for single
+  module gateway-outcome-glyphs. Handoff 01KT0B51P5GZW77R4DJE63C9D9.

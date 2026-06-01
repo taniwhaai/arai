@@ -1,0 +1,10 @@
+event_id: 01KT0B2B9W1Z202R5G4CKZ6YN7
+kind: design_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T00:59:15.644Z
+  filename: 20260601T005915644Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"design_version": 6, "parent_brief_version": 8, "tier": "single_module", "module": "gateway-outcome-glyphs", "placement": "extend src/style.rs", "source_handoff": "01KT0BDESIGNV8BRIEF000000001", "promotion_method": "verbatim cp + meta/project.yaml update (398 lines)"}'

@@ -1,0 +1,25 @@
+---
+schema_version: 1
+event_id: 01KT0BORCHIDECIDE000000036
+kind: orchestrator_decided
+timestamp_iso: "2026-06-01T01:00:00.000Z"
+orchestrator_invocation: 36
+triggered_by: "subagent_returned:design-doc:01KT0BDESIGNV8BRIEF000000001"
+
+summary: |
+  Design v6 (gateway-outcome glyphs, issue #84) returned from design-doc subagent
+  with no open questions. Tier: single_module. Module: outcome-glyphs in src/style.rs.
+  Emitting two sequenced actions: (1) write_artefact to promote v6 to canonical,
+  (2) surface_to_user for design approval before contract derivation.
+
+actions_emitted:
+  - sequence: 1
+    action: write_artefact
+    artefact_kind: design
+    source_path: ".taniwha/kupu/orchestrator/handoff/01KT0BDESIGNV8BRIEF000000001/outputs/design_doc.md"
+    destination_path: ".taniwha/kupu/design/v6.md"
+  - sequence: 2
+    action: surface_to_user
+    prompt_kind: design_doc_approval
+    mode: structured
+    question_count: 1

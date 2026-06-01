@@ -1,0 +1,85 @@
+module: gateway-outcome-glyphs
+contract_version: 1
+committed: false
+
+files_modified:
+  - path: src/style.rs
+    changes: |
+      Added Outcome enum (Block, Warn, Inform, Allow), should_use_unicode() function,
+      outcome_glyph(outcome, unicode, colorize) function. Added 26 unit tests covering
+      glyph mapping (unicode + ascii), ochre-only-on-blocked-cross-when-colorize,
+      and should_use_unicode precedence (all 7 contract sub-cases) serialised via
+      GLYPH_ENV_MUTEX.
+  - path: src/main.rs
+    changes: |
+      cmd_audit human render: added audit_entry_outcome() helper that derives Outcome
+      from decision field + rules[].severity; prefixes each audit row with outcome_glyph.
+      cmd_why human render: maps severity string to Outcome, prefixes each matched-rule
+      line with outcome_glyph. --json branches untouched. audit-chain ✓/✗ unchanged.
+  - path: src/stats.rs
+    changes: |
+      print_compliance_section: replaced hardcoded " ⚠" flag with
+      outcome_glyph(Outcome::Warn, should_use_unicode(), col). --json path untouched.
+  - path: src/hooks.rs
+    changes: |
+      Added crate::style to use list. handle_stdin_impl: added hook_unicode from
+      should_use_unicode(), prefixed deny_reason with Block glyph (colorize=false),
+      prefixed additionalContext (prefixed_context) with ctx_outcome glyph
+      (colorize=false — literal constant, carve-out 1 honoured). No colour helpers
+      called from hooks.rs.
+  - path: tests/brand_palette_verifier.rs
+    changes: |
+      ac6_five_helper_set_closed_in_style_rs: updated pub fn count assertion from 6 to 8
+      (5 helpers + should_colorize + should_use_unicode + outcome_glyph) and added
+      assertions for the two new function names.
+      ac1_hooks_rs_not_modified: updated to allow style import in hooks.rs (PR #84 scope)
+      while still asserting no ANSI escape literals and no colour-helper calls.
+
+files_created:
+  - path: tests/gateway_outcome_glyphs.rs
+    description: |
+      Subprocess integration tests (9 tests): ac4_audit_human_output_contains_glyph,
+      ac4_why_human_output_contains_glyph, ac2_arai_ascii_audit_glyph_is_ascii,
+      ac2_arai_ascii_why_glyph_is_ascii, ac6_hook_output_has_glyph_and_zero_ansi,
+      ac6_hook_output_arai_ascii_has_ascii_glyph_and_zero_ansi, ac7_audit_json_has_no_glyph,
+      ac7_why_json_has_no_glyph, ac7_stats_json_has_no_glyph. No new dependencies.
+
+gate_results:
+  cargo_fmt:
+    command: cargo fmt --all -- --check
+    exit_code: 0
+    status: pass
+  cargo_clippy:
+    command: cargo clippy --all-targets
+    exit_code: 0
+    new_warnings: 0
+    status: pass
+    note: 4 pre-existing warnings in other files (store.rs, sync_integration.rs,
+      verifier_base_directory_resolution.rs, prompt_collector_verifier.rs) — none
+      from changed files.
+  cargo_test:
+    command: cargo test
+    exit_code: 0
+    total_tests_passing: 555
+    new_tests_added: 35
+    status: pass
+
+summary: |
+  Implemented gateway-outcome-glyphs per contract v1. Added Outcome enum,
+  should_use_unicode() (locale-aware, TTY-independent, with ARAI_ASCII/NO_UNICODE
+  overrides), and outcome_glyph(outcome, unicode, colorize) (fixed binding table,
+  ochre on blocked cross only when unicode+colorize=true) to src/style.rs.
+
+  Applied at three call-site locations:
+  - src/main.rs: arai audit + arai why human renders each prefixed with outcome glyph
+  - src/stats.rs: ⚠ replaced with warned glyph in per-rule compliance section
+  - src/hooks.rs: deny reason + additionalContext prefixed with glyph, colorize=false
+    always (carve-out 1 honoured; no ANSI ever on hook path)
+
+  Hard carve-outs all honoured:
+  - --json paths: no glyph codepoints in any --json output
+  - audit-chain ✓/✗ markers: untouched
+  - hook path: colorize=false literal, no colour helpers called
+  - Cargo.toml: unchanged (zero new dependencies)
+
+  Full gate passed: fmt ✓, clippy (0 new warnings) ✓, test (555/555) ✓.

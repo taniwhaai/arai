@@ -1,0 +1,15 @@
+---
+schema_version: 1
+event_id: 01KT0BN0VZ472D5AH9BVHMHBTB
+kind: orchestrator_decided
+timestamp_iso: 2026-06-01T01:15:00Z
+orchestrator_invocation: 38
+triggered_by: "subagent_returned:contract-derivation:01KT0B51P5GZW77R4DJE63C9D9"
+action_taken: write_artefact + dispatch_subagent
+role: leaf-implementation
+handoff_id: 01KT0BMTR2H69NN8FD0MQWCVZ6
+decision_id: 01KT0BN0VZ472D5AH9BVHMHBTB
+summary: >
+  Contract for gateway-outcome-glyphs promoted to kupu/contracts/gateway-outcome-glyphs/v1.md.
+  Dispatching leaf-implementation subagent (handoff 01KT0BMTR2H69NN8FD0MQWCVZ6) for
+  single_module tier, design v6, issue #84.

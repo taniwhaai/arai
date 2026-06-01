@@ -946,6 +946,7 @@ fn cmd_audit(
 
     // Table view: one line per firing, rule names condensed.
     let col = style::should_colorize(style::Stream::Stdout);
+    let unicode = style::should_use_unicode();
     println!(
         "{}",
         style::structural(
@@ -971,9 +972,13 @@ fn cmd_audit(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let preview_short: String = preview.chars().take(50).collect();
+        // Derive outcome from the firing's decision field for the glyph.
+        let decision = e.get("decision").and_then(|v| v.as_str()).unwrap_or("");
+        let outcome = audit_entry_outcome(e, decision);
+        let glyph = style::outcome_glyph(outcome, unicode, col);
         let row = format!(
-            "{:<20} {:<13} {:<8} {:<7} {}",
-            ts, ev, tool, rule_count, preview_short
+            "{} {:<20} {:<13} {:<8} {:<7} {}",
+            glyph, ts, ev, tool, rule_count, preview_short
         );
         println!("{}", style::passage(&row, col));
     }
@@ -984,6 +989,41 @@ fn cmd_audit(
         cfg.project_slug()
     );
     Ok(())
+}
+
+/// Derive a [`style::Outcome`] from an audit-log entry for glyph selection.
+///
+/// `deny` decision → Block; otherwise inspect the highest severity among the
+/// attached rules.  `block`-severity rule but not denied (deny mode off) →
+/// Warn so the row still reads as notable.  `inform` alone → Inform.  No
+/// rules (empty match) → Allow.
+fn audit_entry_outcome(entry: &serde_json::Value, decision: &str) -> style::Outcome {
+    if decision == "deny" {
+        return style::Outcome::Block;
+    }
+    // Walk rules[] to find the highest severity among them.
+    let rules = entry
+        .get("rules")
+        .and_then(|v| v.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+    if rules.is_empty() {
+        return style::Outcome::Allow;
+    }
+    let mut top = style::Outcome::Inform;
+    for r in rules {
+        let sev = r
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("inform");
+        match sev {
+            "block" | "warn" => {
+                top = style::Outcome::Warn;
+            }
+            _ => {}
+        }
+    }
+    top
 }
 
 fn cmd_record(since: Option<String>, tool: Option<String>, limit: usize) -> Result<(), String> {
@@ -1581,6 +1621,7 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
     }
 
     let col = style::should_colorize(style::Stream::Stdout);
+    let unicode = style::should_use_unicode();
     println!(
         "  {}   {}",
         style::structural("tool:", col),
@@ -1615,6 +1656,12 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
                     intent::Severity::Inform => "inform",
                 }
             });
+        let outcome = match severity {
+            "block" => style::Outcome::Block,
+            "warn" => style::Outcome::Warn,
+            _ => style::Outcome::Inform,
+        };
+        let glyph = style::outcome_glyph(outcome, unicode, col);
         let src = if g.file_path.is_empty() {
             &g.source_file
         } else {
@@ -1626,7 +1673,7 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
             .map(|l| format!("  [{}]", audit::layer_label(l)))
             .unwrap_or_default();
         let rule_line = format!(
-            "  \u{2022} [{sev:6}] {subj} {pred}: {obj}  ({pct}% match){layer_suffix}",
+            "  {glyph} [{sev:6}] {subj} {pred}: {obj}  ({pct}% match){layer_suffix}",
             sev = severity,
             subj = g.subject,
             pred = g.predicate,

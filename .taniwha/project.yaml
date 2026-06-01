@@ -10,9 +10,9 @@ tools_registered:
 - kupu
 current_phase: phase-1
 brief:
-  current_version: 7
+  current_version: 8
 design:
-  current_version: 5
+  current_version: 6
 contracts:
   base-directory-resolution:
     current_version: 1

@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_id: 01KT0B51P5GZW77R4DJE63C9D9
+role: contract-derivation
+module: gateway-outcome-glyphs
+parent_design_version: 6
+model: sonnet
+status: returned
+created_at:
+  iso: "2026-06-01T01:04:43.794Z"
+  filename: "20260601T010443794Z"
+dispatched_at:
+  iso: "2026-06-01T01:04:43.794Z"
+  filename: "20260601T010443794Z"
+returned_at:
+  iso: "2026-06-01T01:07:58.943Z"
+  filename: "20260601T010758943Z"
+outcome:
+  produced: [contract-gateway-outcome-glyphs-v1.md]
+  re_raise: false
+  summary: "Single contract: should_use_unicode + outcome_glyph; binding glyph table; ochre-only-when-(Block+unicode+colorize); 3 hard carve-outs (hook colorize=false, --json glyph-free, audit-verify untouched); AC1-AC10 given/when/then (AC9 manual); AC10 full-gate verifier obligation."
+inputs:
+  - filename: task.md
+    kind: task
+  - filename: design_v6.md
+    kind: design_doc
+    source_path: .taniwha/kupu/design/v6.md
+  - filename: project_context.yaml
+    kind: project_context
+expected_outputs:
+  - contract-gateway-outcome-glyphs-v1.md
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 2

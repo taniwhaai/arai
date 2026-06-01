@@ -1,0 +1,42 @@
+---
+# Reduced project_context for leaf-implementation — language, toolchain commands,
+# repo style, and conventions. No design-doc content.
+
+project_context:
+  language:
+    name: rust
+    version: ">=1.75 (edition 2021)"
+  toolchain:
+    package_manager: cargo
+    formatter: rustfmt
+    linter: clippy
+    test_framework: cargo-test
+    cargo_path: "/home/matt/.cargo/bin/cargo"
+    commands:
+      test: cargo test
+      build: cargo build
+      format: cargo fmt --all
+      lint: cargo clippy --all-targets
+  repo_style:
+    kind: single_package
+    module_layout: "src/{module}.rs"
+    test_layout: alongside_source
+    notes: |
+      Single Cargo crate at the repo root (one Cargo.toml). Modules are flat
+      .rs files under src/ (config.rs, hooks.rs, parser.rs, etc.) — NOT
+      subdirectory-per-module. Tests live as `#[cfg(test)] mod tests { ... }`
+      blocks at the bottom of each source file. Cross-module integration
+      tests go under tests/ at the crate root.
+  conventions:
+    naming: snake
+    code_style_notes: |
+      Standard rustfmt + clippy defaults. Project standardises on
+      Result<T, String> for fallible library functions rather than custom
+      Error enums. Doc comments on public items; avoid panics in library code;
+      .unwrap() fine in tests.
+
+      One known caveat: rustc 1.95's dead-code liveness pass ICEs on
+      certain pub fn shapes in src/parser.rs (escaped quotes in match arms
+      returning &'static str). If a parser.rs change panics with
+      `#0 [check_mod_deathness] ... module 'parser'`, move the helper to
+      audit.rs or another module. Documented in CLAUDE.md.

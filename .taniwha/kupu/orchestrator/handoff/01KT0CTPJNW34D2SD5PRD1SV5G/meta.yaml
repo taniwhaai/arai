@@ -1,0 +1,18 @@
+---
+handoff_id: 01KT0CTPJNW34D2SD5PRD1SV5G
+role: verifier
+module: gateway-outcome-glyphs
+contract_version: 1
+dispatched_at: "2026-06-01T01:33:53.748Z"
+branch: feat/84-gateway-glyphs
+status: returned
+returned_at: "2026-06-01T01:40:00.000Z"
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: pass
+  acs: "AC1-AC10 all pass (AC9 manual — dispatcher eyeballed)"
+  tests_added: [tests/gateway_glyphs_verifier.rs]
+  gate: "fmt pass; clippy 0 new; cargo test 584/584; Cargo.toml unchanged"
+  key_findings: "hooks.rs L926/932 literal false → hook zero-ANSI under CLICOLOR_FORCE=1; --json glyph-free; ochre only when colorize; ⚠ only in a comment; leaf's brand_palette_verifier.rs edits correct (8 pub fn; hooks test allows style import but still asserts zero ANSI + zero colour-helper calls)."
+prior_leaf_handoff_id: 01KT0BMTR2H69NN8FD0MQWCVZ6

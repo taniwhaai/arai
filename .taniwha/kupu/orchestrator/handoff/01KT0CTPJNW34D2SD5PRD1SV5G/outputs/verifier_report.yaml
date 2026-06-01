@@ -1,0 +1,173 @@
+overall: pass
+
+gate:
+  fmt: pass
+  clippy: pass
+  test: pass
+  cargo_toml_unchanged: pass
+
+per_ac:
+  ac1: pass
+  ac2: pass
+  ac3: pass
+  ac4: pass
+  ac5: pass
+  ac6: pass
+  ac7: pass
+  ac8: pass
+  ac9: pass
+  ac10: pass
+
+evidence:
+  ac1: |
+    Code inspection of src/style.rs confirmed all four Outcome values are handled in
+    outcome_glyph() with the exact codepoints from the contract binding table:
+    Unicode blocked ●·│✕ (\u{25CF}\u{00B7}\u{2502}\u{2715}), allowed │●│ (\u{2502}\u{25CF}\u{2502}),
+    warned ●·│ (\u{25CF}\u{00B7}\u{2502}). ASCII forms o.|x, |o|, o.| are present as
+    string literals. Warn and Inform both map to the warned glyph (same arm in the match).
+    No outcome returns empty string — the match is exhaustive and Rust's type system enforces
+    totality. Subprocess tests ac1_outcome_glyph_unicode_mapping_block_warn_inform_allow and
+    ac1_outcome_glyph_ascii_mapping_all_outcomes both pass. All ASCII glyph bytes confirmed
+    <= 0x7F in ac2_ascii_glyph_bytes_all_7bit_clean.
+
+  ac2: |
+    Code inspection of should_use_unicode() in src/style.rs confirmed the exact precedence
+    chain: ARAI_ASCII (non-empty) → false; NO_UNICODE (non-empty) → false; then locale
+    priority LC_ALL > LC_CTYPE > LANG (first non-empty wins); missing/empty locale vars →
+    false. No IsTerminal or isatty call is present in the function body (confirmed by
+    ac2_tty_independence_verified_by_code_inspection test). The function only reads
+    std::env::var(). Tests ac2_arai_ascii_forces_ascii_output, ac2_no_unicode_forces_ascii_output,
+    ac2_lc_all_utf8_produces_unicode_glyphs, ac2_ascii_glyph_bytes_all_7bit_clean all pass.
+    Implementor's co-located unit tests (7 sub-cases in style.rs) also pass.
+
+  ac3: |
+    Manual eyeball: the Unicode forms ●·│✕ (blocked), │●│ (allowed), ●·│ (warned) are
+    visually distinct and the gateway metaphor is legible. Blocked has the dot outside-left
+    and a cross outside-right (heaviest, 4 characters). Allowed has the dot centered between
+    two uprights (lightest feel). Warned has the dot adjacent but the cross is absent
+    (dot waiting to enter). ASCII forms o.|x / |o| / o.| maintain the same spatial layout
+    in 7-bit characters. Visual weight matches severity. Test ac3_glyph_literals_match_contract_table
+    confirms the exact strings match the contract table.
+
+  ac4: |
+    Subprocess tests ac4_audit_human_shows_blocked_glyph and ac4_why_human_shows_blocked_glyph
+    both pass: a seeded Block-severity guardrail triggers via `guardrails --match-stdin`,
+    then arai audit and arai why each produce output containing at least one gateway glyph.
+    Code inspection of src/main.rs: cmd_audit calls outcome_glyph(outcome, unicode, col)
+    at line 978 and prefixes each row with it; cmd_why calls outcome_glyph(outcome, unicode, col)
+    at line 1664 for each matched rule. The --json branches are separate and untouched
+    (confirmed by ac4_audit_json_has_no_glyph and ac4_why_json_has_no_glyph which pass).
+
+  ac5: |
+    Code inspection of src/stats.rs print_compliance_section: the ⚠ literal appears only
+    in a comment (// Visual nudge ... in place of the generic ⚠.) — it is not emitted.
+    The actual flag code calls style::outcome_glyph(style::Outcome::Warn, unicode, col)
+    (confirmed at lines 541-543). Test ac5_stats_rs_uses_outcome_glyph_not_warning_sign
+    confirms the outcome_glyph(Warn,...) call exists and that ⚠ does not appear in any
+    non-comment code line in the function body. The --json path in stats::run() is untouched
+    (no glyph calls on that branch). Test ac5_stats_human_shows_warned_glyph_not_warning_sign
+    (stats --json glyph-free) passes.
+
+  ac6: |
+    Three subprocess tests pass:
+    - ac6_hook_output_contains_glyph_and_zero_ansi: a Block-triggering payload piped to
+      guardrails --match-stdin produces output containing a glyph AND zero 0x1B bytes.
+    - ac6_hook_output_with_clicolor_force_still_zero_ansi: CLICOLOR_FORCE=1 AND piped →
+      hook output STILL contains zero ANSI bytes. This is the critical carve-out #1 test.
+    - ac6_hook_output_arai_ascii_glyph_all_7bit: ARAI_ASCII=1 → all bytes <= 0x7F.
+    Code inspection (ac6_hooks_rs_colorize_is_literal_false): ALL outcome_glyph calls in
+    src/hooks.rs use literal `false` as the colorize argument — specifically:
+      line 926: style::outcome_glyph(ctx_outcome, hook_unicode, false)
+      line 932: style::outcome_glyph(style::Outcome::Block, hook_unicode, false)
+    The third argument is a hard-coded literal `false`, not a variable from should_colorize.
+    No colour helper functions (structural, passage, dim, warn, error) are called from hooks.rs.
+    The brand_palette_verifier.rs tests were updated by the implementor (ac1_hooks_rs_not_modified
+    and ac6_five_helper_set_closed_in_style_rs updated to allow style import + 8 pub fns).
+    The original invariant (zero ANSI in hook output under CLICOLOR_FORCE=1) is still enforced
+    by ac8_hook_stdin_with_clicolor_force_zero_esc in that file, which passes.
+
+  ac7: |
+    Tests ac7_audit_json_no_glyph, ac7_why_json_no_glyph, ac7_stats_json_no_glyph all run
+    under CLICOLOR_FORCE=1 and confirm that no glyph codepoint (●·│✕ or o.|x/|o|/o.|)
+    appears in any JSON field value. JSON is recursively walked. The --json branches in
+    cmd_audit, cmd_why, and stats::run() route through serde_json serialisation of structured
+    data that never touches outcome_glyph. The carve-out is structural, not conditional.
+
+  ac8: |
+    Code inspection of outcome_glyph in src/style.rs: the Block+unicode=true branch uses
+    `if colorize { passage("\u{2715}", true) } else { "\u{2715}".to_string() }`, so colour
+    bytes appear only when colorize=true. Tests:
+    - ac8_style_rs_block_unicode_colorize_true_has_ansi: confirms passage() is called and
+      the colorize gate is present in the function body.
+    - ac8_block_unicode_colorize_false_no_ansi_in_output: hook path (colorize=false always)
+      produces no ANSI bytes even with LC_ALL=en_US.UTF-8.
+    - ac8_hooks_rs_no_colour_helpers_called: no colour helper calls or ANSI literals in hooks.rs.
+    - ac8_no_color_env_suppresses_ochre_in_human_output: NO_COLOR=1 → audit output has zero
+      ANSI bytes (should_colorize returns false → col=false → outcome_glyph(x, y, false)).
+    The ASCII blocked form (o.|x) never carries colour in any circumstance — confirmed by
+    the match arm `(Outcome::Block, false) => "o.|x".to_string()` with no colorize branch.
+
+  ac9: |
+    Manual eyeball of the four glyph forms: they are visually distinct and unambiguous.
+    ● (U+25CF, BLACK CIRCLE) is heavier than | (U+007C, VERTICAL LINE) for the gateway
+    uprights. The spatial metaphors read naturally in fixed-width context. Weight matches
+    severity: blocked (●·│✕) is heaviest with the cross; warned (●·│) is medium with the
+    dot adjacent to the gate; allowed (│●│) is lightest with the dot passing through.
+    Test ac9_glyph_forms_are_all_distinct confirms all forms are pairwise non-equal and
+    that the blocked form has the most characters (heaviest weight).
+
+  ac10: |
+    Gate results (run independently):
+    - cargo fmt --all -- --check: exit 0 (clean after formatting verifier test file only;
+      production src/*.rs files were already clean)
+    - cargo clippy --all-targets: exit 0 with 0 new warnings from changed files; 4 pre-existing
+      warnings in store.rs, sync_integration.rs, verifier_base_directory_resolution.rs,
+      prompt_collector_verifier.rs — unchanged from baseline
+    - cargo test: 584 tests pass, 0 failed
+    - git diff origin/main -- Cargo.toml: no output (no diff; Cargo.toml unchanged)
+    Verifier added 29 new tests in tests/gateway_glyphs_verifier.rs; no new dependency.
+
+findings: []
+
+tests_added:
+  file: tests/gateway_glyphs_verifier.rs
+  count: 29
+  names:
+    - ac1_style_rs_contains_contract_glyph_literals
+    - ac1_outcome_glyph_unicode_mapping_block_warn_inform_allow
+    - ac1_outcome_glyph_ascii_mapping_all_outcomes
+    - ac2_arai_ascii_forces_ascii_output
+    - ac2_no_unicode_forces_ascii_output
+    - ac2_lc_all_utf8_produces_unicode_glyphs
+    - ac2_ascii_glyph_bytes_all_7bit_clean
+    - ac2_tty_independence_verified_by_code_inspection
+    - ac3_glyph_literals_match_contract_table
+    - ac4_audit_human_shows_blocked_glyph
+    - ac4_why_human_shows_blocked_glyph
+    - ac4_audit_json_has_no_glyph
+    - ac4_why_json_has_no_glyph
+    - ac5_stats_rs_uses_outcome_glyph_not_warning_sign
+    - ac5_stats_human_shows_warned_glyph_not_warning_sign
+    - ac6_hook_output_contains_glyph_and_zero_ansi
+    - ac6_hook_output_with_clicolor_force_still_zero_ansi
+    - ac6_hook_output_arai_ascii_glyph_all_7bit
+    - ac6_hooks_rs_colorize_is_literal_false
+    - ac7_audit_json_no_glyph
+    - ac7_why_json_no_glyph
+    - ac7_stats_json_no_glyph
+    - ac8_style_rs_block_unicode_colorize_true_has_ansi
+    - ac8_block_unicode_colorize_false_no_ansi_in_output
+    - ac8_hooks_rs_no_colour_helpers_called
+    - ac8_no_color_env_suppresses_ochre_in_human_output
+    - ac9_glyph_forms_are_all_distinct
+    - ac10_cargo_toml_no_new_deps
+    - ac10_style_rs_no_new_imports
+
+recommendation: |
+  Implementation satisfies all AC1–AC10 acceptance criteria. All three hard carve-outs
+  are honoured: hook path passes literal false to colorize (carve-out #1), no --json
+  branch routes through outcome_glyph (carve-out #2), and the audit-chain ✓/✗ markers
+  in src/main.rs are untouched (carve-out #3). The brand_palette_verifier.rs updates
+  are appropriate: the style import in hooks.rs is allowed (only glyph functions are
+  called, not colour helpers), and the pub fn count increase from 6 to 8 reflects the
+  two new functions correctly. Ready to mark current.
