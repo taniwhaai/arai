@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-06-01
+
+### Added
+
+- *(extends)* Add @sha256 pinning, ed25519 sidecar signing, and tier provenance ([#29](https://github.com/taniwhaai/arai/pull/29))
+- *(style)* Add pounamu/ochre semantic colour palette for CLI output ([#83](https://github.com/taniwhaai/arai/pull/83))
+- *(style)* Add gateway outcome glyphs for blocked/allowed/warned ([#84](https://github.com/taniwhaai/arai/pull/84))
+- *(copy-tone)* Retune user-facing strings to restrained-declarative register ([#85](https://github.com/taniwhaai/arai/pull/85))
+
+
 ## [0.2.27] - 2026-05-29
 
 ### Added
