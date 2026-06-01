@@ -1,0 +1,13 @@
+schema_version: 1
+event_id: 01KT12ZWEC9ORCHDECIDE045
+kind: orchestrator_decided
+timestamp_iso: "2026-06-01T08:05:00.000Z"
+invocation: 45
+triggered_by: "subagent_returned:leaf-implementation:01KT11YFKQZDZT37B6H0381XXY"
+decision: |
+  Leaf copy-tone-audit returned successfully (event 01KT12XMYEV4450DZ2QB314SAR).
+  No re-raise. Gate green (fmt clean, clippy 0 new, cargo test 18 suites all green).
+  Dispatching verifier (handoff 01KT12ZWEC9R7HJE7PEMG59MG0) to verify AC1-AC10
+  against real diff and code on branch feat/85-copy-tone.
+next_action: dispatch_subagent
+next_handoff: 01KT12ZWEC9R7HJE7PEMG59MG0

@@ -1,0 +1,34 @@
+schema_version: 1
+handoff_id: 01KT14REVERIFY000000000001
+role: verifier
+module: copy-tone-audit
+parent_contract_version: 1
+model: sonnet
+status: returned
+corrective: true
+reason: "Re-verify after AC6 glossary-consistency corrective leaf 01KT13QCORRLEAF00000001."
+outcome:
+  produced: [verifier_report.yaml]
+  re_raise: false
+  overall: pass
+  acs: "AC1-AC10 all pass"
+  gate: "fmt clean; clippy 6 pre-existing (0 new); cargo test 584/0; Cargo.toml/lock unchanged"
+  nits_resolved: "all 4 prior AC6 categories cleared; grep 'Failed to' src/ = 0 tree-wide; 'guardrails' only the command name"
+created_at:
+  iso: "2026-06-01T08:23:19.201Z"
+  filename: "20260601T082319201Z"
+dispatched_at:
+  iso: "2026-06-01T08:23:19.201Z"
+  filename: "20260601T082319201Z"
+inputs:
+  - filename: contract-copy-tone-audit-v1.md
+    kind: contract
+  - filename: project_context.yaml
+    kind: project_context
+  - filename: prior_verifier_report.yaml
+    kind: prior_verifier_report
+expected_outputs:
+  - verifier_report.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

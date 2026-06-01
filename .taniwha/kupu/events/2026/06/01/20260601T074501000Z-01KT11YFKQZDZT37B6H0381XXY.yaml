@@ -1,0 +1,20 @@
+---
+schema_version: 1
+event_id: 01KT11YFKQZDZT37B6H0381XXY
+kind: subagent_dispatched
+timestamp_iso: "2026-06-01T07:45:01.000Z"
+orchestrator_invocation: 44
+payload:
+  role: leaf-implementation
+  handoff_id: 01KT11YFKQZDZT37B6H0381XXY
+  module: copy-tone-audit
+  contract_version: 1
+  model: claude-sonnet-4-6
+  inputs:
+    - kind: contract
+      path: kupu/orchestrator/handoff/01KT11YFKQZDZT37B6H0381XXY/inputs/contract-copy-tone-audit-v1.md
+    - kind: project_context
+      path: kupu/orchestrator/handoff/01KT11YFKQZDZT37B6H0381XXY/inputs/project_context.yaml
+  output_destination: kupu/orchestrator/handoff/01KT11YFKQZDZT37B6H0381XXY/outputs/
+  expected_outputs:
+    - implementation_bundle

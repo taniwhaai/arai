@@ -1,0 +1,10 @@
+event_id: 01KT0RAWPNVJ4S49WHAHBZ7FXT
+kind: build_started
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T04:51:07.093Z
+  filename: 20260601T045107093Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 9, "parent_brief_version": 8, "scope": "Issue #85 — copy-tone audit; restrained-declarative register for user-facing strings (hooks/init/errors/command prose + light README); self-reference glossary; behaviour unchanged", "branch": "feat/85-copy-tone", "note": "Editorial retune (last Taniwha-able backlog issue). Builds on #83/#84 (merged). CRITICAL: update string-asserting tests in lockstep. No new dependency. Dispatcher eyeballs subjective register ACs."}'

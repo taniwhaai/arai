@@ -86,7 +86,7 @@ pub struct ScenarioResult {
 /// set.  Returns one result per scenario.
 pub fn run_file(path: &Path, cfg: &Config, db: &Store) -> Result<Vec<ScenarioResult>, String> {
     let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read scenario file {}: {e}", path.display()))?;
+        .map_err(|e| format!("Could not read scenario file {}: {e}", path.display()))?;
     let file: ScenarioFile =
         serde_json::from_str(&content).map_err(|e| format!("Invalid scenario JSON: {e}"))?;
 
@@ -162,7 +162,7 @@ pub fn run(path: &Path, json: bool) -> Result<(), String> {
     let db_path = cfg.db_path();
     if !db_path.exists() {
         return Err(
-            "No guardrail database found.  Run `arai init` first before running scenario tests."
+            "No rule database found.  Run `arai init` first before running scenario tests."
                 .to_string(),
         );
     }

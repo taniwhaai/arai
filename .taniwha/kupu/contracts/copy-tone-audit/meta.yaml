@@ -1,0 +1,11 @@
+---
+schema_version: 1
+module: copy-tone-audit
+current_version: 1
+versions:
+  - version: 1
+    path: v1.md
+    parent_design_version: 7
+    derived_from_handoff: 01KT11CONTRACTDERIVE00001
+    written_at: "2026-06-01T07:38:23.915Z"
+    status: current

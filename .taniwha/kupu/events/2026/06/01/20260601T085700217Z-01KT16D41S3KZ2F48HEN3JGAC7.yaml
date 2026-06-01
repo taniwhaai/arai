@@ -1,0 +1,10 @@
+event_id: 01KT16D41S3KZ2F48HEN3JGAC7
+kind: build_completed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T08:57:00.217Z
+  filename: 20260601T085700217Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"brief_version": 9, "issue_ref": "85", "tier": "single_module", "module": "copy-tone-audit", "verifier": "pass (AC1-AC10, after 1 corrective sub-cycle for glossary consistency)", "no_new_dependency": true, "pr": "https://github.com/taniwhaai/arai/pull/142", "tests": "584/584", "note": "Last Taniwha-able backlog issue. docs/voice.md now the canonical voice reference."}'

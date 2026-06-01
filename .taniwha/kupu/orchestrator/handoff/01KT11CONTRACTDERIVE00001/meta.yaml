@@ -1,0 +1,30 @@
+---
+schema_version: 1
+handoff_id: 01KT11CONTRACTDERIVE00001
+role: contract-derivation
+model: sonnet
+module: copy-tone-audit
+parent_design_version: 7
+status: returned
+dispatched_at: "2026-06-01T07:34:20.071Z"
+returned_at: "2026-06-01T07:38:06.207Z"
+outcome:
+  produced: [contract-copy-tone-audit-v1.md]
+  re_raise: false
+  summary: "Single contract: VoiceSpec (6 rules) + glossary + before/after exemplars (committed); 6 hard constraints (HC1-6); AC1-AC10 given/when/then; verifier obligations checklist (voice review vs docs/voice.md, full gate, lockstep grep, JSON/colour/glyph diff, Cargo.toml unchanged)."
+created_at:
+  iso: 2026-06-01T07:30:31Z
+  filename: 20260601T073031000Z
+triggered_by_decision: 01KT11DESIGNAPPROVE85001
+triggered_by_event: 01KT11CZSF25SMP4P1D98ABF8Y
+inputs:
+  - kind: design_doc
+    source_path: kupu/design/v7.md
+    copied_to: inputs/design_v7.md
+  - kind: project_context
+    source_path: kupu/project_context.yaml
+    copied_to: inputs/project_context.yaml
+expected_outputs:
+  - kind: contract
+    filename: contract-copy-tone-audit-v1.md
+    destination: kupu/contracts/copy-tone-audit/v1.md

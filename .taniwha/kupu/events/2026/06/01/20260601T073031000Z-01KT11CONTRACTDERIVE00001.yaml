@@ -1,0 +1,10 @@
+event_id: 01KT11CONTRACTDERIVE00001
+kind: subagent_dispatched
+actor:
+  kind: orchestrator
+  invocation: 43
+timestamp:
+  iso: 2026-06-01T07:30:31Z
+  filename: 20260601T073031000Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "contract-derivation", "handoff_id": "01KT11CONTRACTDERIVE00001", "module": "copy-tone-audit", "design_version": 7, "model": "claude-sonnet-4-6", "triggered_by_decision": "01KT11DESIGNAPPROVE85001"}'

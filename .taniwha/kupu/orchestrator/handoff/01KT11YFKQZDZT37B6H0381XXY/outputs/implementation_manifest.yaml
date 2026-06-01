@@ -1,0 +1,145 @@
+---
+module: copy-tone-audit
+committed: false
+implementor: leaf-implementation subagent
+
+files_created:
+  - docs/voice.md
+
+files_modified:
+  - src/hooks.rs
+  - src/guardrails.rs
+  - src/init.rs
+  - src/main.rs
+  - src/stats.rs
+  - src/store.rs
+  - src/upgrade.rs
+  - src/extends.rs
+  - README.md
+
+notable_before_after_changes:
+  - surface: src/hooks.rs — deny fallback
+    before: '"Arai: blocking rule matched"'
+    after:  '"Arai: a rule blocked this action."'
+    occurrences: 3 (deny_reason fn, emit_grok_decision, emit_claude_decision)
+
+  - surface: src/hooks.rs — internal error
+    before: '"Arai: internal error, blocking for safety"'
+    after:  '"Arai: an internal error occurred; blocking this action."'
+    occurrences: 2 (Grok path, Claude/Unknown path)
+
+  - surface: src/hooks.rs — UserPromptSubmit summary
+    before: '"Arai: {} active guardrail(s) for: {}. Rules will fire on relevant tool calls."'
+    after:  '"Arai: {} active rule(s) for: {}. Rules fire on relevant tool calls."'
+
+  - surface: src/hooks.rs — PostToolUse prefix
+    before: '"[Post-action review] {prefixed_context}"'
+    after:  '"[Post-action] {prefixed_context}"'
+
+  - surface: src/hooks.rs — stdin read error
+    before: '"Failed to read stdin: {e}"'
+    after:  '"Could not read stdin: {e}"'
+
+  - surface: src/guardrails.rs — additionalContext header
+    before: '"Arai guardrails:"'
+    after:  '"Arai rules:"'
+
+  - surface: src/init.rs — init footer
+    before: '"Done. Arai is now watching your rules (Claude + Grok TUI)."'
+    after:  '"Arai is enforcing this project'\''s rules (Claude Code and Grok TUI)."'
+
+  - surface: src/init.rs — deinit footer
+    before: '"Arai is no longer watching this project."'
+    after:  '"Arai is no longer enforcing this project'\''s rules."'
+
+  - surface: src/init.rs — settings read/write/parse/serialize/create errors
+    before: '"Failed to {read|write|parse|serialize|create} ..."'
+    after:  '"Could not {read|write|parse|serialize|create} ..."'
+    occurrences: 9
+
+  - surface: src/main.rs — guardrails command empty state
+    before: '"No guardrails found. Run `arai init` first."'
+    after:  '"No rules found. Run `arai init` first."'
+
+  - surface: src/main.rs — add command parse failure
+    before: '"Could not extract a guardrail from: ..."'
+    after:  '"Could not extract a rule from: ..."'
+
+  - surface: src/main.rs — add command hint
+    before: '"Try phrasing it as an imperative (e.g. \"Never force-push to main\")"'
+    after:  '"Phrase it as an imperative, e.g. \"Never force-push to main\"."'
+
+  - surface: src/main.rs — audit empty state
+    before: '"No audit entries.  Rules haven'\''t fired yet, or filters excluded everything."'
+    after:  '"No audit entries.  No rules have fired yet, or the filters excluded everything."'
+
+  - surface: src/main.rs — lint/diff file read errors
+    before: '"Failed to read {path}: {e}"'
+    after:  '"Could not read {path}: {e}"'
+    occurrences: 2
+
+  - surface: src/stats.rs — stats empty state
+    before: '"No audit entries.  Rules haven'\''t fired yet, or --since excluded everything."'
+    after:  '"No audit entries.  No rules have fired yet, or --since excluded everything."'
+
+  - surface: src/store.rs — DB open path errors
+    before: '"Failed to {create DB directory|open database|set PRAGMAs|run migrations}: {e}"'
+    after:  '"Could not {create DB directory|open database|set PRAGMAs|run migrations}: {e}"'
+    occurrences: 4
+
+  - surface: src/upgrade.rs — upgrade errors
+    before: '"Failed to {set permissions|backup current binary|replace binary|read input|fetch version|parse GitHub API response|download}: {e}"'
+    after:  '"Could not {set permissions|back up current binary|replace binary|read input|fetch version|parse GitHub API response|download}: {e}"'
+    occurrences: 7
+
+  - surface: src/extends.rs — trust file write errors
+    before: '"Failed to {create trust dir|encode trust file|write trust file}: {e}"'
+    after:  '"Could not {create trust dir|encode trust file|write trust file}: {e}"'
+    occurrences: 3
+
+  - surface: README.md — intro/tagline
+    before: '"Instruction files that actually work." + friendly devtool blurb'
+    after:  Restrained-declarative single sentence stating what Arai is and does.
+
+tests_updated_in_lockstep:
+  note: Grep of all tests for every changed string literal returned zero matches.
+        No test in tests/ or any #[cfg(test)] block asserts on any string modified
+        by this retune. The lockstep obligation is satisfied — no test assertions
+        needed updating.
+
+gate_results:
+  cargo_fmt_all: PASS (no formatting errors; ran in-place)
+  cargo_clippy_all_targets: PASS (no new warnings; two pre-existing warnings in
+                                   src/store.rs test blocks are unchanged)
+  cargo_test: PASS (18 test suites, all green; no failures)
+  test_suite_counts:
+    - src lib: 410 passed
+    - hooks_safety: 30 passed
+    - brand_palette_verifier: 11 passed
+    - gateway_glyphs_verifier: 29 passed
+    - gateway_outcome_glyphs: 9 passed
+    - other suites: all green
+
+notes_on_ac_satisfaction:
+  AC1: docs/voice.md created with VoiceSpec (6 rules) and SelfReferenceGlossary
+       (5-row table) verbatim.
+  AC2: src/hooks.rs deny strings retuned — fallback and internal-error text updated,
+       glyph/colour wrappers untouched, JSON keys unchanged.
+  AC3: src/init.rs init footer and deinit footer retuned; all "Failed to" → "Could not".
+  AC4: "Failed to" → "Could not" across hooks.rs, init.rs, main.rs, store.rs,
+       upgrade.rs, extends.rs. Internal-only strings confirmed untouched.
+  AC5: Main.rs "No guardrails found" → "No rules found"; audit/stats empty-state
+       wording calmed. stats.rs header "Arai stats" already sentence case.
+  AC6: "guardrail" replaced with "rule" in user-facing text; "Arai" used consistently;
+       "watching" replaced with "enforcing". No "we", "I", "the user", "the agent".
+  AC7: README intro/tagline replaced with restrained-declarative statement.
+       Deeper doc work flagged as follow-on.
+  AC8: No logic, control-flow, exit-code, or JSON key/enum changes. Colour and glyph
+       code in style.rs and hooks.rs untouched.
+  AC9: Zero test assertions on changed strings — confirmed by grep. Gate green.
+  AC10: cargo fmt + clippy + test all pass. Cargo.toml and Cargo.lock unchanged.
+
+follow_on_note: |
+  README.md has extensive additional sections (How It Works, Supported Instruction Files,
+  Architecture, etc.) written in a friendly-devtool voice. These are outside the intro/tagline
+  scope of this retune and are flagged for a deeper doc-voice pass as a follow-on task.

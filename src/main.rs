@@ -532,7 +532,7 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
     } else {
         let col = style::should_colorize(style::Stream::Stdout);
         if rules.is_empty() {
-            println!("No guardrails found. Run `arai init` first.");
+            println!("No rules found. Run `arai init` first.");
             return Ok(());
         }
         for r in &rules {
@@ -637,7 +637,7 @@ fn cmd_add(rule: &str) -> Result<(), String> {
 
     if triples.is_empty() {
         return Err(format!(
-            "Could not extract a guardrail from: \"{rule}\"\nTry phrasing it as an imperative (e.g. \"Never force-push to main\")"
+            "Could not extract a rule from: \"{rule}\"\nPhrase it as an imperative, e.g. \"Never force-push to main\"."
         ));
     }
 
@@ -933,7 +933,7 @@ fn cmd_audit(
             // Still valid — just an empty stream.
             return Ok(());
         }
-        println!("No audit entries.  Rules haven't fired yet, or filters excluded everything.");
+        println!("No audit entries.  No rules have fired yet, or the filters excluded everything.");
         return Ok(());
     }
 
@@ -1034,7 +1034,7 @@ fn cmd_record(since: Option<String>, tool: Option<String>, limit: usize) -> Resu
 
 fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let triples = parser::extract_rules(&content, "lint", 0.90);
 
     if json {
@@ -1210,7 +1210,7 @@ fn cmd_severity(
     let cfg = config::Config::load()?;
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Err("No guardrail database found.  Run `arai init` first.".to_string());
+        return Err("No rule database found.  Run `arai init` first.".to_string());
     }
     let db = store::Store::open(&db_path)?;
 
@@ -1334,12 +1334,12 @@ fn cmd_diff(path: &str, json: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Err("No guardrail database found.  Run `arai init` first.".to_string());
+        return Err("No rule database found.  Run `arai init` first.".to_string());
     }
     let db = store::Store::open(&db_path)?;
 
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
 
     // Extract from the candidate content.  Use the same "lint" source-type
     // tag the lint command does so domain bookkeeping stays consistent.
@@ -1556,7 +1556,7 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
     let cfg = config::Config::load()?;
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Err("No guardrail database found.  Run `arai init` first.".to_string());
+        return Err("No rule database found.  Run `arai init` first.".to_string());
     }
     let db = store::Store::open(&db_path)?;
 

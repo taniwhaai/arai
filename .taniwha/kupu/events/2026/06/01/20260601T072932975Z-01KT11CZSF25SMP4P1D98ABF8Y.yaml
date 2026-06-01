@@ -1,0 +1,10 @@
+event_id: 01KT11CZSF25SMP4P1D98ABF8Y
+kind: user_input_received
+actor:
+  kind: user
+  name: matt
+timestamp:
+  iso: 2026-06-01T07:29:32.975Z
+  filename: 20260601T072932975Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"prompt_kind": "design_doc_approval", "design_version": 7, "selected": "Approve", "response_path": ".taniwha/kupu/orchestrator/handoff/user-input-01KT11C8GYX2AHFHAD067AY5CT/inputs/response.yaml"}'

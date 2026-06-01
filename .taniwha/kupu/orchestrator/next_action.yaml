@@ -1,161 +1,181 @@
 ---
 schema_version: 1
-orchestrator_invocation: 40
-generated_at: "2026-06-01T02:00:00Z"
-triggered_by: "subagent_returned:verifier:01KT0CTPJNW34D2SD5PRD1SV5G"
+orchestrator_invocation: 48
+generated_at: "2026-06-01T08:35:00Z"
+triggered_by: "subagent_returned:verifier:01KT14REVERIFY000000000001"
 
-# Brief v8 / issue #84 — gateway-derived outcome glyphs
-# Verifier returned overall: PASS (all AC1-AC10 pass).
-# Single_module tier complete. Decision record written.
-# Surface to user for commit + PR approval.
+# Re-verifier 01KT14REVERIFY000000000001 returned overall: PASS.
+# All AC1-AC10 pass. 584 tests, 0 failures. Gate green. No nits remain.
+# Decision 01KT14BUILDCOMPLETE85001 recorded. Build complete.
+# Next: surface to user for commit + PR approval.
 
 actions:
 
   - sequence: 1
-    action: record_decision
-    decision:
-      kind: scope_change
-      triggered_by: "01KT0DHX763P69P111HZ0923Y6 (verification_passed: verifier 01KT0CTPJNW34D2SD5PRD1SV5G)"
-      affects:
-        - kind: tree
-          id: gateway-outcome-glyphs
-          from_version: null
-          to_version: 1
-      body: |
-        Decision record already written to disk by orchestrator subagent:
-        .taniwha/kupu/decisions/01KT0EBUILDCOMPLETE84001.md
-    note: |
-      Decision record pre-written by orchestrator subagent before emitting this action.
-      Dispatcher does not need to re-write it.
-
-  - sequence: 2
     action: surface_to_user
     prompt_kind: completion_review
     mode: structured
     context: |
-      The verifier returned overall: PASS for issue #84 (gateway-outcome-glyphs).
-      All AC1-AC10 pass. Gate: cargo fmt clean, clippy 0 new warnings, cargo test
-      584/584, Cargo.toml unchanged (zero new dependencies).
+      The issue #85 copy-tone-audit build is complete and gate-green.
 
-      Working tree on branch feat/84-gateway-glyphs (off origin/main @ c10fb9e) is
-      ready to commit and raise as a PR. No commits exist yet.
+      Re-verifier 01KT14REVERIFY000000000001 returned overall: PASS. All
+      AC1-AC10 pass. 584 tests, 0 failures; cargo fmt clean; 0 new clippy
+      warnings; Cargo.toml/Cargo.lock unchanged vs origin/main.
 
-      Files to stage (DO NOT use git add -A):
-        src/style.rs
-        src/main.rs
-        src/stats.rs
-        src/hooks.rs
-        tests/brand_palette_verifier.rs
-        tests/gateway_outcome_glyphs.rs
-        tests/gateway_glyphs_verifier.rs
-        .taniwha/kupu/decisions/01KT0EBUILDCOMPLETE84001.md
-        .taniwha/kupu/events/2026/06/01/20260601T020000000Z-01KT0EORCHIDECIDE000000040.yaml
-        .taniwha/kupu/orchestrator/current_state.yaml
-        .taniwha/kupu/orchestrator/next_action.yaml
+      Branch: feat/85-copy-tone (no commits yet — working tree only)
 
-      DO NOT stage: .taniwha/kupu/state/ or Cargo.toml or Cargo.lock
+      Working-tree files ready to stage:
+        docs/voice.md (new — VoiceSpec + SelfReferenceGlossary)
+        src/hooks.rs, src/guardrails.rs, src/init.rs, src/main.rs,
+        src/stats.rs, src/store.rs, src/upgrade.rs, src/extends.rs,
+        src/enrich.rs, src/scenarios.rs (modified — wording only)
+        README.md (modified — light intro/tagline retune)
 
-      Commit message (copy verbatim):
-      ----
-      feat(style): add gateway outcome glyphs for blocked/allowed/warned (#84)
-
-      Adds should_use_unicode() and outcome_glyph() to src/style.rs, reusing the
-      #83 palette/gate. Glyph set: blocked ●·│✕ / allowed │●│ / warned ●·│ with
-      ASCII fallbacks. Unicode detection via ARAI_ASCII/NO_UNICODE env vars and
-      UTF-8 locale check (TTY-independent). Hook output passes literal false for
-      colorize — glyph chars but zero ANSI even under CLICOLOR_FORCE=1. --json
-      paths carry no glyphs (structural carve-out). Ochre applied to ✕ only when
-      colorize=true, reusing #83 passage() helper. Audit-chain ✓/✗ markers
-      untouched. 584 tests pass, zero new dependencies.
-
-      Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-      ----
-
-      PR: feat/84-gateway-glyphs → main
-      PR title: feat(style): gateway outcome glyphs for blocked/allowed/warned (#84)
-      PR references: Closes #84, parent #64
-
-    pr_body: |
-      ## Summary
-
-      Adds gateway-derived outcome glyphs to Arai's human-readable output surfaces,
-      replacing generic warning/blocked icons with a coherent visual vocabulary that
-      mirrors the gateway metaphor.
-
-      ### Glyph set
-
-      | Outcome | Unicode | ASCII fallback |
-      |---------|---------|----------------|
-      | Blocked | `●·│✕` | `o.\|x` |
-      | Allowed | `│●│` | `\|o\|` |
-      | Warned (Warn + Inform) | `●·│` | `o.\|` |
-
-      Visual weight matches severity: blocked is heaviest (4 chars + cross), warned is
-      medium (dot adjacent, no cross), allowed is lightest (dot passing through).
-
-      ### Unicode detection (`should_use_unicode`)
-
-      Precedence chain: `ARAI_ASCII` (non-empty) → ASCII; `NO_UNICODE` (non-empty) →
-      ASCII; locale priority `LC_ALL > LC_CTYPE > LANG` (first non-empty, UTF-8 check);
-      missing/empty locale vars → ASCII. Deliberately TTY-independent — no `isatty`
-      call, so piped output honours the same locale as interactive output.
-
-      ### Palette reuse from #83
-
-      The ochre cross (`✕`, `passage("\u{2715}", true)`) reuses `#83`'s `passage()`
-      helper and the `should_colorize()` gate. Colour only appears on the blocked
-      glyph, and only when `colorize=true`. All other glyph characters carry no colour.
-
-      ### Carve-outs
-
-      - **Hook output** (`src/hooks.rs`): all `outcome_glyph` calls pass literal `false`
-        for the `colorize` argument — glyph characters appear in Pre/Post human strings
-        but zero ANSI escape bytes are emitted, even under `CLICOLOR_FORCE=1`.
-      - **`--json` output**: no `outcome_glyph` call exists on any JSON code path
-        (`cmd_audit`, `cmd_why`, `stats::run()`). The carve-out is structural, not a
-        conditional — glyph-free by design.
-      - **Audit-chain `✓`/`✗` integrity markers** in `src/main.rs` are left untouched
-        (different semantic — hash-chain verification, not outcome display).
-
-      ### Integration surfaces
-
-      - `src/main.rs`: `cmd_audit` and `cmd_why` human-output paths prefix each row
-        with `outcome_glyph(outcome, unicode, col)`.
-      - `src/stats.rs`: `print_compliance_section` replaces the generic `⚠` literal
-        with `outcome_glyph(Outcome::Warn, unicode, col)`.
-      - `src/hooks.rs`: Pre/Post human strings prefixed with glyphs; `colorize` is
-        hard-coded to `false` (zero ANSI guarantee).
-
-      ### Zero new dependencies
-
-      `src/style.rs` is extended in-place. `Cargo.toml` and `Cargo.lock` are
-      unchanged.
-
-      ### Test coverage
-
-      584 tests pass (0 failures). New tests:
-
-      - `tests/gateway_outcome_glyphs.rs` — 35 leaf-authored tests (AC1-AC10
-        implementation coverage)
-      - `tests/gateway_glyphs_verifier.rs` — 29 verifier-authored tests (independent
-        verification of every AC, including subprocess tests for the zero-ANSI
-        carve-out under `CLICOLOR_FORCE=1`)
-
-      Gate: `cargo fmt --check` clean, `cargo clippy --all-targets` 0 new warnings,
-      `cargo test` 584/584.
-
-      Closes #84. Parent: #64.
-
-      🤖 Generated with [Claude Code](https://claude.com/claude-code)
+      Proposed commit message and PR body are in surface_context below.
 
     questions:
-      - header: Commit and PR
-        question: How would you like to proceed with the completed #84 implementation?
+      - header: Commit + PR
+        question: How would you like to proceed with the build output?
         multi_select: false
         options:
           - label: Approve commit + PR (Recommended)
-            description: Stage the listed files, commit with the provided message, push feat/84-gateway-glyphs, and open a PR against main referencing #84.
+            description: >
+              Stage all working-tree files (docs/voice.md, src/*.rs, README.md,
+              plus .taniwha/kupu artefacts for this slice, excluding
+              .taniwha/kupu/state/), commit on feat/85-copy-tone with the
+              proposed message, push, and open a PR against main referencing #85.
           - label: Commit only
-            description: Stage and commit locally on feat/84-gateway-glyphs but do not push or open a PR yet.
+            description: >
+              Stage and commit on feat/85-copy-tone with the proposed message,
+              but do not push or open a PR yet.
           - label: Hold
-            description: Leave the working tree uncommitted; record the build as complete but take no git action now.
+            description: >
+              Do not commit or push. Leave the working tree as-is. Re-engage
+              when ready.
+
+    surface_context:
+      commit_message: |
+        feat(copy-tone): retune user-facing strings to restrained-declarative register (#85)
+
+        Add docs/voice.md (VoiceSpec + SelfReferenceGlossary), retune all
+        user-facing strings across src/ and README to a restrained-declarative
+        register. Behaviour is unchanged — wording only.
+
+        Self-reference glossary: the tool is "Arai"; a single constraint is a
+        "rule"; the CLI sub-command surface retains "guardrails" (command name
+        only); the AI actor is "the model"; the human reader is "you".
+
+        Before/after examples:
+        - deny fallback: "Arai: blocking rule matched"
+          -> "Arai: a rule blocked this action."
+        - init footer: "Done. Arai is now watching your rules (Claude + Grok TUI)."
+          -> "Arai is enforcing this project's rules (Claude Code and Grok TUI)."
+        - internal error: "Arai: internal error, blocking for safety"
+          -> "Arai: an internal error occurred; blocking this action."
+        - error messages: "Failed to <verb>"
+          -> "Could not <verb> <named thing>: {e}"
+
+        JSON protocol keys/enums, #83 colour, and #84 glyph behaviour are all
+        preserved byte-identical. 584 tests green, zero new dependencies.
+
+        Follow-on (AC7): deeper README/doc voice work deferred — overlaps
+        scope-honesty epic.
+
+        Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+      pr_title: "feat(copy-tone): restrained-declarative voice retune (#85)"
+
+      pr_body: |
+        ## Summary
+
+        Retunes all user-facing strings in Arai to a restrained-declarative
+        register, as specified in issue #85 (parent: #64 scope-honesty epic).
+
+        A new file `docs/voice.md` is the committed VoiceSpec and
+        SelfReferenceGlossary — the canonical reference for future string
+        authoring in this codebase.
+
+        ### SelfReferenceGlossary
+
+        | Concept | Term |
+        |---|---|
+        | The tool itself | Arai |
+        | A single constraint | rule |
+        | The CLI sub-command surface | guardrails (command name; retained) |
+        | The AI actor | the model |
+        | The human reader | you |
+
+        ### Representative before/afters
+
+        | Location | Before | After |
+        |---|---|---|
+        | Deny fallback (hooks.rs) | `"Arai: blocking rule matched"` | `"Arai: a rule blocked this action."` |
+        | Init footer (init.rs) | `"Done. Arai is now watching your rules (Claude + Grok TUI)."` | `"Arai is enforcing this project's rules (Claude Code and Grok TUI)."` |
+        | Internal error (hooks.rs) | `"Arai: internal error, blocking for safety"` | `"Arai: an internal error occurred; blocking this action."` |
+        | Error messages (src/) | `"Failed to <verb>"` | `"Could not <verb> <named thing>: {e}"` |
+        | No-rules notice (main.rs) | `"No guardrails found."` | `"No rules found."` |
+        | No-DB messages (main.rs x3) | `"No guardrail database found."` | `"No rule database found."` |
+
+        ### Behaviour is unchanged
+
+        This PR contains wording changes only. Every changed line is a
+        string-literal substitution inside `format!()`, `println!()`,
+        `to_string()`, `map_err()`, or `ok_or()`. No branch condition, match
+        arm, function signature, return type, control-flow path, JSON protocol
+        key or enum, `#83` colour, or `#84` glyph is modified.
+
+        - `git diff origin/main -- src/style.rs`: empty
+        - Cargo.toml diff vs origin/main: empty
+        - Cargo.lock diff vs origin/main: empty
+        - 584 tests, 0 failures
+        - 0 new clippy warnings
+
+        ### AC7 follow-on (deferred)
+
+        Deeper README section voice work and any residual doc-string retunes
+        are deferred as follow-on to the scope-honesty epic (#64). This PR
+        covers the contracted surfaces: hooks, init, main, stats, store,
+        upgrade, extends, enrich, scenarios, and the README intro/tagline.
+
+        Closes #85
+        Parent epic: #64
+
+        🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+      files_to_stage:
+        # NOTE: use explicit file paths; do NOT use git add -A
+        # Code and doc files
+        - docs/voice.md
+        - src/hooks.rs
+        - src/guardrails.rs
+        - src/init.rs
+        - src/main.rs
+        - src/stats.rs
+        - src/store.rs
+        - src/upgrade.rs
+        - src/extends.rs
+        - src/enrich.rs
+        - src/scenarios.rs
+        - README.md
+        # Taniwha kupu artefacts for this slice — EXCLUDE .taniwha/kupu/state/
+        - .taniwha/kupu/brief/v9.md
+        - .taniwha/kupu/design/v7.md
+        - .taniwha/kupu/contracts/copy-tone-audit/v1.md
+        - .taniwha/kupu/orchestrator/handoff/01KT11YFKQZDZT37B6H0381XXY/
+        - .taniwha/kupu/orchestrator/handoff/01KT12ZWEC9R7HJE7PEMG59MG0/
+        - .taniwha/kupu/orchestrator/handoff/01KT13QCORRLEAF00000001/
+        - .taniwha/kupu/orchestrator/handoff/01KT14REVERIFY000000000001/
+        - .taniwha/kupu/decisions/01KT0RDESIGNKICKOFFV9001.md
+        - .taniwha/kupu/decisions/01KT11DESIGNAPPROVE85001.md
+        - .taniwha/kupu/decisions/01KT11YFKQ00CONTRACTPROMOTE.md
+        - .taniwha/kupu/decisions/01KT13QCORRLEAFDECISION01.md
+        - .taniwha/kupu/decisions/01KT14BUILDCOMPLETE85001.md
+        - .taniwha/kupu/events/2026/06/01/
+        - .taniwha/kupu/orchestrator/current_state.yaml
+        - .taniwha/kupu/orchestrator/next_action.yaml
+
+      branch: feat/85-copy-tone
+      base_branch: main
+      pr_references:
+        closes: 85
+        parent_epic: 64

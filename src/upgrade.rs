@@ -52,7 +52,7 @@ pub fn run(full: bool, lean: bool) -> Result<(), String> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("Failed to set permissions: {e}"))?;
+            .map_err(|e| format!("Could not set permissions: {e}"))?;
     }
 
     // Atomic replace: rename tmp over current binary
@@ -64,7 +64,7 @@ pub fn run(full: bool, lean: bool) -> Result<(), String> {
 
     // Move current → backup, tmp → current
     std::fs::rename(&current_exe, &backup_path)
-        .map_err(|e| format!("Failed to backup current binary: {e}"))?;
+        .map_err(|e| format!("Could not back up current binary: {e}"))?;
 
     match std::fs::rename(&tmp_path, &current_exe) {
         Ok(_) => {
@@ -77,7 +77,7 @@ pub fn run(full: bool, lean: bool) -> Result<(), String> {
             // Restore backup
             std::fs::rename(&backup_path, &current_exe).ok();
             std::fs::remove_file(&tmp_path).ok();
-            Err(format!("Failed to replace binary: {e}"))
+            Err(format!("Could not replace binary: {e}"))
         }
     }
 }
@@ -99,7 +99,7 @@ pub fn offer_upgrade_to_full() -> Result<bool, String> {
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)
-        .map_err(|e| format!("Failed to read input: {e}"))?;
+        .map_err(|e| format!("Could not read input: {e}"))?;
 
     let input = input.trim().to_lowercase();
     if input.is_empty() || input == "y" || input == "yes" {
@@ -142,17 +142,17 @@ fn fetch_latest_version() -> Result<String, String> {
             &format!("https://api.github.com/repos/{REPO}/releases/latest"),
         ])
         .output()
-        .map_err(|e| format!("Failed to fetch version: {e}"))?;
+        .map_err(|e| format!("Could not fetch version: {e}"))?;
 
     if !output.status.success() {
-        return Err("Failed to fetch latest version from GitHub".to_string());
+        return Err("Could not fetch latest version from GitHub.".to_string());
     }
 
     let body = String::from_utf8_lossy(&output.stdout);
 
     // Parse with serde_json for reliability
     let json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
+        .map_err(|e| format!("Could not parse GitHub API response: {e}"))?;
 
     json.get("tag_name")
         .and_then(|v| v.as_str())
@@ -164,7 +164,7 @@ fn download_file(url: &str, dest: &PathBuf) -> Result<(), String> {
     let output = std::process::Command::new("curl")
         .args(["-sL", "-o", &dest.to_string_lossy(), url])
         .output()
-        .map_err(|e| format!("Failed to download: {e}"))?;
+        .map_err(|e| format!("Could not download: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

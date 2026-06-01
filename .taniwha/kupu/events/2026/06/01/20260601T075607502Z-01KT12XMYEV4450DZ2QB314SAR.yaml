@@ -1,0 +1,10 @@
+event_id: 01KT12XMYEV4450DZ2QB314SAR
+kind: subagent_returned
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T07:56:07.502Z
+  filename: 20260601T075607502Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "leaf-implementation", "module": "copy-tone-audit", "handoff_id": "01KT11YFKQZDZT37B6H0381XXY", "re_raise": false, "committed": false, "files_created": ["docs/voice.md"], "files_modified": ["src/hooks.rs", "src/guardrails.rs", "src/init.rs", "src/main.rs", "src/stats.rs", "src/store.rs", "src/upgrade.rs", "src/extends.rs", "README.md"], "lockstep_tests_updated": 0, "no_new_dependency": true, "gate": "fmt+clippy(0 new)+test all green", "dispatcher_checks": "JSON keys/enums untouched; wording-only; register consistent"}'

@@ -1,0 +1,10 @@
+event_id: 01KT0S0XBNJMQYT9S6AA7ZZ7D4
+kind: design_written
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T05:03:08.661Z
+  filename: 20260601T050308661Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"design_version": 7, "parent_brief_version": 9, "tier": "single_module", "module": "copy-tone-audit", "source_handoff": "01KT0RDESIGNV9DESIGN00001", "promotion_method": "verbatim cp + meta/project.yaml update (347 lines)"}'

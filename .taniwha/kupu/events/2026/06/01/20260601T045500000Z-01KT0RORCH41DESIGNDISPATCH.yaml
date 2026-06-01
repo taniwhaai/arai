@@ -1,0 +1,21 @@
+---
+schema_version: 1
+event_id: 01KT0RORCH41DESIGNDISPATCH
+kind: orchestrator_decided
+timestamp_iso: "2026-06-01T04:55:00Z"
+orchestrator_invocation: 41
+triggered_by: "01KT0RAWPNVJ4S49WHAHBZ7FXT"
+
+summary: >
+  Brief v9 / design v7 kickoff. Dispatched design-doc subagent (handoff
+  01KT0RDESIGNV9DESIGN00001) to produce design v7 for issue #85 copy-tone
+  audit. Decision record 01KT0RDESIGNKICKOFFV9001.md written.
+
+actions_emitted:
+  - record_decision (01KT0RDESIGNKICKOFFV9001)
+  - dispatch_subagent (role: design-doc, handoff: 01KT0RDESIGNV9DESIGN00001)
+
+build_state:
+  brief_version: 9
+  design_version: "7 (pending)"
+  phase: pre_design

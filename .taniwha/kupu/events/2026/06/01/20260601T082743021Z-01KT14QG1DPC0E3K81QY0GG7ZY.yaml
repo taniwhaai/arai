@@ -1,0 +1,10 @@
+event_id: 01KT14QG1DPC0E3K81QY0GG7ZY
+kind: verification_passed
+actor:
+  kind: dispatcher
+  name: main-session
+timestamp:
+  iso: 2026-06-01T08:27:43.021Z
+  filename: 20260601T082743021Z
+project_id: 01KR7W57NFD0HRDZDJ0FNXZ10Z
+payload: '{"role": "verifier", "corrective": true, "handoff_id": "01KT14REVERIFY000000000001", "module": "copy-tone-audit", "overall": "pass", "acs": "AC1-AC10 all pass", "gate": "fmt+clippy(0 new)+test 584/0; no new dep", "nits_resolved": "all AC6 glossary nits cleared"}'

@@ -1,0 +1,35 @@
+schema_version: 1
+handoff_id: 01KT13QCORRLEAF00000001
+role: leaf-implementation
+module: copy-tone-audit
+parent_contract_version: 1
+model: sonnet
+status: returned
+corrective: true
+reason: "AC6 glossary-consistency fixes flagged by verifier 01KT12ZWEC9R7HJE7PEMG59MG0 (partial). Apply approved glossary: unit term guardrail->rule; Could-not on remaining user-visible errors."
+created_at:
+  iso: "2026-06-01T08:13:39.171Z"
+  filename: "20260601T081339171Z"
+dispatched_at:
+  iso: "2026-06-01T08:13:39.171Z"
+  filename: "20260601T081339171Z"
+returned_at:
+  iso: "2026-06-01T08:19:42.289Z"
+  filename: "20260601T081942289Z"
+outcome:
+  produced: [implementation_manifest.yaml]
+  re_raise: false
+  committed: false
+  files_modified: [src/init.rs, src/main.rs, src/scenarios.rs, src/enrich.rs]
+  changes: "init.rs Extracting guardrails->rules; main.rs x3 + scenarios.rs:165 'No guardrail database'->'No rule database'; scenarios.rs:89 + enrich.rs x16 'Failed to'->'Could not'"
+  gate: "fmt clean; clippy 0 new; cargo test 584/0"
+  dispatcher_check: "flagged nits cleared (grep clean); Cargo unchanged"
+inputs:
+  - filename: task.md
+    kind: task
+expected_outputs:
+  - implementation_manifest.yaml
+  - re_raise.yaml
+triggering_action:
+  source: .taniwha/kupu/orchestrator/next_action.yaml
+  sequence: 1

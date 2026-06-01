@@ -1,0 +1,297 @@
+---
+verifier_report:
+  contract:
+    module: copy-tone-audit
+    version: 1
+  implementation:
+    version: 1
+    source_paths:
+      - docs/voice.md
+      - src/hooks.rs
+      - src/guardrails.rs
+      - src/init.rs
+      - src/main.rs
+      - src/stats.rs
+      - src/store.rs
+      - src/upgrade.rs
+      - src/extends.rs
+      - README.md
+
+  gate:
+    cargo_fmt_check: PASS (exit 0, no formatting errors)
+    cargo_clippy: PASS (no new warnings; 6 pre-existing warnings unchanged vs origin/main baseline)
+    cargo_test: PASS (all test suites green)
+    cargo_test_counts:
+      src_lib: 410 passed, 0 failed
+      hooks_safety: 30 passed, 0 failed
+      brand_palette_verifier: 11 passed, 0 failed
+      gateway_glyphs_verifier: 29 passed, 0 failed
+      gateway_outcome_glyphs: 9 passed, 0 failed
+      verifier_extends_slice: 23 passed, 0 failed
+      other_suites: all green
+    cargo_toml_changed: false
+    cargo_lock_changed: false
+    style_rs_changed: false
+
+  acceptance_criteria:
+
+    - id: AC1
+      criterion: "docs/voice.md exists and contains the 6 VoiceSpec rules and 5-row SelfReferenceGlossary verbatim"
+      verifier_test: "manual read + verbatim comparison against contract text"
+      result: pass
+      notes: |
+        docs/voice.md is present in the working tree. The six VoiceSpec rules
+        match the contract text verbatim (word-for-word, same numbering, same
+        bold labels). The five-row SelfReferenceGlossary table matches verbatim
+        (same columns, same committed terms, same Notes text). The file uses
+        "# Voice spec — Arai" as its H1, which the contract does not constrain.
+        Concrete enough to serve as a mechanical check reference.
+
+    - id: AC2
+      criterion: "src/hooks.rs rendered messages retuned — deny fallback, internal error, additionalContext header; JSON keys/enums byte-identical; glyph prefix preserved"
+      verifier_test: "git diff src/hooks.rs + src/guardrails.rs reviewed; grep JSON keys"
+      result: pass
+      notes: |
+        Deny fallback changed from "Arai: blocking rule matched" to
+        "Arai: a rule blocked this action." at three sites (deny_reason fn,
+        emit_grok_decision, emit_claude_decision). Internal error changed from
+        "Arai: internal error, blocking for safety" to
+        "Arai: an internal error occurred; blocking this action." at two sites.
+        additionalContext header changed from "Arai guardrails:" to "Arai rules:"
+        in guardrails.rs format_context.
+        UserPromptSubmit summary: "active guardrail(s)" → "active rule(s)";
+        "Rules will fire" → "Rules fire".
+        PostToolUse prefix: "[Post-action review]" → "[Post-action]".
+        stdin read error: "Failed to read stdin" → "Could not read stdin".
+        JSON keys verified byte-identical: "decision", "deny", "allow",
+        "permissionDecision", "hookEventName", "hookSpecificOutput",
+        "additionalContext" are unchanged. style.rs not in the diff (confirmed
+        via git diff -- src/style.rs returns empty). Glyph and colour wrappers
+        untouched. All changes are string-literal substitutions only; no
+        logic, branch, or control-flow lines modified.
+
+    - id: AC3
+      criterion: "src/init.rs init/deinit footers and step headers retuned; no bare Failed to X on user-facing paths"
+      verifier_test: "git diff src/init.rs reviewed; grep for unchanged step headers"
+      result: pass
+      notes: |
+        Init footer changed from "Done. Arai is now watching your rules
+        (Claude + Grok TUI)." to "Arai is enforcing this project's rules
+        (Claude Code and Grok TUI)." — "Done." removed, "watching" replaced
+        with "enforcing", "+" replaced with "and". Deinit footer changed from
+        "Arai is no longer watching this project." to "Arai is no longer
+        enforcing this project's rules." — anthropomorphic "watching" removed.
+        All nine "Failed to {read|write|parse|serialize|create}" strings on
+        init/deinit/inject_hooks/inject_grok_hooks paths changed to "Could not".
+        Minor nit (not a failure): step header "Extracting guardrails..." at
+        init.rs:24 was not changed — the contract lists it as a named edit
+        surface in the description, but step headers are already sentence case
+        and the contract's only explicit failing condition is "Title Case" and
+        bare "Failed to X", not "guardrails" in a step header. The term
+        "guardrails" there refers to the collective output of extraction (arguably
+        the command-surface meaning, which the glossary permits). Flagged as
+        a register nit rather than a failure.
+
+    - id: AC4
+      criterion: "User-visible error messages across src/ use specific declarative form; no bare Failed to X; {e} detail retained; internal-only strings untouched"
+      verifier_test: "grep src/ for 'Failed to' + review of remaining hits"
+      result: pass
+      notes: |
+        All explicitly named edit-surface "Failed to X" patterns were changed.
+        Remaining "Failed to" occurrences are in src/enrich.rs (ONNX feature-
+        gated enrichment path) and src/scenarios.rs ("Failed to read scenario
+        file {}: {e}"). These are user-reaching strings outside the contract's
+        named edit surfaces (which explicitly lists: init/deinit/store-open
+        paths, main.rs file-read paths, upgrade.rs/extends.rs, arai hook error
+        diagnostic). Not treated as failures per the bounded scope, but noted
+        as out-of-scope residuals for a future pass.
+        The {e} detail is retained in every changed error string — confirmed
+        by reading each changed site in the diff.
+        Internal-only strings (ONNX session internals, test fixture strings)
+        confirmed untouched.
+        "arai hook error: {e}" at hooks.rs:376 was not modified; it is already
+        specific and declarative (error class + {e} detail), not a bare "Failed
+        to X" form — consistent with AC4 which targets bare "Failed to X" only.
+
+    - id: AC5
+      criterion: "Command-output prose in main.rs and stats.rs retuned — headers sentence case, hint lines calm declarative, #83 colour unchanged"
+      verifier_test: "grep main.rs stats.rs for println!/eprintln! strings; compare before/after"
+      result: pass
+      notes: |
+        "No guardrails found." → "No rules found." in cmd_guardrails.
+        "No audit entries.  Rules haven't fired yet..." → "No audit entries.
+        No rules have fired yet..." in both main.rs and stats.rs.
+        "arai stats", "Arai status", "Per-rule compliance", "Token economics
+        (estimates)", "Duplicate rules (N):", "Opposing predicates (N):",
+        audit column header — all in sentence case.
+        Add command hint: "Try phrasing it as an imperative..." → "Phrase it as
+        an imperative, e.g. ..." — calmer but not fully declarative (still an
+        imperative exhortation in form). Minor register nit; not a failing
+        condition since AC5's failing condition is "retains exhortation flourish"
+        and the new wording is less flourish-y than the original.
+        style.rs not touched — #83 colour wrappers preserved.
+        Minor nit: three user-visible strings "No guardrail database found.
+        Run `arai init` first." at main.rs:1213, 1337, 1559 were not changed.
+        These use "guardrail" as unit terminology. The contract's explicit
+        failing condition for AC5 names "No rules"/"No audit entries"/"No
+        severity overrides" lines — these three are a different state message.
+        Flagged as register nit, not a failure.
+
+    - id: AC6
+      criterion: "Glossary consistency — no 'we', 'I', 'the agent', 'the assistant', 'Claude', 'the user'; rule/guardrails used consistently per glossary"
+      verifier_test: "grep all retuned surfaces for forbidden terms; check rule vs guardrails usage"
+      result: pass
+      notes: |
+        grep for "we" in user-facing strings: zero matches in retuned prose.
+        The one "we" found is hooks.rs:1302 inside a test-only .expect() message
+        ("rule we just inserted should reload") — not user-facing prose.
+        grep for "I", "the agent", "the assistant", "the user": zero matches in
+        any retuned user-facing string.
+        "watching" replaced with "enforcing" in all named locations.
+        "Arai guardrails:" → "Arai rules:" in additionalContext header.
+        "active guardrail(s)" → "active rule(s)" in UserPromptSubmit summary.
+        "No guardrails found" → "No rules found".
+        "Could not extract a guardrail" → "Could not extract a rule".
+        Minor nit: "Extracting guardrails..." (init.rs:24),
+        "No guardrail database found." (main.rs:1213,1337,1559) were not changed.
+        These use "guardrail" as a unit name (extraction of individual rules).
+        The glossary defines "rule" as the unit term. These are register
+        inconsistencies in strings that were within the named edit surfaces but
+        were not targeted in the diff. Flagged as register nits.
+
+    - id: AC7
+      criterion: "README intro/tagline voice aligned to restrained-declarative; pass is light; follow-on flagged"
+      verifier_test: "read README intro section; check scope of changes; check follow-on note"
+      result: pass
+      notes: |
+        Original intro: "Instruction files that actually work. One command.
+        Runs locally. Zero cost." + devtool blurb.
+        Retuned intro: "Arai enforces AI coding assistant instruction files
+        (CLAUDE.md, AGENTS.md, .cursorrules, and others) via native hooks.
+        Rules derived from prohibitive language block the tool call outright;
+        advisory rules inject the relevant constraint at the point it applies."
+        This is declarative, infrastructural, no anthropomorphism, no
+        exclamation marks. The pass covers lines 1-3 (the H1 and intro
+        paragraph); the Quick Start and remaining sections are unchanged.
+        Follow-on note is present in the implementation manifest
+        (follow_on_note field). Since the implementation is uncommitted, the
+        note appears in the manifest rather than a commit message; this
+        satisfies the spirit of AC7's requirement. The note explicitly
+        identifies README sections outside intro/tagline scope.
+
+    - id: AC8
+      criterion: "Behaviour unchanged — no logic, control-flow, exit code, hook decision, JSON key, colour, or glyph changes"
+      verifier_test: "git diff inspected for non-string additions; git diff -- src/style.rs; Cargo.toml/Cargo.lock diff"
+      result: pass
+      notes: |
+        The full diff (393 lines) was inspected. Every changed line is a
+        string-literal substitution inside a format!(), println!(), to_string(),
+        map_err(), or .ok_or() call. No branch condition, match arm structure,
+        function signature, return type, or control-flow path was modified.
+        JSON keys verified unchanged: "decision", "deny", "allow",
+        "permissionDecision", "hookEventName", "hookSpecificOutput",
+        "additionalContext" — all appear as keys in the post-retune code
+        identical to before. Only their human-readable VALUE strings changed.
+        git diff origin/main -- src/style.rs: empty (no output). Style module
+        untouched. Glyph and colour tables, gates, and functions unchanged.
+        Cargo.toml diff: empty. Cargo.lock diff: empty.
+        This is the critical hard constraint. It is satisfied.
+
+    - id: AC9
+      criterion: "Tests updated in lockstep — no test still asserts pre-retune wording; cargo test green"
+      verifier_test: "grep tests/ + #[cfg(test)] for every changed string literal"
+      result: pass
+      notes: |
+        grep of tests/ for all changed strings (blocking rule matched, watching
+        your rules, watching this project, Failed to read/write/parse/create/
+        serialize/open/set/run/backup/replace/fetch/download/encode, No guardrails
+        found, Could not extract a guardrail, Try phrasing it as an imperative,
+        active guardrail, Post-action review, Arai guardrails:, internal error
+        blocking for safety, Rules haven't fired): zero matches.
+        The implementor's claim that no test assertions needed updating is
+        confirmed — no test in the codebase previously asserted any of the
+        changed strings. cargo test: all 550+ tests pass with zero failures.
+
+    - id: AC10
+      criterion: "Full gate passes — cargo fmt, cargo clippy (no new warnings), cargo test all green; zero new dependency"
+      verifier_test: "ran full gate independently; diffed Cargo.toml and Cargo.lock"
+      result: pass
+      notes: |
+        cargo fmt --all -- --check: exit 0, no output (no formatting errors).
+        cargo clippy --all-targets: 6 warnings total, all pre-existing (verified
+        by running clippy on stashed baseline — identical warning set:
+        useless_format in sync_integration.rs, implicit_saturating_sub in
+        prompt_collector_verifier.rs, let_and_return in
+        verifier_base_directory_resolution.rs, double_ended_iterator_last in
+        gateway_glyphs_verifier.rs, two cloned_ref_to_slice_refs in store.rs).
+        Zero new warnings introduced by this retune.
+        cargo test: all suites green (410 lib + 30 hooks_safety + 11 brand +
+        29 gateway_glyphs + 9 gateway_outcome + 23 verifier_extends_slice +
+        others = 0 failures).
+        Cargo.toml: git diff empty. Cargo.lock: git diff empty.
+        Zero new dependencies.
+
+  overall: partial
+
+  findings:
+    - kind: other
+      summary: "Register nit: 'Extracting guardrails...' step header not retuned"
+      details: |
+        src/init.rs:24 still reads "Extracting guardrails..." — this step header
+        is listed in the contract's named edit surfaces for init.rs and uses
+        "guardrails" as a unit term (extracting individual rules) where the
+        glossary specifies "rule(s)" as the unit. The contract's AC3 failing
+        conditions are limited to "Title Case" and "bare Failed to X", so this
+        is not a contract failure, but it is a glossary inconsistency. Suggest
+        changing to "Extracting rules..." in a follow-on or amend.
+
+    - kind: other
+      summary: "Register nit: three 'No guardrail database found' strings not retuned"
+      details: |
+        src/main.rs:1213, 1337, 1559 still read
+        "No guardrail database found.  Run `arai init` first."
+        These use "guardrail" as the unit term (the glossary unit is "rule").
+        They were not in the contract's explicit failing-condition list for AC5,
+        so not a contract failure. Suggest "No rule database found. Run `arai
+        init` first." or equivalent in a follow-on.
+
+    - kind: other
+      summary: "Out-of-scope residuals: src/enrich.rs and src/scenarios.rs retain 'Failed to' strings"
+      details: |
+        src/enrich.rs has ~10 "Failed to" strings on user-reaching paths
+        (ONNX session, model download, LLM shell-out, API response parsing,
+        enrich_from_file). src/scenarios.rs:89 has "Failed to read scenario
+        file {}". These were outside the contract's bounded edit surfaces, so
+        not a failure here. They are noted for a subsequent voice-retune pass
+        that covers the enrich and scenarios paths.
+
+    - kind: other
+      summary: "AC7 follow-on note is in implementation manifest, not yet in a commit/PR description"
+      details: |
+        The contract requires a follow-on note in "the PR or commit description".
+        Since the implementation is uncommitted (implementation_manifest.yaml
+        sets committed: false), the note currently lives only in the manifest.
+        The note must be included in the commit message or PR description when
+        the change is committed. Not a failure now, but must be honoured at
+        commit time.
+
+  notes: |
+    Overall verdict is partial rather than pass due to the register nits
+    (three user-visible "guardrail" unit-term strings and one step header
+    not retuned). The gate is fully green: fmt clean, no new clippy warnings,
+    all 550+ tests pass, Cargo.toml/Cargo.lock unchanged, style.rs untouched.
+    All hard constraints are satisfied: behaviour unchanged (HC-1), JSON
+    protocol structure preserved (HC-2), colour/glyph behaviour preserved
+    (HC-3), zero new dependencies (HC-4), no "we"/"I" in user-facing prose
+    (HC-5), no test assertions on old wording (HC-6).
+    The nits are editorial — they do not affect correctness, safety, or the
+    hook protocol. They can be folded into the follow-on doc-voice pass or
+    addressed in an amend before merge.
+
+  recommendation: |
+    Approve for merge with minor follow-on items. The implementation is
+    correct, safe, and gate-green. Before merging, the commit/PR description
+    should include the follow-on note about remaining README sections and the
+    out-of-scope "Failed to" strings. Optionally, the four register nits
+    (Extracting guardrails, three No guardrail database found strings) can
+    be folded into the same commit or deferred to the follow-on voice pass.

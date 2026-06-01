@@ -391,7 +391,7 @@ pub fn handle_stdin() -> Result<(), String> {
                     Host::Grok => {
                         let response = emit_grok_decision(
                             false,
-                            Some("Arai: internal error, blocking for safety"),
+                            Some("Arai: an internal error occurred; blocking this action."),
                             "",
                         );
                         println!("{}", serde_json::to_string(&response).unwrap_or_default());
@@ -402,7 +402,7 @@ pub fn handle_stdin() -> Result<(), String> {
                                 "hookEventName": "PreToolUse",
                                 "permissionDecision": "deny",
                                 "permissionDecisionReason":
-                                    "Arai: internal error, blocking for safety",
+                                    "Arai: an internal error occurred; blocking this action.",
                             }
                         });
                         println!("{}", serde_json::to_string(&response).unwrap_or_default());
@@ -440,7 +440,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
         .lock()
         .take(MAX_HOOK_INPUT_BYTES + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+        .map_err(|e| format!("Could not read stdin: {e}"))?;
     if buf.len() as u64 > MAX_HOOK_INPUT_BYTES {
         return Err(format!(
             "Hook input exceeded {MAX_HOOK_INPUT_BYTES}-byte cap"
@@ -813,7 +813,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
         subjects.sort();
         subjects.dedup();
         let summary = format!(
-            "Arai: {} active guardrail(s) for: {}. Rules will fire on relevant tool calls.",
+            "Arai: {} active rule(s) for: {}. Rules fire on relevant tool calls.",
             result.domain_rules.len(),
             subjects.join(", ")
         );
@@ -943,7 +943,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
         ("PostToolUse", _) => serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": format!("[Post-action review] {prefixed_context}")
+                "additionalContext": format!("[Post-action] {prefixed_context}")
             }
         }),
         _ => {
@@ -988,7 +988,7 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
     }
     // Shouldn't reach here if highest_severity returned Block, but guard for
     // robustness.
-    "Arai: blocking rule matched".to_string()
+    "Arai: a rule blocked this action.".to_string()
 }
 
 /// Emit a Grok TUI compatible decision response.
@@ -1005,7 +1005,7 @@ fn emit_grok_decision(
     } else {
         serde_json::json!({
             "decision": "deny",
-            "reason": reason.unwrap_or("Arai: blocking rule matched"),
+            "reason": reason.unwrap_or("Arai: a rule blocked this action."),
             "additionalContext": additional_context
         })
     }
@@ -1030,7 +1030,7 @@ fn emit_claude_decision(
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": reason.unwrap_or("Arai: blocking rule matched"),
+                "permissionDecisionReason": reason.unwrap_or("Arai: a rule blocked this action."),
                 "additionalContext": additional_context
             }
         })
