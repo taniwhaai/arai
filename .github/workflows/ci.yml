@@ -191,9 +191,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download all artifacts
+      - name: Download binary artifacts
         uses: actions/download-artifact@v8
         with:
+          # Scope to the per-platform binary artifacts only. Other jobs in
+          # the run upload unrelated artifacts (e.g. the container job's
+          # `.dockerbuild` build record); pulling those in broke the merge.
+          pattern: binaries-*
           path: binaries
           merge-multiple: true
 
@@ -365,6 +369,11 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
+        # Suppress the `.dockerbuild` build-record artifact this action
+        # uploads by default — nothing consumes it, and an unfiltered
+        # download-artifact elsewhere in the run trips over it.
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
