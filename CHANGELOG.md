@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-02
+
+### Fixed
+
+- *(ci)* Scope the release artifact download to the binary artifacts, so
+  the container job's build-record artifact no longer breaks GitHub-release
+  asset attachment and the npm publishes downstream of it
+
 ## [1.0.0] - 2026-06-02
 
 First stable release. The CLI surface, hook protocol, and on-disk
