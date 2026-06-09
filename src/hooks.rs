@@ -145,6 +145,18 @@ pub(crate) fn is_instruction_file(path: &str) -> bool {
     false
 }
 
+/// Is this host-supplied path a real directory we can safely root a
+/// background `arai scan` at?  `new_cwd` arrives from the `CwdChanged`
+/// hook payload and is handed straight to `Command::current_dir`, so it
+/// must be validated before it reaches that filesystem call.  Gating on
+/// `is_dir` keeps the "host strings never reach an unguarded filesystem
+/// call" invariant true by construction (the same way `valid_session_id`
+/// guards the sessions path), and stops a flood of `CwdChanged` events
+/// from forking doomed `arai scan` processes at non-existent paths.
+pub(crate) fn is_scan_dir(new_cwd: &str) -> bool {
+    !new_cwd.is_empty() && std::path::Path::new(new_cwd).is_dir()
+}
+
 /// Spawn a detached `arai scan` so the rule set picks up the edited /
 /// loaded instruction file (or the new monorepo package after a `cd`)
 /// before the next tool call.  Best-effort: any failure (binary not
@@ -563,7 +575,16 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                     "new_cwd": new_cwd,
                 }),
             );
-            spawn_background_scan(Some(new_cwd));
+            // Only root a background scan at `new_cwd` if it's a real
+            // directory.  `new_cwd` is host-supplied and flows into
+            // `Command::current_dir`; gating on `is_scan_dir` keeps that
+            // filesystem call from ever receiving an unvalidated host
+            // string and stops `CwdChanged` floods from forking doomed
+            // scans.  The audit event above is recorded regardless so
+            // per-session navigation history stays complete.
+            if is_scan_dir(new_cwd) {
+                spawn_background_scan(Some(new_cwd));
+            }
         }
         return Ok(0);
     }
@@ -1617,6 +1638,25 @@ mod tests {
                 "{path} should NOT be classed as an instruction file"
             );
         }
+    }
+
+    #[test]
+    fn test_is_scan_dir_guards_command_current_dir() {
+        // `new_cwd` from the CwdChanged payload flows into
+        // `Command::current_dir`; only a real directory may pass.
+        let real_dir = env!("CARGO_MANIFEST_DIR");
+        let a_file = format!("{real_dir}/Cargo.toml");
+
+        assert!(is_scan_dir(real_dir), "an existing directory is scannable");
+        assert!(!is_scan_dir(""), "empty path is never scannable");
+        assert!(
+            !is_scan_dir("/nonexistent/arai-cwdchanged-guard-xyz"),
+            "a non-existent path must not reach Command::current_dir"
+        );
+        assert!(
+            !is_scan_dir(&a_file),
+            "a regular file is not a directory and must not be scanned"
+        );
     }
 
     #[test]
