@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-09
+
+### Fixed
+
+- *(hooks)* Validate CwdChanged new_cwd before rooting a background scan ([#146](https://github.com/taniwhaai/arai/pull/146))
+
+
 ## [1.0.1] - 2026-06-02
 
 ### Fixed
