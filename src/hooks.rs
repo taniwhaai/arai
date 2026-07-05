@@ -64,6 +64,7 @@ fn detect_host(hook: &Value) -> Host {
     // Claude Code compatibility / native path.
     if std::env::var("CLAUDE_PROJECT_DIR").is_ok()
         || hook.get("hook_event_name").is_some()
+        || hook.get("hookEventName").is_some()
         || std::env::var("CLAUDE_PLUGIN_ROOT").is_ok()
     {
         return Host::Claude;
@@ -231,6 +232,19 @@ pub struct HookMatch {
     pub domain_rules: Vec<Guardrail>,
 }
 
+/// Read a hook payload field that may arrive under either its snake_case
+/// name (Claude Code protocol, and Grok's Claude-compat layer) or its
+/// camelCase name (Grok Build native hooks per docs.x.ai — `hookEventName`,
+/// `toolName`, `toolInput`, `sessionId`).  snake_case wins when both are
+/// present so the Claude path is byte-for-byte unchanged.
+fn hook_field<'a>(hook: &'a Value, snake: &str, camel: &str) -> Option<&'a Value> {
+    hook.get(snake).or_else(|| hook.get(camel))
+}
+
+fn hook_field_str<'a>(hook: &'a Value, snake: &str, camel: &str) -> Option<&'a str> {
+    hook_field(hook, snake, camel).and_then(|v| v.as_str())
+}
+
 /// Apply the full match pipeline to a parsed hook payload.
 ///
 /// Mirrors the behaviour of `handle_stdin` without performing any IO:
@@ -238,20 +252,16 @@ pub struct HookMatch {
 /// *and* by the `arai test` scenario runner — both paths see the same
 /// matching logic so scenarios stay faithful to production.
 pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, String> {
-    let event = hook
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
+    let event = hook_field_str(hook, "hook_event_name", "hookEventName")
         .unwrap_or("PreToolUse")
         .to_string();
-    let raw_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_tool_name = hook_field_str(hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
     // Sanitize session_id at the boundary — anything that wouldn't survive
     // path-traversal validation is treated as no-session (session features
     // silently disable, the rest of the hook still works).  See
     // `session::valid_session_id` for the accepted shape.
-    let session_id = hook
-        .get("session_id")
-        .and_then(|v| v.as_str())
+    let session_id = hook_field_str(hook, "session_id", "sessionId")
         .filter(|s| session::valid_session_id(s))
         .unwrap_or("")
         .to_string();
@@ -273,8 +283,7 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
         return Ok(out);
     }
 
-    let tool_input = hook
-        .get("tool_input")
+    let tool_input = hook_field(hook, "tool_input", "toolInput")
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
 
@@ -296,7 +305,7 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     // PostToolUse: sniff results but don't mutate session state here (that's a
     // side effect the hook handler owns, not the scenario runner)
     if event == "PostToolUse" {
-        if let Some(result) = hook.get("tool_result").and_then(|v| v.as_str()) {
+        if let Some(result) = hook_field_str(hook, "tool_result", "toolResult") {
             guardrails::sniff_content_for_tools(result, &mut terms);
         }
         terms.sort();
@@ -470,10 +479,9 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let hook: Value =
         serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
 
-    let raw_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
-    let event = hook
-        .get("hook_event_name")
+    let event = hook_field(&hook, "hook_event_name", "hookEventName")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
     // Tell the outer wrapper what event we're processing so a later error
@@ -490,9 +498,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // Sanitize session_id (see `session::valid_session_id`).  Hostile
     // payloads with `..` or `/` bytes in the id no longer reach the
     // session-file writer.
-    let session_id = hook
-        .get("session_id")
-        .and_then(|v| v.as_str())
+    let session_id = hook_field_str(&hook, "session_id", "sessionId")
         .filter(|s| session::valid_session_id(s))
         .unwrap_or("");
 
@@ -617,13 +623,12 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
         // we run through the exact same match pipeline as a normal
         // pre-call gate.  Lets us reuse extract_terms, code-graph
         // enrichment, severity-from-rule logic without forking.
-        let raw_denied_tool_name = hook.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+        let raw_denied_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
         let denied_tool_name = guardrails::normalize_tool_name(raw_denied_tool_name);
         let synthesized = serde_json::json!({
             "hook_event_name": "PreToolUse",
             "tool_name": denied_tool_name,
-            "tool_input": hook
-                .get("tool_input")
+            "tool_input": hook_field(&hook, "tool_input", "toolInput")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new())),
             "session_id": session_id,
@@ -706,13 +711,12 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
             // Claude Code in the same order, one entry per concurrent
             // tool invocation in the batch.
             for (idx, call) in tool_calls.iter().enumerate() {
-                let raw_tool_name = call.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+                let raw_tool_name = hook_field_str(call, "tool_name", "toolName").unwrap_or("");
                 let tool_name = guardrails::normalize_tool_name(raw_tool_name);
                 if tool_name.is_empty() || guardrails::should_skip_tool(&tool_name) {
                     continue;
                 }
-                let tool_input = call
-                    .get("tool_input")
+                let tool_input = hook_field(call, "tool_input", "toolInput")
                     .cloned()
                     .unwrap_or(Value::Object(serde_json::Map::new()));
                 let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
@@ -758,12 +762,11 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // running through the same path don't corrupt real sessions.
     if event == "PostToolUse" && !session_id.is_empty() {
         if let Ok(cfg) = config::Config::load() {
-            let tool_input = hook
-                .get("tool_input")
+            let tool_input = hook_field(&hook, "tool_input", "toolInput")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new()));
             let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
-            if let Some(result) = hook.get("tool_result").and_then(|v| v.as_str()) {
+            if let Some(result) = hook_field_str(&hook, "tool_result", "toolResult") {
                 guardrails::sniff_content_for_tools(result, &mut terms);
             }
             terms.sort();
@@ -889,8 +892,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let blocking = is_pretooluse && top_severity == Severity::Block && deny_enabled;
 
     // Local audit log — records every firing for `arai audit` / `arai stats`
-    let tool_input = hook
-        .get("tool_input")
+    let tool_input = hook_field(&hook, "tool_input", "toolInput")
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
     let prompt_preview = summarize_tool_input(&result.tool_name, &tool_input);
@@ -1157,6 +1159,92 @@ mod tests {
     use crate::intent::RuleIntent;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    // ── Grok Build camelCase payload compatibility ────────────────────────────
+
+    /// Grok Build native hooks deliver camelCase field names (hookEventName,
+    /// toolName, toolInput, sessionId — per docs.x.ai/build/features/hooks);
+    /// Claude Code and Grok's Claude-compat layer deliver snake_case.  Both
+    /// casings must resolve identically, and snake_case must win when a
+    /// hostile payload carries both.
+    #[test]
+    fn hook_fields_accept_both_casings_snake_wins() {
+        let camel = serde_json::json!({
+            "hookEventName": "PreToolUse",
+            "toolName": "run_terminal_cmd",
+            "toolInput": {"command": "git push --force"},
+            "sessionId": "sess-1",
+        });
+        assert_eq!(
+            hook_field_str(&camel, "hook_event_name", "hookEventName"),
+            Some("PreToolUse")
+        );
+        assert_eq!(
+            hook_field_str(&camel, "tool_name", "toolName"),
+            Some("run_terminal_cmd")
+        );
+        assert_eq!(
+            hook_field_str(&camel, "session_id", "sessionId"),
+            Some("sess-1")
+        );
+        assert!(hook_field(&camel, "tool_input", "toolInput").is_some());
+
+        // Both present: snake_case (the Claude protocol) wins, so a payload
+        // that smuggles a different camelCase value can't override it.
+        let both = serde_json::json!({
+            "tool_name": "Bash",
+            "toolName": "Read",
+        });
+        assert_eq!(hook_field_str(&both, "tool_name", "toolName"), Some("Bash"));
+
+        // Absent on both spellings → None (caller defaults apply).
+        let neither = serde_json::json!({});
+        assert_eq!(hook_field_str(&neither, "tool_name", "toolName"), None);
+    }
+
+    fn test_cfg() -> Config {
+        let base = std::env::temp_dir().join(format!("arai_hooks_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&base).ok();
+        Config {
+            project_root: base.clone(),
+            home_dir: base.clone(),
+            arai_base_dir: base,
+            extra_sources: Vec::new(),
+            guardrails_mode: "advise".to_string(),
+            llm_command: None,
+            api_url: None,
+            api_key_env: None,
+            api_model: None,
+        }
+    }
+
+    /// End-to-end through the pure pipeline: a camelCase Grok Build payload
+    /// must produce the same match result as its snake_case twin.
+    #[test]
+    fn match_hook_camelcase_equals_snakecase() {
+        let (db, path) = temp_db();
+        let cfg = test_cfg();
+        let snake = serde_json::json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "run_terminal_cmd",
+            "tool_input": {"command": "git push --force origin main"},
+            "session_id": "sess-camel-eq",
+        });
+        let camel = serde_json::json!({
+            "hookEventName": "PreToolUse",
+            "toolName": "run_terminal_cmd",
+            "toolInput": {"command": "git push --force origin main"},
+            "sessionId": "sess-camel-eq",
+        });
+        let a = match_hook(&snake, &cfg, &db).unwrap();
+        let b = match_hook(&camel, &cfg, &db).unwrap();
+        assert_eq!(a.event, b.event);
+        assert_eq!(a.tool_name, b.tool_name);
+        assert_eq!(a.session_id, b.session_id);
+        assert_eq!(a.tool_name, "Bash", "grok terminal tool must normalize");
+        assert_eq!(a.terms, b.terms);
+        std::fs::remove_file(&path).ok();
+    }
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 

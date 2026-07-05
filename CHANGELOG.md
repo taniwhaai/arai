@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- *(grok)* Realign the Grok Build (formerly Grok TUI / supergrok)
+  integration with current docs.x.ai behavior: hook payload fields are
+  now read in both snake_case (Claude protocol + Grok's Claude-compat
+  layer) and camelCase (`hookEventName`/`toolName`/`toolInput`/
+  `sessionId`, Grok Build native); `.grok/hooks/arai.json` registers
+  only events Grok Build supports; `arai init` now tells users to run
+  `/hooks-trust` (project hooks are trust-gated); tool aliases added
+  for `write_file`/`create_file`/`edit_file`/`apply_patch` so
+  Write/Edit-scoped rules can't silently no-fire on those names
+
+
 ### Added
 
 - Ārai now builds as a library crate (`src/lib.rs`) alongside the CLI

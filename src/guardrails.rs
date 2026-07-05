@@ -35,12 +35,20 @@ pub const CANONICAL_TOOLS: &[&str] = &[
 /// checks continue to work unchanged after normalization.
 pub fn normalize_tool_name(raw: &str) -> String {
     match raw {
-        // Grok TUI / supergrok names (from docs and hook samples)
+        // Grok Build (formerly Grok TUI / supergrok) names, from docs and
+        // hook samples.  Grok also auto-maps its tools to Claude names in
+        // hook payloads for some events, so canonical names may arrive
+        // directly — the pass-through arm below covers that.
         "run_terminal_cmd" | "bash" => "Bash".to_string(),
-        "search_replace" => "Edit".to_string(),
+        "search_replace" | "edit_file" | "apply_patch" => "Edit".to_string(),
         "read_file" => "Read".to_string(),
         "list_dir" => "Glob".to_string(),
         "grep_search" => "Grep".to_string(),
+        // File-creation variants.  Without these, Write-scoped rules
+        // ("never hand-write migration files") silently never fire on a
+        // host that names its file tool this way — the domain-rules-only
+        // gate drops unknown tools.
+        "write_file" | "create_file" => "Write".to_string(),
 
         // Claude Code + existing canonical names (pass-through for idempotency)
         "Bash" | "Edit" | "Write" | "Read" | "Glob" | "Agent" | "ToolSearch" | "Grep"
@@ -50,7 +58,9 @@ pub fn normalize_tool_name(raw: &str) -> String {
         other => {
             let lower = other.to_ascii_lowercase();
             match lower.as_str() {
-                "write" | "notebookedit" | "notebook_edit" => "Write".to_string(),
+                "write" | "notebookedit" | "notebook_edit" | "write_file" | "writefile"
+                | "create_file" | "createfile" => "Write".to_string(),
+                "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit".to_string(),
                 "multiedit" | "multi_edit" => "MultiEdit".to_string(),
                 "tool_search" | "toolsearch" => "ToolSearch".to_string(),
                 _ => other.to_string(),
