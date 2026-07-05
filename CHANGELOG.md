@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-05
+
+### Added
+
+- Restructure as library + thin CLI binary ([#153](https://github.com/taniwhaai/arai/pull/153))
+- *(extends)* Authenticated arai:extends for private rule sources ([#154](https://github.com/taniwhaai/arai/pull/154))
+- *(telemetry)* Configurable endpoint for self-hosted collectors ([#155](https://github.com/taniwhaai/arai/pull/155))
+- *(audit)* Arai audit --ship — send the audit trail to your own collector ([#156](https://github.com/taniwhaai/arai/pull/156))
+
+### Documentation
+
+- *(site)* Surface v1.1 features and sharpen the value proposition ([#158](https://github.com/taniwhaai/arai/pull/158))
+
+### Fixed
+
+- *(grok)* Realign integration with current Grok Build hooks contract ([#159](https://github.com/taniwhaai/arai/pull/159))
+
+### Refactored
+
+- *(lib)* Item-level library API surface audit ([#162](https://github.com/taniwhaai/arai/pull/162)) ([#163](https://github.com/taniwhaai/arai/pull/163))
+
+### Breaking changes (library API only)
+
+The CLI surface, hook protocol, and on-disk formats are unchanged and
+remain semver-stable. If you embed the `arai` *library* crate (new in
+this release's lib/bin split), note that the pre-audit surface —
+documented as unstable in 1.0.x — changed in the audit ([#163](https://github.com/taniwhaai/arai/pull/163)):
+
+- `intent::Severity::from_str`, `intent::Timing::from_str`, and
+  `intent::Action::from_str` are renamed to `from_str_lossy` (they are
+  infallible fallback parsers, not `std::str::FromStr` impls);
+  `Timing::as_str` / `Action::as_str` now return `&'static str`
+- Internal helpers left the public API (now `pub(crate)`):
+  `parser::extract_expiry` / `extract_noenrich` / `extract_annotations`,
+  `discovery::parse_frontmatter`, `config::resolve_base_dir` +
+  `ResolvedBaseDir` / `DeprecationNotice`, `Config` hook-path helpers
+  (`claude_memory_*`, `claude_settings_path`, `grok_*_hooks_dir`),
+  `Store::count_mcp_rules` / `query_tools_for_directory`, and
+  `guardrails::sniff_content_for_tools_pub` (wrapper removed)
+
+From this release the `pub` items of the documented library modules are
+item-level audited, documented, and covered by semver.
+
+
 ### Fixed
 
 - *(grok)* Realign the Grok Build (formerly Grok TUI / supergrok)
