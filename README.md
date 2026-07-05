@@ -1,6 +1,6 @@
 # Arai
 
-Arai enforces AI coding assistant instruction files (CLAUDE.md, AGENTS.md, .cursorrules, and others) via native hooks. Rules derived from prohibitive language block the tool call outright; advisory rules inject the relevant constraint at the point it applies.
+An instruction file is advice — the model can read CLAUDE.md and still force-push anyway. Arai turns instruction files (CLAUDE.md, AGENTS.md, .cursorrules, and others) into enforcement via native hooks: rules derived from prohibitive language **block the tool call outright**, advisory rules inject the relevant constraint at the point it applies, and a tamper-evident audit log records, per rule, whether the model actually complied.
 
 ![Arai blocking a forbidden command at the PreToolUse hook](demos/block.gif)
 

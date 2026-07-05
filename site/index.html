@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Arai — Instruction files that actually work</title>
-    <meta name="description" content="Enforce AI coding assistant instruction files via hooks. One command. Runs locally. Zero cost.">
+    <meta name="description" content="Your AI assistant ignores CLAUDE.md when it matters. Arai turns instruction files into enforced guardrails — blocked tool calls, a tamper-evident audit trail, per-rule compliance stats. One command. Local. Zero cost.">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -289,7 +289,7 @@
 <section class="hero">
     <div class="container">
         <h1>Instruction files that actually block.</h1>
-        <p>Enforce your AI coding assistant instruction files via hooks. Claude Code and Grok TUI currently provide the strongest support, including the ability to block tool calls for rules marked <code>never</code>. Other tools receive advisory enforcement via MCP. Every firing is audited and correlated with what the model actually did. One command. Local. Zero cost.</p>
+        <p>You already wrote the rules &mdash; CLAUDE.md, AGENTS.md, .cursorrules. Your assistant still ignores them when it matters. Arai turns those files into enforcement: prohibitions <strong>block the tool call before it runs</strong>, every firing lands in a tamper-evident audit log, and per-rule stats show whether the model actually obeyed. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -408,7 +408,7 @@
             </div>
             <div class="feature">
                 <h3>Hash-chained audit log</h3>
-                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Day-buckets are retained indefinitely &mdash; bucketing is the segmentation, no auto-prune.</p>
+                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>
@@ -440,11 +440,31 @@
             </div>
             <div class="feature">
                 <h3>Shared policies</h3>
-                <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally. No policy service &mdash; just a markdown file upstream.</p>
+                <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally, with <code>@sha256</code> content pinning and ed25519 signatures. Private policy endpoints work too: <code>arai trust --add &lt;url&gt; --bearer-env VAR</code> sends a bearer token to that exact URL and nowhere else. No policy service &mdash; just a markdown file upstream.</p>
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
                 <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
+            </div>
+            <div class="feature">
+                <h3>Ship the evidence &mdash; to your collector</h3>
+                <p><code>arai audit --ship</code> sends day-buckets <em>with their chain heads</em> to your own HTTPS endpoint, so the hash chain verifies server-side too. Resume cursor, idempotent re-ship, bearer auth via env var. Explicit opt-in only &mdash; local-first stays the default.</p>
+            </div>
+            <div class="feature">
+                <h3>Self-hosted telemetry</h3>
+                <p>Want the usage signal on your infrastructure? Point <code>[telemetry] endpoint</code> at your own collector &mdash; same anonymous events, your retention rules. Opt-outs (<code>ARAI_TELEMETRY=off</code>, <code>DO_NOT_TRACK=1</code>) win regardless. Payload schema documented.</p>
+            </div>
+            <div class="feature">
+                <h3>Embeddable library</h3>
+                <p>Arai builds as a Rust library alongside the CLI: parser layers, rule store, guardrail matching, audit chain, and hook decisions as a crates.io dependency. Wrappers and IDE integrations consume enforcement directly instead of shelling out.</p>
+            </div>
+            <div class="feature">
+                <h3>Rule set stays live</h3>
+                <p>Edit CLAUDE.md and Arai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
+            </div>
+            <div class="feature">
+                <h3>One source of truth</h3>
+                <p><code>arai canonicalize</code> extracts your rules into <code>arai.toml</code>; <code>arai sync</code> writes per-tool instruction files from it &mdash; CLAUDE.md, AGENTS.md, .cursorrules stay in lockstep instead of drifting.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
@@ -469,7 +489,8 @@
         <ul class="compliance-list">
             <li><strong>CC6.1 logical access</strong> &mdash; audit dir locked to owner (0700/0600 on Unix; <code>icacls</code>-pinned on Windows).</li>
             <li><strong>CC6.6 supply chain</strong> &mdash; SHA-256 binary verification on every install path; <code>arai:extends</code> SSRF-hardened transport plus cache-at-rest signature.</li>
-            <li><strong>CC7.2 monitoring</strong> &mdash; per-firing JSONL audit log, hash-chained (<code>prev_hash</code> + <code>hash</code>) so tampering is detected by <code>arai audit --verify</code>.</li>
+            <li><strong>CC7.2 monitoring</strong> &mdash; per-firing JSONL audit log, hash-chained (<code>prev_hash</code> + <code>hash</code>) so tampering is detected by <code>arai audit --verify</code>; <code>arai audit --ship</code> centralises the trail on your own collector with the chain heads attached, so integrity verifies server-side too.</li>
+            <li><strong>CC6.5 data disposal</strong> &mdash; <code>arai audit --purge</code> gives age-based (<code>--older=90</code>) and project-scoped retention sweeps with <code>--dry-run</code> review; whole day-buckets only, so retained days keep a valid chain.</li>
             <li><strong>CC7.3 detection</strong> &mdash; Pre/Post correlation produces obeyed / ignored / unclear verdicts per rule. Evidence of <em>effectiveness</em>, not just attempts.</li>
             <li><strong>CC8.1 change management</strong> &mdash; <code>arai diff</code>, <code>arai test</code>, <code>arai record</code>, and the synthetic parser-coverage corpus turn rule edits into CI assertions.</li>
             <li><strong>CC9.2 vendor management</strong> &mdash; MCP server supports an optional shared-secret (<code>ARAI_MCP_AUTH_TOKEN</code>); input caps bound a misbehaving agent.</li>
@@ -509,7 +530,7 @@
 <section class="family">
     <div class="container">
         <h2>Part of the Taniwha family</h2>
-        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. Arai handles per-developer enforcement and audit locally; Kete adds the team layer on top &mdash; centralised rule distribution, aggregated compliance dashboards across a fleet of developers, semantic enrichment, and impact analysis across callers and transitive dependents. The local audit and verdict pipeline doesn&rsquo;t change. If your instruction files just need enforcing on one machine, Arai is all you need. For the full feature inventory mapped to procurement-review questions, see the <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">compliance inventory</a>.</p>
+        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. Arai handles per-developer enforcement and audit locally, and ships the self-hosting primitives &mdash; private rule sources via authenticated <code>arai:extends</code>, audit shipping to your own collector, a configurable telemetry endpoint &mdash; for teams that want to assemble centralisation themselves. Kete is the managed layer on top: rule distribution without running an endpoint, aggregated compliance dashboards across a fleet of developers, semantic enrichment, and impact analysis across callers and transitive dependents. The local audit and verdict pipeline doesn&rsquo;t change either way. If your instruction files just need enforcing on one machine, Arai is all you need. For the full feature inventory mapped to procurement-review questions, see the <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">compliance inventory</a>.</p>
         <p class="family-links"><a href="https://taniwha.ai">Taniwha.ai</a> &middot; <a href="https://taniwha.ai/kete">Kete</a> &middot; <a href="https://taniwha.ai/products">All products</a></p>
     </div>
 </section>
