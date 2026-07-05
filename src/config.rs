@@ -258,7 +258,7 @@ impl Config {
         format!("{dir_name}-{short_hash}")
     }
 
-    /// DB path: ~/.taniwha/arai/projects/<dirname>-<8char-sha256>/arai.db
+    /// DB path: `~/.taniwha/arai/projects/<dirname>-<8char-sha256>/arai.db`
     pub fn db_path(&self) -> PathBuf {
         self.arai_base_dir
             .join("projects")

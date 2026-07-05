@@ -19,10 +19,11 @@
 //!      object text doesn't appear in any extracted rule.
 //!
 //! Why driven through the binary instead of importing the parser as a
-//! library: arai is a binary-only crate (no `[lib]` target), so external
-//! tests can't `use arai::parser`.  Running the actual binary has the
-//! side benefit of exercising the full lint→parser→intent classification
-//! pipeline end-to-end.
+//! library: `arai lint --json` is the documented surface a CI pipeline
+//! or pre-commit hook would use, and running the actual binary exercises
+//! the full lint→parser→intent classification pipeline end-to-end.
+//! (`use arai::parser` is possible since the lib/bin split, but would
+//! only cover the parser in isolation.)
 
 use serde_json::Value;
 use std::path::PathBuf;

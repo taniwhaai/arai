@@ -4,7 +4,7 @@
 //! - "rule_fired": a guardrail matched and was injected
 //! - "rule_followed": the LLM changed behavior after seeing the guardrail
 //!
-//! Opt-out: ARAI_TELEMETRY=off, DO_NOT_TRACK=1, or [telemetry] enabled = false in config.toml
+//! Opt-out: ARAI_TELEMETRY=off, DO_NOT_TRACK=1, or `[telemetry] enabled = false` in config.toml
 //! Never runs on the hot hook path — events are queued and flushed async.
 
 use std::path::Path;

@@ -1,28 +1,10 @@
-mod audit;
-mod canonicalize;
-mod code_scanner;
-mod compliance;
-mod config;
-mod discovery;
-mod enrich;
-mod extends;
-mod guardrails;
-mod hooks;
-mod init;
-mod intent;
-mod mcp;
-mod migrate;
-mod parser;
-mod prompt_collector;
-mod scenarios;
-mod session;
-mod stats;
-mod store;
-mod style;
-mod sync;
-mod telemetry;
-mod upgrade;
+//! Thin CLI over the `arai` library crate: argument parsing and IO only.
+//! All enforcement logic lives in [`arai`] (see `src/lib.rs`).
 
+use arai::{
+    audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks, init,
+    intent, mcp, migrate, parser, scenarios, stats, store, style, sync, upgrade,
+};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -1569,7 +1551,7 @@ fn cmd_why(input: Vec<String>, tool: String, event: String, json: bool) -> Resul
         }
         _ => serde_json::json!({ "preview": joined }),
     };
-    let canonical_tool = crate::guardrails::normalize_tool_name(&tool);
+    let canonical_tool = guardrails::normalize_tool_name(&tool);
     let hook = serde_json::json!({
         "hook_event_name": event,
         "tool_name": canonical_tool,
