@@ -306,7 +306,7 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     // side effect the hook handler owns, not the scenario runner)
     if event == "PostToolUse" {
         if let Some(result) = hook_field_str(hook, "tool_result", "toolResult") {
-            guardrails::sniff_content_for_tools_pub(result, &mut terms);
+            guardrails::sniff_content_for_tools(result, &mut terms);
         }
         terms.sort();
         terms.dedup();
@@ -384,6 +384,12 @@ fn desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32 {
     }
 }
 
+/// Read one hook payload from stdin, run the match pipeline, and emit the
+/// hook response on stdout — the side-effectful counterpart of
+/// [`match_hook`].  Owns everything the pure path doesn't: the audit write,
+/// telemetry, session state, compliance correlation, and the process exit
+/// code.  This is what `arai guardrails --match-stdin` (the registered hook
+/// command) calls.
 pub fn handle_stdin() -> Result<(), String> {
     // Default to PreToolUse so a bad payload (oversize / non-UTF8 / non-JSON)
     // — which we can't parse to know the real event — is treated as a
@@ -723,7 +729,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                         .and_then(|o| o.get("content"))
                         .and_then(|c| c.as_str())
                     {
-                        guardrails::sniff_content_for_tools_pub(text, &mut terms);
+                        guardrails::sniff_content_for_tools(text, &mut terms);
                     }
                 }
                 terms.sort();
@@ -761,7 +767,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                 .unwrap_or(Value::Object(serde_json::Map::new()));
             let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
             if let Some(result) = hook_field_str(&hook, "tool_result", "toolResult") {
-                guardrails::sniff_content_for_tools_pub(result, &mut terms);
+                guardrails::sniff_content_for_tools(result, &mut terms);
             }
             terms.sort();
             terms.dedup();

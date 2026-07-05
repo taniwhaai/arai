@@ -3,10 +3,17 @@ use serde::{Deserialize, Serialize};
 /// Structured intent for a guardrail rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleIntent {
+    /// The action category the rule targets (create / modify / execute / general).
     pub action: Action,
+    /// When in the workflow lifecycle the rule should fire.
     pub timing: Timing,
+    /// Tool names the rule is scoped to; `"*"` means every tool.
     pub tools: Vec<String>,
+    /// For prohibitive creation rules: explicitly skip `Edit` calls
+    /// (the rule forbids *creating*, so editing an existing file is fine).
     pub allow_inverse: bool,
+    /// Which enrichment tier produced this classification
+    /// (`"taxonomy"`, `"onnx"`, `"llm"`, …).
     pub enriched_by: String,
     /// How strictly the rule should be enforced at hook time.  Derived from
     /// the predicate unless explicitly overridden.  Defaults to `Warn` so a
@@ -39,6 +46,7 @@ pub enum Severity {
 }
 
 impl Severity {
+    /// The lowercase label stored in the DB and emitted in audit JSON.
     pub fn as_str(&self) -> &'static str {
         match self {
             Severity::Block => "block",
@@ -47,12 +55,12 @@ impl Severity {
         }
     }
 
-    // Not `std::str::FromStr`: this parser is infallible — unknown input
-    // falls back to `Warn` instead of erroring, which FromStr can't express
-    // without a lying `Err` type.  Rename is deferred to the library API
-    // surface audit (#148 follow-up).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a stored severity label, falling back to `Warn` on unknown
+    /// input.  Deliberately not `std::str::FromStr`: this parser is
+    /// infallible — an unrecognised label keeps the advise-only default
+    /// instead of erroring, which `FromStr` can't express without a lying
+    /// `Err` type.
+    pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "block" => Severity::Block,
             "inform" => Severity::Inform,
@@ -87,7 +95,8 @@ pub enum Timing {
 }
 
 impl Timing {
-    pub fn as_str(&self) -> &str {
+    /// The lowercase label stored in the DB and emitted in audit JSON.
+    pub fn as_str(&self) -> &'static str {
         match self {
             Timing::ToolCall => "tool_call",
             Timing::Stop => "stop",
@@ -96,9 +105,10 @@ impl Timing {
         }
     }
 
-    // Infallible fallback parser — see the note on `Severity::from_str`.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a stored timing label, falling back to `ToolCall` on unknown
+    /// input.  Infallible fallback parser — see the note on
+    /// [`Severity::from_str_lossy`].
+    pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "tool_call" => Timing::ToolCall,
             "stop" => Timing::Stop,
@@ -108,11 +118,12 @@ impl Timing {
         }
     }
 
+    /// Whether `s` is one of the recognised timing labels.
     pub fn is_valid(s: &str) -> bool {
         matches!(s, "tool_call" | "stop" | "start" | "principle")
     }
 
-    #[allow(dead_code)]
+    /// Every recognised timing label, for validation error messages.
     pub fn valid_values() -> &'static [&'static str] {
         &["tool_call", "stop", "start", "principle"]
     }
@@ -142,7 +153,8 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn as_str(&self) -> &str {
+    /// The lowercase label stored in the DB and emitted in audit JSON.
+    pub fn as_str(&self) -> &'static str {
         match self {
             Action::Create => "create",
             Action::Modify => "modify",
@@ -151,9 +163,10 @@ impl Action {
         }
     }
 
-    // Infallible fallback parser — see the note on `Severity::from_str`.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
+    /// Parse a stored action label, falling back to `General` on unknown
+    /// input.  Infallible fallback parser — see the note on
+    /// [`Severity::from_str_lossy`].
+    pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "create" => Action::Create,
             "modify" => Action::Modify,
@@ -162,11 +175,12 @@ impl Action {
         }
     }
 
+    /// Whether `s` is one of the recognised action labels.
     pub fn is_valid(s: &str) -> bool {
         matches!(s, "create" | "modify" | "execute" | "general")
     }
 
-    #[allow(dead_code)]
+    /// Every recognised action label, for validation error messages.
     pub fn valid_values() -> &'static [&'static str] {
         &["create", "modify", "execute", "general"]
     }
@@ -394,12 +408,18 @@ fn contains_known_tool_ref(lower_text: &str) -> bool {
 }
 
 /// Classify a rule into structured intent based on its predicate and object text.
-/// Optionally pass the subject for tool-reference checking.
-#[allow(dead_code)]
+/// Shorthand for [`classify_rule_with_subject`] without a subject.
 pub fn classify_rule(predicate: &str, object: &str) -> RuleIntent {
     classify_rule_with_subject(predicate, object, None)
 }
 
+/// Classify a rule into structured intent (Tier 1, taxonomy-based).
+///
+/// Scores the object text against the creation / modification / execution
+/// phrase taxonomies to pick an [`Action`], derives [`Timing`] (rules that
+/// reference a known tool always fire on tool calls), maps the action to a
+/// tool scope, and derives [`Severity`] from the predicate.  Pass the rule's
+/// subject when available — it participates in the known-tool check.
 pub fn classify_rule_with_subject(
     predicate: &str,
     object: &str,
@@ -689,10 +709,10 @@ mod tests {
     #[test]
     fn test_severity_roundtrip_string() {
         for sev in [Severity::Block, Severity::Warn, Severity::Inform] {
-            assert_eq!(Severity::from_str(sev.as_str()), sev);
+            assert_eq!(Severity::from_str_lossy(sev.as_str()), sev);
         }
         // Unknown severities fall back to Warn so rule sets stay advise-only
         // until re-classified.
-        assert_eq!(Severity::from_str("bogus"), Severity::Warn);
+        assert_eq!(Severity::from_str_lossy("bogus"), Severity::Warn);
     }
 }

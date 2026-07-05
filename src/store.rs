@@ -3,6 +3,11 @@ use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+/// SQLite-backed rule store for one project: source files, extracted
+/// triples, classified intent, severity overrides, the code graph, and the
+/// disabled-rules list.  Open one with [`Store::open`] at
+/// [`Config::db_path`](crate::config::Config::db_path); migrations run
+/// automatically on open.
 pub struct Store {
     conn: Connection,
 }
@@ -16,6 +21,9 @@ type Migration = fn(&Connection) -> rusqlite::Result<()>;
 const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3, migrate_v4];
 
 impl Store {
+    /// Open (or create) the store at `db_path`, creating parent directories,
+    /// setting connection PRAGMAs (WAL journal etc.), and running any
+    /// pending schema migrations.
     pub fn open(db_path: &Path) -> Result<Store, String> {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
@@ -243,6 +251,7 @@ impl Store {
         }
     }
 
+    /// Every source-file path currently in the store, sorted.
     pub fn list_files(&self) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT path FROM files ORDER BY path")?;
         let paths = stmt
@@ -251,6 +260,9 @@ impl Store {
         Ok(paths)
     }
 
+    /// Count of stored rules with an actionable predicate (the same
+    /// predicate filter [`Store::load_guardrails`] applies, without the
+    /// expiry / disabled filters).
     pub fn guardrail_count(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM triples WHERE p IN ('forbids','must_not','never','always','requires','enforces','prefers')",
@@ -263,7 +275,7 @@ impl Store {
     /// bound the number of MCP-source rules so a runaway agent can't fill the
     /// store.  MCP rules live under synthetic file paths starting with
     /// `manual://arai-mcp/` (see `mcp::tool_add_guard`).
-    pub fn count_mcp_rules(&self) -> rusqlite::Result<i64> {
+    pub(crate) fn count_mcp_rules(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM triples t \
              JOIN files f ON f.id = t.file_id \
@@ -273,6 +285,8 @@ impl Store {
         )
     }
 
+    /// Read a value from the key/value `meta` table (scan timestamps,
+    /// schema bookkeeping).  `None` when the key is absent.
     pub fn get_meta(&self, key: &str) -> rusqlite::Result<Option<String>> {
         self.conn
             .query_row(
@@ -286,6 +300,7 @@ impl Store {
             })
     }
 
+    /// Insert or update a value in the key/value `meta` table.
     pub fn set_meta(&self, key: &str, value: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -319,7 +334,10 @@ impl Store {
     }
 
     /// Query what tools are imported by files in a given directory.
-    pub fn query_tools_for_directory(&self, directory: &str) -> rusqlite::Result<Vec<String>> {
+    pub(crate) fn query_tools_for_directory(
+        &self,
+        directory: &str,
+    ) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self
             .conn
             .prepare("SELECT DISTINCT tool_name FROM code_graph WHERE directory = ?1")?;
@@ -425,12 +443,12 @@ impl Store {
 
                 let effective = severity_override
                     .as_deref()
-                    .map(crate::intent::Severity::from_str)
-                    .unwrap_or_else(|| crate::intent::Severity::from_str(&severity_str));
+                    .map(crate::intent::Severity::from_str_lossy)
+                    .unwrap_or_else(|| crate::intent::Severity::from_str_lossy(&severity_str));
 
                 Ok(crate::intent::RuleIntent {
-                    action: crate::intent::Action::from_str(&action_str),
-                    timing: crate::intent::Timing::from_str(&timing_str),
+                    action: crate::intent::Action::from_str_lossy(&action_str),
+                    timing: crate::intent::Timing::from_str_lossy(&timing_str),
                     tools,
                     allow_inverse: allow_inverse != 0,
                     enriched_by,
@@ -535,7 +553,7 @@ impl Store {
 
             let from = had
                 .as_deref()
-                .map(crate::intent::Severity::from_str)
+                .map(crate::intent::Severity::from_str_lossy)
                 .unwrap_or_else(|| crate::intent::Severity::from_predicate(&g.predicate));
             let to = crate::intent::Severity::from_predicate(&g.predicate);
             cleared.push(SeverityChange {
@@ -571,7 +589,7 @@ impl Store {
             let source: String = row.get(4)?;
             let override_str: String = row.get(5)?;
             let from = crate::intent::Severity::from_predicate(&predicate);
-            let to = crate::intent::Severity::from_str(&override_str);
+            let to = crate::intent::Severity::from_str_lossy(&override_str);
             Ok(SeverityChange {
                 triple_id,
                 subject,
@@ -698,17 +716,23 @@ pub struct RuleIssues {
     pub opposing: Vec<OpposingRules>,
 }
 
+/// A rule whose exact (subject, predicate, object) appears in more than one
+/// source file.
 #[derive(Debug, serde::Serialize)]
 pub struct DuplicateRule {
     pub subject: String,
     pub predicate: String,
     pub object: String,
+    /// The distinct source files the rule appears in, sorted.
     pub sources: Vec<String>,
 }
 
+/// A subject that carries both prohibitive and required predicates —
+/// possibly (not necessarily) contradictory rules worth a human look.
 #[derive(Debug, serde::Serialize)]
 pub struct OpposingRules {
     pub subject: String,
+    /// The distinct predicates seen on this subject, sorted.
     pub predicates: Vec<String>,
 }
 
@@ -824,12 +848,12 @@ fn parse_intent_from_row(
 
     let effective = severity_override
         .as_deref()
-        .map(crate::intent::Severity::from_str)
-        .unwrap_or_else(|| crate::intent::Severity::from_str(&severity_str));
+        .map(crate::intent::Severity::from_str_lossy)
+        .unwrap_or_else(|| crate::intent::Severity::from_str_lossy(&severity_str));
 
     Ok(Some(crate::intent::RuleIntent {
-        action: crate::intent::Action::from_str(&action_str),
-        timing: crate::intent::Timing::from_str(&timing_str),
+        action: crate::intent::Action::from_str_lossy(&action_str),
+        timing: crate::intent::Timing::from_str_lossy(&timing_str),
         tools,
         allow_inverse: allow_inverse != 0,
         enriched_by,
@@ -837,14 +861,27 @@ fn parse_intent_from_row(
     }))
 }
 
+/// One active rule as loaded from the store — a [`Triple`] joined with its
+/// classified intent and ready for matching.  Produced by
+/// [`Store::load_guardrails`] / [`Store::rules_for_file`]; consumed by
+/// `guardrails::match_guardrails` and everything downstream of it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Guardrail {
+    /// Stable row id of the underlying triple — the join key used across
+    /// the audit log, compliance verdicts, and session seen-rule tracking.
     pub triple_id: i64,
+    /// Rule subject (tool / domain).
     pub subject: String,
+    /// Normalised modality (`never`, `always`, `requires`, …).
     pub predicate: String,
+    /// What the rule requires or forbids.
     pub object: String,
+    /// Extraction confidence inherited from the source file type.
     pub confidence: f64,
+    /// Source path recorded on the triple at extraction time (may be empty
+    /// for older rows; prefer `file_path`).
     pub source_file: String,
+    /// Path of the source file row the triple is attached to.
     pub file_path: String,
     /// Parser layer (1..=6) that produced this rule.  Preserved through the
     /// store so `arai audit` / `arai why` can trace a firing back to the

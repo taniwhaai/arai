@@ -11,7 +11,6 @@ const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
 /// These are the names that appear in SKIP_TOOLS, extract_terms dispatch, etc.
 /// This list serves as the single source of truth for tool names coming from
 /// any supported coding agent hook (Claude Code, Grok TUI, etc.).
-#[allow(dead_code)]
 pub const CANONICAL_TOOLS: &[&str] = &[
     "Bash",
     "Edit",
@@ -237,11 +236,6 @@ fn extract_file_terms(tool_input: &Value) -> Vec<String> {
     terms
 }
 
-/// Public entry point for content sniffing from hooks.
-pub fn sniff_content_for_tools_pub(content: &str, terms: &mut Vec<String>) {
-    sniff_content_for_tools(content, terms);
-}
-
 /// Compiled Aho-Corasick automaton over `KNOWN_TOOLS`, ASCII-case-insensitive.
 /// Built once per process (the hook is a fresh process per Claude Code tool
 /// call, so "per process" is "per call" — the build cost is paid once instead
@@ -265,7 +259,7 @@ fn known_tools_automaton() -> &'static AhoCorasick {
 /// boundaries are checked on the byte before/after each match using
 /// `is_ascii_alphanumeric`; non-ASCII bytes count as boundaries (which is
 /// what we want — `KNOWN_TOOLS` are all ASCII).
-fn sniff_content_for_tools(content: &str, terms: &mut Vec<String>) {
+pub(crate) fn sniff_content_for_tools(content: &str, terms: &mut Vec<String>) {
     let bytes = content.as_bytes();
     let automaton = known_tools_automaton();
     // Keep "found once is enough" semantics — track which patterns have

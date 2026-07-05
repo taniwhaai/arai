@@ -58,9 +58,12 @@
 //! # Stability
 //!
 //! The CLI surface, hook protocol, and on-disk formats are semver-stable
-//! (v1.0.0).  The **library API is not yet** — item-level surface audit is
-//! ongoing, and signatures may change in minor releases until the library
-//! API is declared stable.  Pin a minor version if you embed Arai.
+//! (v1.0.0).  The library API surface has been item-level audited: every
+//! `pub` item in the documented modules above is intentional — documented,
+//! and kept compatible under semver like any other Rust library API.
+//! Internal helpers are `pub(crate)`, and the `#[doc(hidden)]` CLI-support
+//! modules remain exempt from any compatibility promise — don't build on
+//! those.
 
 pub mod audit;
 pub mod canonicalize;

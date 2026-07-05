@@ -35,6 +35,8 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// The lowercase label emitted in Compliance audit events and accepted
+    /// by `arai audit --outcome=`.
     pub fn as_str(&self) -> &'static str {
         match self {
             Outcome::Obeyed => "obeyed",

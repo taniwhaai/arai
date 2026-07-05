@@ -814,7 +814,7 @@ fn apply_classifications(
         let mut is_partial = false;
 
         let action = if Action::is_valid(raw_action) {
-            Action::from_str(raw_action)
+            Action::from_str_lossy(raw_action)
         } else {
             eprintln!(
                 "    \u{26a0} Rule '{}': unrecognized action '{}', using fuzzy match",
@@ -825,7 +825,7 @@ fn apply_classifications(
         };
 
         let timing_raw = if crate::intent::Timing::is_valid(raw_timing) {
-            crate::intent::Timing::from_str(raw_timing)
+            crate::intent::Timing::from_str_lossy(raw_timing)
         } else {
             eprintln!(
                 "    \u{26a0} Rule '{}': unrecognized timing '{}', using fuzzy match",
