@@ -125,6 +125,40 @@
             font-size: 1.5rem; font-weight: 700;
             text-align: center; margin-bottom: 2.5rem;
         }
+        .feature-group { margin-bottom: 3rem; }
+        .feature-group:last-child { margin-bottom: 0; }
+        .group-title {
+            font-size: 1.15rem; font-weight: 700;
+            margin-bottom: 0.35rem; color: var(--text);
+        }
+        .group-blurb {
+            font-size: 0.9rem; color: var(--text-secondary);
+            margin-bottom: 1.25rem;
+        }
+        .eyebrow {
+            font-size: 0.8rem; font-weight: 600;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            color: var(--primary); margin-bottom: 0.75rem;
+        }
+        .contrast {
+            padding: 3.5rem 0; border-top: 1px solid var(--border);
+        }
+        .contrast h2 {
+            font-size: 1.5rem; font-weight: 700;
+            text-align: center; margin-bottom: 1.75rem;
+        }
+        .contrast-table {
+            max-width: 700px; margin: 0 auto;
+            border-collapse: collapse; width: 100%;
+            font-size: 0.9rem;
+        }
+        .contrast-table th, .contrast-table td {
+            text-align: left; padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .contrast-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .contrast-table td:last-child { color: var(--primary); font-weight: 500; }
+        .contrast-table td:first-child { color: var(--text-secondary); }
         .feature-grid {
             display: grid; grid-template-columns: repeat(3, 1fr);
             gap: 2rem;
@@ -288,13 +322,27 @@
 
 <section class="hero">
     <div class="container">
+        <div class="eyebrow">Runtime policy enforcement for AI coding agents</div>
         <h1>Instruction files that actually block.</h1>
-        <p>You already wrote the rules &mdash; CLAUDE.md, AGENTS.md, .cursorrules. Your assistant still ignores them when it matters. Arai turns those files into enforcement: prohibitions <strong>block the tool call before it runs</strong>, every firing lands in a tamper-evident audit log, and per-rule stats show whether the model actually obeyed. One command. Local. Zero cost.</p>
+        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Arai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
             <span class="copy-hint">click to copy</span>
         </div>
+    </div>
+</section>
+
+<section class="contrast">
+    <div class="container">
+        <h2>Why not just write a CLAUDE.md?</h2>
+        <table class="contrast-table">
+            <tr><th>An instruction file alone</th><th>With Arai</th></tr>
+            <tr><td>Advice the model can skip under pressure</td><td>Prohibitions deny the tool call at the hook</td></tr>
+            <tr><td>No record of what was ignored</td><td>Hash-chained audit log; <code>arai audit --verify</code></td></tr>
+            <tr><td>You hope it listened</td><td>Per-rule obeyed / ignored / unclear verdicts</td></tr>
+            <tr><td>Rewrite your rules into a new policy format</td><td>Your existing files <em>are</em> the policy</td></tr>
+        </table>
     </div>
 </section>
 
@@ -356,8 +404,15 @@
 
 <section class="features">
     <div class="container">
-        <h2>Smart, not noisy</h2>
-        <div class="feature-grid">
+        <h2>Built around outcomes</h2>
+        <div class="feature-group">
+            <h3 class="group-title">Stop bad actions before they run</h3>
+            <p class="group-blurb">Prohibitions deny the tool call at the hook — before the file is written or the command runs.</p>
+            <div class="feature-grid">
+            <div class="feature">
+                <h3>Block, don&rsquo;t just advise</h3>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok TUI (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
+            </div>
             <div class="feature">
                 <h3>Intent-aware</h3>
                 <p>"Never hand-write migrations" fires on Write but not Edit. Editing existing migrations is fine.</p>
@@ -371,64 +426,48 @@
                 <p>"Never push without tests" silences after cargo test runs. Arai remembers what happened this session.</p>
             </div>
             <div class="feature">
-                <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok TUI (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
+                <h3>Rule set stays live</h3>
+                <p>Edit CLAUDE.md and Arai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
             </div>
             <div class="feature">
-                <h3>Per-rule rollout</h3>
-                <p><code>arai severity alembic block</code> pins one rule to deny while the rest of the set stays in advise. Survives <code>arai scan</code>. Ship the set in advise mode, watch which rules earn the trust, then flip them one at a time.</p>
+                <h3>Zero noise</h3>
+                <p>Only fires domain-specific rules. Principles already in your instruction files stay silent.</p>
+            </div>
+            </div>
+        </div>
+        <div class="feature-group">
+            <h3 class="group-title">Know what happened &mdash; and prove it</h3>
+            <p class="group-blurb">A tamper-evident record of every firing, correlated with what the model actually did.</p>
+            <div class="feature-grid">
+            <div class="feature">
+                <h3>Hash-chained audit log</h3>
+                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain.</p>
             </div>
             <div class="feature">
                 <h3>Compliance tracking</h3>
                 <p>Every PostToolUse is correlated against its PreToolUse firings. Each rule gets an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict. <code>arai audit --outcome=ignored</code> tells you which rules the model keeps flouting; filter to a specific rule with <code>--rule</code>.</p>
             </div>
             <div class="feature">
-                <h3>Derivation trace</h3>
-                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[CLAUDE.md:42 layer-1]</code> or <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
-            </div>
-            <div class="feature">
-                <h3>Explain before you commit</h3>
-                <p><code>arai why "git push --force"</code> replays a hypothetical tool call through the live match pipeline. Read-only. Ship new rules with confidence.</p>
-            </div>
-            <div class="feature">
-                <h3>Self-pruning rules</h3>
-                <p>Annotate a rule with <code>(expires 2026-12-31)</code> or <code>(until 2027-06-30)</code>. Arai filters it out after the date automatically &mdash; perfect for incident-driven rules that have a shelf life.</p>
-            </div>
-            <div class="feature">
-                <h3>Audit log</h3>
-                <p>Every firing is appended to a local JSONL you can query. See which rules fire, on which tools, for which prompts. Nothing leaves your machine.</p>
-            </div>
-            <div class="feature">
-                <h3>Local-first, air-gap friendly</h3>
-                <p>No network on the hook hot path. Enforcement, audit, compliance verdicts, and stats all run against the local SQLite + JSONL. Works offline, in restricted environments, and during outages &mdash; nothing to monitor, nothing to vendor-onboard.</p>
-            </div>
-            <div class="feature">
-                <h3>Supply-chain hardened</h3>
-                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects &mdash; and cached upstream files carry a SHA-256 sidecar so an at-rest tamper is detected before the rules reach the parser. MCP-source rules capped per project to bound a malfunctioning agent.</p>
-            </div>
-            <div class="feature">
-                <h3>Hash-chained audit log</h3>
-                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain.</p>
-            </div>
-            <div class="feature">
-                <h3>MCP authentication</h3>
-                <p>The agent-facing MCP server supports an optional shared-secret via <code>ARAI_MCP_AUTH_TOKEN</code>. When set, <code>initialize</code> must present a matching token (constant-time compare) before any tool call succeeds. Open by default for backwards compatibility.</p>
-            </div>
-            <div class="feature">
                 <h3>Per-rule compliance ratios</h3>
                 <p><code>arai stats</code> rolls up the audit log into <em>fires / obeyed / ignored / ratio</em> per rule. Now you can answer "is this rule actually working?" &mdash; not "is it firing?" The &#x26A0; flag highlights low-ratio rules with enough volume to mean it.</p>
+            </div>
+            <div class="feature">
+                <h3>Derivation trace</h3>
+                <p>Every firing carries source file, line, and parser layer. Hook output shows the origin (e.g. <code>[CLAUDE.md:42 layer-1]</code> or <code>[AGENTS.md:42 layer-1]</code>) — no more guessing why a rule fired.</p>
             </div>
             <div class="feature">
                 <h3>Token economics</h3>
                 <p>Repeat firings of the same rule in a session emit a compact one-liner instead of re-injecting the full payload. <code>arai stats</code> surfaces a calibrated <em>tokens saved</em> estimate from suppressed repeats plus denied-and-honored mistakes &mdash; secondary signal, primary mission stays correctness.</p>
             </div>
-            <div class="feature">
-                <h3>Rule regression tests</h3>
-                <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
             </div>
+        </div>
+        <div class="feature-group">
+            <h3 class="group-title">Ship rule changes safely</h3>
+            <p class="group-blurb">Treat your rule set like code: preview, diff, test, roll out incrementally, let stale rules expire.</p>
+            <div class="feature-grid">
             <div class="feature">
-                <h3>Capture to replay</h3>
-                <p><code>arai record</code> turns real firings from the audit log into scenario fixtures. You don&rsquo;t hand-write regression tests &mdash; you capture the ones that matter and pin them.</p>
+                <h3>Explain before you commit</h3>
+                <p><code>arai why "git push --force"</code> replays a hypothetical tool call through the live match pipeline. Read-only. Ship new rules with confidence.</p>
             </div>
             <div class="feature">
                 <h3>Preview before commit</h3>
@@ -439,12 +478,34 @@
                 <p><code>arai diff</code> shows what an edit would change in the live rule set &mdash; added, removed, moved &mdash; before you commit it. Pre-commit-hook fodder via <code>--json</code>.</p>
             </div>
             <div class="feature">
-                <h3>Shared policies</h3>
-                <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally, with <code>@sha256</code> content pinning and ed25519 signatures. Private policy endpoints work too: <code>arai trust --add &lt;url&gt; --bearer-env VAR</code> sends a bearer token to that exact URL and nowhere else. No policy service &mdash; just a markdown file upstream.</p>
+                <h3>Rule regression tests</h3>
+                <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
             </div>
             <div class="feature">
-                <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
+                <h3>Capture to replay</h3>
+                <p><code>arai record</code> turns real firings from the audit log into scenario fixtures. You don&rsquo;t hand-write regression tests &mdash; you capture the ones that matter and pin them.</p>
+            </div>
+            <div class="feature">
+                <h3>Per-rule rollout</h3>
+                <p><code>arai severity alembic block</code> pins one rule to deny while the rest of the set stays in advise. Survives <code>arai scan</code>. Ship the set in advise mode, watch which rules earn the trust, then flip them one at a time.</p>
+            </div>
+            <div class="feature">
+                <h3>Self-pruning rules</h3>
+                <p>Annotate a rule with <code>(expires 2026-12-31)</code> or <code>(until 2027-06-30)</code>. Arai filters it out after the date automatically &mdash; perfect for incident-driven rules that have a shelf life.</p>
+            </div>
+            <div class="feature">
+                <h3>One source of truth</h3>
+                <p><code>arai canonicalize</code> extracts your rules into <code>arai.toml</code>; <code>arai sync</code> writes per-tool instruction files from it &mdash; CLAUDE.md, AGENTS.md, .cursorrules stay in lockstep instead of drifting.</p>
+            </div>
+            </div>
+        </div>
+        <div class="feature-group">
+            <h3 class="group-title">Scale to teams</h3>
+            <p class="group-blurb">Org-wide policy and centralised evidence on your own infrastructure &mdash; opt-in, never by default.</p>
+            <div class="feature-grid">
+            <div class="feature">
+                <h3>Shared policies</h3>
+                <p>Inherit org-wide rules with one directive: <code>arai:extends https://...</code>. Trusted per URL, HTTPS only, cached locally, with <code>@sha256</code> content pinning and ed25519 signatures. Private policy endpoints work too: <code>arai trust --add &lt;url&gt; --bearer-env VAR</code> sends a bearer token to that exact URL and nowhere else. No policy service &mdash; just a markdown file upstream.</p>
             </div>
             <div class="feature">
                 <h3>Ship the evidence &mdash; to your collector</h3>
@@ -455,28 +516,39 @@
                 <p>Want the usage signal on your infrastructure? Point <code>[telemetry] endpoint</code> at your own collector &mdash; same anonymous events, your retention rules. Opt-outs (<code>ARAI_TELEMETRY=off</code>, <code>DO_NOT_TRACK=1</code>) win regardless. Payload schema documented.</p>
             </div>
             <div class="feature">
+                <h3>Agent-authored guards</h3>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
+            </div>
+            <div class="feature">
+                <h3>MCP authentication</h3>
+                <p>The agent-facing MCP server supports an optional shared-secret via <code>ARAI_MCP_AUTH_TOKEN</code>. When set, <code>initialize</code> must present a matching token (constant-time compare) before any tool call succeeds. Open by default for backwards compatibility.</p>
+            </div>
+            </div>
+        </div>
+        <div class="feature-group">
+            <h3 class="group-title">Runs on your terms</h3>
+            <p class="group-blurb">Local-first, fast, verifiable, and embeddable &mdash; nothing to monitor, nothing to vendor-onboard.</p>
+            <div class="feature-grid">
+            <div class="feature">
+                <h3>Local-first, air-gap friendly</h3>
+                <p>No network on the hook hot path. Enforcement, audit, compliance verdicts, and stats all run against the local SQLite + JSONL. Works offline, in restricted environments, and during outages &mdash; nothing to monitor, nothing to vendor-onboard.</p>
+            </div>
+            <div class="feature">
+                <h3>~30ms latency</h3>
+                <p>End-to-end per tool call, dominated by binary launch. SQLite lookups on the hook path. No network calls. No LLM calls at runtime.</p>
+            </div>
+            <div class="feature">
+                <h3>Supply-chain hardened</h3>
+                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects &mdash; and cached upstream files carry a SHA-256 sidecar so an at-rest tamper is detected before the rules reach the parser. MCP-source rules capped per project to bound a malfunctioning agent.</p>
+            </div>
+            <div class="feature">
                 <h3>Embeddable library</h3>
                 <p>Arai builds as a Rust library alongside the CLI: parser layers, rule store, guardrail matching, audit chain, and hook decisions as a crates.io dependency. Wrappers and IDE integrations consume enforcement directly instead of shelling out.</p>
-            </div>
-            <div class="feature">
-                <h3>Rule set stays live</h3>
-                <p>Edit CLAUDE.md and Arai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
-            </div>
-            <div class="feature">
-                <h3>One source of truth</h3>
-                <p><code>arai canonicalize</code> extracts your rules into <code>arai.toml</code>; <code>arai sync</code> writes per-tool instruction files from it &mdash; CLAUDE.md, AGENTS.md, .cursorrules stay in lockstep instead of drifting.</p>
-            </div>
-            <div class="feature">
-                <h3>Zero noise</h3>
-                <p>Only fires domain-specific rules. Principles already in your instruction files stay silent.</p>
             </div>
             <div class="feature">
                 <h3>Any LLM enrichment</h3>
                 <p>Classify rules via Claude, Ollama, or any LLM CLI. Or use the built-in sentence transformer.</p>
             </div>
-            <div class="feature">
-                <h3>~30ms latency</h3>
-                <p>End-to-end per tool call, dominated by binary launch. SQLite lookups on the hook path. No network calls. No LLM calls at runtime.</p>
             </div>
         </div>
     </div>
