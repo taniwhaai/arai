@@ -260,6 +260,15 @@ pub struct TrustEntry {
     /// Optional hex-encoded ed25519 public key (64 chars = 32 bytes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pubkey: Option<String>,
+    /// Optional name of an environment variable holding a bearer token for
+    /// this URL.  Only the variable *name* is stored — the secret itself
+    /// never touches disk, logs, audit, or telemetry.  When set and the
+    /// variable is non-empty at fetch time, requests to this exact URL (and
+    /// its `<url>.sig` sidecar) carry `Authorization: Bearer <token>`.
+    /// Redirects are already hard-disabled on the fetch path, so the header
+    /// can never follow a 30x to another host.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bearer_env: Option<String>,
 }
 
 /// The in-memory representation of `trusted_extends.toml`.
@@ -297,6 +306,7 @@ impl From<TrustEntryOrString> for TrustEntry {
             TrustEntryOrString::Url(u) => TrustEntry {
                 url: u,
                 pubkey: None,
+                bearer_env: None,
             },
         }
     }
@@ -364,19 +374,31 @@ pub fn is_trusted(url: &str, arai_base: &Path) -> bool {
 
 /// Add a URL to the trust list.  Idempotent.  HTTPS only.
 /// `pubkey` is an optional 64-character lowercase hex string.
-pub fn trust_add(url: &str, arai_base: &Path, pubkey: Option<&str>) -> Result<bool, String> {
+/// `bearer_env` is an optional environment-variable *name* holding a bearer
+/// token for this URL — the secret itself is never written anywhere.
+pub fn trust_add(
+    url: &str,
+    arai_base: &Path,
+    pubkey: Option<&str>,
+    bearer_env: Option<&str>,
+) -> Result<bool, String> {
     validate_url(url)?;
     if let Some(pk) = pubkey {
         validate_pubkey_hex(pk)?;
     }
+    if let Some(name) = bearer_env {
+        validate_env_var_name(name)?;
+    }
     let mut tf = read_trust(arai_base);
     if let Some(existing) = tf.trusted.iter_mut().find(|e| e.url == url) {
-        // URL already present; update pubkey only if it changed.
+        // URL already present; update pubkey/bearer_env only if changed.
         let new_pk = pubkey.map(|s| s.to_ascii_lowercase());
-        if existing.pubkey == new_pk {
+        let new_bearer = bearer_env.map(|s| s.to_string());
+        if existing.pubkey == new_pk && existing.bearer_env == new_bearer {
             return Ok(false); // idempotent: no change
         }
         existing.pubkey = new_pk;
+        existing.bearer_env = new_bearer;
         tf.trusted.sort_by(|a, b| a.url.cmp(&b.url));
         write_trust(arai_base, &tf)?;
         return Ok(true);
@@ -384,10 +406,55 @@ pub fn trust_add(url: &str, arai_base: &Path, pubkey: Option<&str>) -> Result<bo
     tf.trusted.push(TrustEntry {
         url: url.to_string(),
         pubkey: pubkey.map(|s| s.to_ascii_lowercase()),
+        bearer_env: bearer_env.map(|s| s.to_string()),
     });
     tf.trusted.sort_by(|a, b| a.url.cmp(&b.url));
     write_trust(arai_base, &tf)?;
     Ok(true)
+}
+
+/// Validate an environment-variable name for `bearer_env`.  Conservative
+/// POSIX shape — a name that fails this was almost certainly a pasted token
+/// rather than a variable name, and rejecting it keeps secrets out of the
+/// trust file.  The error message deliberately does not echo the value for
+/// the same reason.
+fn validate_env_var_name(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let head_ok = chars
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false);
+    if !head_ok || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(
+            "invalid --bearer-env: must be an environment variable NAME \
+             ([A-Za-z_][A-Za-z0-9_]*), not the token itself"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Resolve the bearer token for a trust entry from the environment.
+/// Pure with respect to the environment via `env_lookup` so the decision
+/// table is unit-testable.  Returns `None` when the entry has no
+/// `bearer_env` configured or the variable is unset/empty.
+fn resolve_bearer_with(
+    entry: &TrustEntry,
+    env_lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let name = entry.bearer_env.as_deref()?;
+    env_lookup(name).filter(|v| !v.is_empty())
+}
+
+/// Remove every occurrence of `secret` from a message before it can reach
+/// stderr or an `Err` return.  Belt-and-braces: none of our own messages
+/// interpolate the token, but transport-layer errors (`ureq`) are outside
+/// our control and this makes the hygiene guarantee unconditional.
+fn scrub_secret(msg: String, secret: Option<&str>) -> String {
+    match secret {
+        Some(s) if !s.is_empty() => msg.replace(s, "[redacted]"),
+        _ => msg,
+    }
 }
 
 /// Remove a URL from the trust list.  Returns true if it was present.
@@ -732,6 +799,20 @@ pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, S
     // Unwrap is safe: is_trusted just confirmed the entry exists.
     let entry = find_trust_entry(url, arai_base).unwrap();
 
+    // Resolve the per-URL bearer token (if configured) from the environment.
+    // The token is sent ONLY to this exact trusted URL and its `.sig`
+    // sidecar — never logged, never audited, and redirects are disabled so
+    // it cannot leak to another host via a 30x.
+    let bearer = resolve_bearer_with(&entry, |n| std::env::var(n).ok());
+    if bearer.is_none() {
+        if let Some(name) = entry.bearer_env.as_deref() {
+            eprintln!(
+                "arai: bearer env var {name} is unset or empty; fetching {url} unauthenticated"
+            );
+        }
+    }
+    let fetch_sig = |sig_url: &str| fetch_sig_remote(sig_url, bearer.as_deref());
+
     let path = url_cache_path(url, arai_base);
     let sig_path = url_cache_sig_path(url, arai_base);
 
@@ -739,12 +820,10 @@ pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, S
         if let Some(content) = read_cache_verified(&path, &sig_path, url) {
             // Run pin + signature verification on the cached content.
             // AC4: pin check runs on the stale-cache path too.
-            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig_remote).map_err(
-                |e| {
-                    eprintln!("{e}");
-                    e
-                },
-            )?;
+            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig).map_err(|e| {
+                eprintln!("{e}");
+                e
+            })?;
             return Ok(content);
         }
         // Verification failed (or sidecar missing on a chain-aware install) —
@@ -752,15 +831,13 @@ pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, S
         // mismatched cache file; that's the whole point of the signature.
     }
 
-    match fetch_remote(url) {
+    match fetch_remote(url, bearer.as_deref()) {
         Ok(content) => {
             // Pin + signature check on freshly-fetched content before we cache it.
-            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig_remote).map_err(
-                |e| {
-                    eprintln!("{e}");
-                    e
-                },
-            )?;
+            verify_content(url, pin, content.as_bytes(), &entry, fetch_sig).map_err(|e| {
+                eprintln!("{e}");
+                e
+            })?;
 
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -795,7 +872,7 @@ pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, S
             // outlive the TTL.
             if let Some(cached) = read_cache_verified(&path, &sig_path, url) {
                 // AC4: pin + signature check on stale-cache fallback too.
-                match verify_content(url, pin, cached.as_bytes(), &entry, fetch_sig_remote) {
+                match verify_content(url, pin, cached.as_bytes(), &entry, fetch_sig) {
                     Ok(_) => {
                         eprintln!(
                             "arai: extends fetch failed for {url}, using verified stale cache ({fetch_err})"
@@ -816,18 +893,23 @@ pub fn fetch(url: &str, pin: Option<&str>, arai_base: &Path) -> Result<String, S
 
 /// Fetch the signature sidecar for a URL using the existing HTTPS fetch posture.
 /// Used as the default `fetch_sig` callback in the live code path.
-fn fetch_sig_remote(sig_url: &str) -> Result<Vec<u8>, String> {
+/// `bearer` is the resolved token for the *parent* trusted URL — the sidecar
+/// lives at `<url>.sig` on the same origin, so a private policy source
+/// protects both with the same credential.
+fn fetch_sig_remote(sig_url: &str, bearer: Option<&str>) -> Result<Vec<u8>, String> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS)))
         .max_redirects(0)
         .build()
         .new_agent();
 
-    let response = agent
-        .get(sig_url)
-        .header("Accept-Encoding", "identity")
+    let mut request = agent.get(sig_url).header("Accept-Encoding", "identity");
+    if let Some(token) = bearer {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = request
         .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        .map_err(|e| scrub_secret(format!("HTTP error: {e}"), bearer))?;
 
     let (parts, mut body) = response.into_parts();
     if !parts.status.is_success() {
@@ -838,7 +920,7 @@ fn fetch_sig_remote(sig_url: &str) -> Result<Vec<u8>, String> {
     body.with_config()
         .limit(256)
         .read_to_vec()
-        .map_err(|e| format!("read body: {e}"))
+        .map_err(|e| scrub_secret(format!("read body: {e}"), bearer))
 }
 
 /// Read a cached upstream policy and verify its SHA-256 against the sidecar.
@@ -887,24 +969,32 @@ fn short_hash(h: &str) -> String {
     h.chars().take(12).collect()
 }
 
-fn fetch_remote(url: &str) -> Result<String, String> {
+fn fetch_remote(url: &str, bearer: Option<&str>) -> Result<String, String> {
     // Disable redirects entirely — the trust list is per exact URL, so a
     // 30x to a different URL would bypass it.  Trusting the redirect
-    // target separately requires the user to add it explicitly.
+    // target separately requires the user to add it explicitly.  This is
+    // also what guarantees a configured bearer token is only ever sent to
+    // the exact trusted URL: there is no follow-up request to leak it to.
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(FETCH_TIMEOUT_SECS)))
         .max_redirects(0)
         .build()
         .new_agent();
 
-    let response = agent
+    let mut request = agent
         .get(url)
         // Force identity encoding so a tiny gzip blob can't decompress past
         // the size cap before we notice.  Trade-off: slightly larger transfers
         // for a hard pre-decompression bound.
-        .header("Accept-Encoding", "identity")
+        .header("Accept-Encoding", "identity");
+    if let Some(token) = bearer {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = request
         .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        // Transport errors come from outside our control — scrub the token
+        // in case a library error ever echoes request headers.
+        .map_err(|e| scrub_secret(format!("HTTP error: {e}"), bearer))?;
 
     let (parts, mut body) = response.into_parts();
     if !parts.status.is_success() {
@@ -915,7 +1005,7 @@ fn fetch_remote(url: &str) -> Result<String, String> {
         .with_config()
         .limit(MAX_EXTEND_BYTES as u64)
         .read_to_vec()
-        .map_err(|e| format!("read body: {e}"))?;
+        .map_err(|e| scrub_secret(format!("read body: {e}"), bearer))?;
 
     if bytes.len() >= MAX_EXTEND_BYTES {
         return Err(format!(
@@ -1212,8 +1302,8 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("arai_trust_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let url = "https://example.com/rules.md";
-        assert!(trust_add(url, &tmp, None).unwrap());
-        assert!(!trust_add(url, &tmp, None).unwrap()); // idempotent
+        assert!(trust_add(url, &tmp, None, None).unwrap());
+        assert!(!trust_add(url, &tmp, None, None).unwrap()); // idempotent
         assert!(is_trusted(url, &tmp));
         let list = trust_list(&tmp);
         assert_eq!(list.len(), 1);
@@ -1221,6 +1311,145 @@ mod tests {
         assert!(list[0].pubkey.is_none());
         assert!(trust_remove(url, &tmp).unwrap());
         assert!(!is_trusted(url, &tmp));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // ── #150: authenticated arai:extends ─────────────────────────────────────
+
+    #[test]
+    fn bearer_env_round_trips_and_never_stores_the_token() {
+        let tmp = std::env::temp_dir().join(format!("arai_bearer_rt_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/org-rules.md";
+        assert!(trust_add(url, &tmp, None, Some("ARAI_EXTENDS_TOKEN")).unwrap());
+        // Round-trip: the entry carries the variable name.
+        let entry = find_trust_entry(url, &tmp).unwrap();
+        assert_eq!(entry.bearer_env.as_deref(), Some("ARAI_EXTENDS_TOKEN"));
+        // Idempotent when re-added with the same config.
+        assert!(!trust_add(url, &tmp, None, Some("ARAI_EXTENDS_TOKEN")).unwrap());
+        // Secret hygiene at rest: the on-disk trust file contains only the
+        // variable NAME — a token-shaped value must never appear, no matter
+        // what the environment holds.
+        let on_disk = std::fs::read_to_string(trust_path(&tmp)).unwrap();
+        assert!(on_disk.contains("ARAI_EXTENDS_TOKEN"));
+        assert!(!on_disk.to_lowercase().contains("secret"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn legacy_trust_entries_have_no_bearer() {
+        let tf: TrustFile = toml::from_str("trusted = [\"https://example.com/rules.md\"]").unwrap();
+        assert_eq!(tf.trusted.len(), 1);
+        assert!(tf.trusted[0].bearer_env.is_none());
+    }
+
+    #[test]
+    fn resolve_bearer_decision_table() {
+        let entry = |bearer_env: Option<&str>| TrustEntry {
+            url: "https://example.com/org-rules.md".to_string(),
+            pubkey: None,
+            bearer_env: bearer_env.map(String::from),
+        };
+        // No bearer_env configured → no header, even when the env var is set.
+        assert_eq!(
+            resolve_bearer_with(&entry(None), |_| Some("tok".into())),
+            None
+        );
+        // Configured + set → token resolved.
+        assert_eq!(
+            resolve_bearer_with(&entry(Some("T")), |n| {
+                assert_eq!(n, "T");
+                Some("s3cr3t".into())
+            }),
+            Some("s3cr3t".to_string())
+        );
+        // Configured but unset → unauthenticated, not an error.
+        assert_eq!(resolve_bearer_with(&entry(Some("T")), |_| None), None);
+        // Configured but empty → treated as unset.
+        assert_eq!(
+            resolve_bearer_with(&entry(Some("T")), |_| Some(String::new())),
+            None
+        );
+    }
+
+    #[test]
+    fn scrub_secret_redacts_every_occurrence() {
+        let msg = "HTTP error: header Authorization: Bearer tok123 rejected (tok123)".to_string();
+        let scrubbed = scrub_secret(msg, Some("tok123"));
+        assert!(!scrubbed.contains("tok123"));
+        assert_eq!(scrubbed.matches("[redacted]").count(), 2);
+        // No secret / empty secret: message unchanged.
+        assert_eq!(scrub_secret("plain".to_string(), None), "plain");
+        assert_eq!(scrub_secret("plain".to_string(), Some("")), "plain");
+    }
+
+    /// Live-transport test for the two transport-level guarantees:
+    /// the Authorization header reaches the requested URL, and a 30x is an
+    /// error rather than a followed redirect (so the header can never be
+    /// re-sent to another host).  Uses a plain-HTTP listener on loopback —
+    /// `fetch_remote` is below the HTTPS gate (`validate_url` runs in
+    /// `fetch`), which is exactly what makes it testable here.
+    #[test]
+    fn bearer_header_sent_once_and_redirect_not_followed() {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            requests.push(String::from_utf8_lossy(&buf[..n]).to_string());
+            // Redirect to a port nothing listens on — the request log below
+            // is the authoritative assertion that it was never followed.
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            requests
+        });
+
+        let url = format!("http://127.0.0.1:{port}/org-rules.md");
+        let result = fetch_remote(&url, Some("sekrit-token"));
+
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 1, "exactly one request must be made");
+        // ureq lowercases header names on the wire (HTTP/1.1 headers are
+        // case-insensitive) — compare case-insensitively.
+        assert!(
+            requests[0]
+                .to_lowercase()
+                .contains("authorization: bearer sekrit-token"),
+            "bearer header must reach the requested URL; got:\n{}",
+            requests[0]
+        );
+        // The 302 must surface as an error (redirects disabled), and the
+        // error text must not leak the token.
+        let err = result.expect_err("30x must be an error, not a followed redirect");
+        assert!(
+            !err.contains("sekrit-token"),
+            "error message leaked the token: {err}"
+        );
+    }
+
+    #[test]
+    fn bearer_env_name_validation_rejects_pasted_tokens() {
+        let tmp = std::env::temp_dir().join(format!("arai_bearer_val_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let url = "https://example.com/org-rules.md";
+        for bad in ["ghp_abc123XYZ-token", "Bearer xyz", "1TOKEN", "", "TOK EN"] {
+            let err = trust_add(url, &tmp, None, Some(bad)).unwrap_err();
+            // The error must not echo the rejected value — it may be a secret.
+            assert!(
+                !err.contains(bad) || bad.is_empty(),
+                "error echoes value: {err}"
+            );
+        }
+        for good in ["ARAI_EXTENDS_TOKEN", "_T", "a1"] {
+            trust_add(url, &tmp, None, Some(good)).unwrap();
+        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -1643,6 +1872,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: None,
+            bearer_env: None,
         };
         // No sidecar fetch callback should be invoked.
         let result = verify_content(
@@ -1663,6 +1893,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: None,
+            bearer_env: None,
         };
         let result = verify_content(
             "https://example.com/policy.md",
@@ -1697,6 +1928,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: None,
+            bearer_env: None,
         };
         // Simulate stale-cache path: verify_content called with cache content
         // and a pin from the directive.  The cache content ≠ original, so
@@ -1724,6 +1956,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: Some(vk_hex),
+            bearer_env: None,
         };
         // Sidecar fetch callback returns our valid signature.
         let result = verify_content(
@@ -1747,6 +1980,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: Some(vk_hex),
+            bearer_env: None,
         };
         let result = verify_content(
             "https://example.com/policy.md",
@@ -1771,6 +2005,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: Some(vk_hex),
+            bearer_env: None,
         };
         let result = verify_content(
             "https://example.com/policy.md",
@@ -1799,6 +2034,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: Some(vk_hex),
+            bearer_env: None,
         };
         let result = verify_content(
             "https://example.com/policy.md",
@@ -1822,6 +2058,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: None,
+            bearer_env: None,
         };
         let sidecar_called = std::cell::Cell::new(false);
         let result = verify_content(
@@ -1853,6 +2090,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: None,
+            bearer_env: None,
         };
         let sidecar_called = std::cell::Cell::new(false);
         let result = verify_content(
@@ -1964,7 +2202,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         let url = "https://example.com/policy.md";
 
-        let added = trust_add(url, &tmp, Some(&vk_hex)).unwrap();
+        let added = trust_add(url, &tmp, Some(&vk_hex), None).unwrap();
         assert!(added, "should return true for a new entry");
 
         let entries = trust_list(&tmp);
@@ -2008,8 +2246,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
 
-        trust_add("https://example.com/plain.md", &tmp, None).unwrap();
-        trust_add("https://example.com/signed.md", &tmp, Some(&vk_hex)).unwrap();
+        trust_add("https://example.com/plain.md", &tmp, None, None).unwrap();
+        trust_add("https://example.com/signed.md", &tmp, Some(&vk_hex), None).unwrap();
 
         let entries = trust_list(&tmp);
         assert_eq!(entries.len(), 2);
@@ -2034,6 +2272,7 @@ mod tests {
         let entry = TrustEntry {
             url: "https://example.com/policy.md".to_string(),
             pubkey: Some("not_a_valid_hex_key_at_all_and_too_short".to_string()),
+            bearer_env: None,
         };
         let result = verify_content(
             "https://example.com/policy.md",

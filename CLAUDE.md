@@ -35,6 +35,7 @@ cargo run -- lint CLAUDE.md    # Parse a file and preview extracted rules, no DB
 cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scenario
 cargo run -- record --since=1h # Build scenarios from recent audit entries
 cargo run -- trust --add <url> # Approve a URL for arai:extends
+cargo run -- trust --add <url> --bearer-env ARAI_EXTENDS_TOKEN  # Private source: send bearer from env var
 cargo run -- migrate           # Move legacy ~/.arai → ~/.taniwha/arai (prompted, default no)
 cargo run -- migrate --yes     # Non-interactive migration (for scripts)
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)

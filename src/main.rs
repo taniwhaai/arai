@@ -156,6 +156,13 @@ enum Commands {
         /// <url>.sig.  Only valid with --add.
         #[arg(long, value_name = "HEX")]
         pubkey: Option<String>,
+        /// Name of an environment variable holding a bearer token for the URL
+        /// being added (e.g. ARAI_EXTENDS_TOKEN).  Fetches of this exact URL
+        /// send `Authorization: Bearer <token>`.  Pass the variable NAME, not
+        /// the token — the secret is never written to disk.  Only valid with
+        /// --add.
+        #[arg(long, value_name = "ENV_VAR")]
+        bearer_env: Option<String>,
     },
     /// Replay synthetic hook scenarios against the current rule set to
     /// catch regressions in rule behaviour.  Scenarios are JSON describing
@@ -389,7 +396,8 @@ fn main() {
             add,
             remove,
             pubkey,
-        } => cmd_trust(add, remove, pubkey),
+            bearer_env,
+        } => cmd_trust(add, remove, pubkey, bearer_env),
         Commands::Test { file, json } => scenarios::run(std::path::Path::new(&file), json),
         Commands::Record { since, tool, limit } => cmd_record(since, tool, limit),
         Commands::Stats {
@@ -1081,8 +1089,12 @@ fn cmd_trust(
     add: Option<String>,
     remove: Option<String>,
     pubkey: Option<String>,
+    bearer_env: Option<String>,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
+    if bearer_env.is_some() && add.is_none() {
+        return Err("--bearer-env is only valid with --add".to_string());
+    }
     match (add, remove) {
         (Some(url), None) => {
             // Validate hex format before calling trust_add (which also validates).
@@ -1094,19 +1106,30 @@ fn cmd_trust(
                     ));
                 }
             }
-            let added = extends::trust_add(&url, &cfg.arai_base_dir, pubkey.as_deref())?;
-            if added {
-                if pubkey.is_some() {
-                    println!("  Trusted: {url} (key configured)");
-                } else {
-                    println!("  Trusted: {url}");
-                }
+            let added = extends::trust_add(
+                &url,
+                &cfg.arai_base_dir,
+                pubkey.as_deref(),
+                bearer_env.as_deref(),
+            )?;
+            let mut notes = Vec::new();
+            if pubkey.is_some() {
+                notes.push("key configured".to_string());
+            }
+            if let Some(name) = &bearer_env {
+                notes.push(format!("auth via ${name}"));
+            }
+            let suffix = if notes.is_empty() {
+                String::new()
             } else {
-                if pubkey.is_some() {
-                    println!("  Updated: {url} (key configured)");
-                } else {
-                    println!("  Already trusted: {url}");
-                }
+                format!(" ({})", notes.join(", "))
+            };
+            if added {
+                println!("  Trusted: {url}{suffix}");
+            } else {
+                // trust_add returned false: entry already present with this
+                // exact configuration — nothing changed.
+                println!("  Already trusted: {url}{suffix}");
             }
         }
         (None, Some(url)) => {
@@ -1133,10 +1156,17 @@ fn cmd_trust(
             } else {
                 println!("Trusted URLs ({}):", entries.len());
                 for e in &entries {
+                    let mut notes = Vec::new();
                     if e.pubkey.is_some() {
-                        println!("  - {} (key configured)", e.url);
-                    } else {
+                        notes.push("key configured".to_string());
+                    }
+                    if let Some(name) = &e.bearer_env {
+                        notes.push(format!("auth via ${name}"));
+                    }
+                    if notes.is_empty() {
                         println!("  - {}", e.url);
+                    } else {
+                        println!("  - {} ({})", e.url, notes.join(", "));
                     }
                 }
             }
