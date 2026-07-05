@@ -851,6 +851,33 @@ We **never** collect file paths, rule text, code content, API keys, or anything 
 export ARAI_TELEMETRY=off   # or DO_NOT_TRACK=1
 ```
 
+or in `~/.taniwha/arai/config.toml`:
+
+```toml
+[telemetry]
+enabled = false
+```
+
+### Self-hosted collector
+
+Organizations that want the usage signal on **their own
+infrastructure** can point the existing queue at their own endpoint —
+same events, same anonymity constraints, your retention rules:
+
+```toml
+[telemetry]
+endpoint = "https://collector.example.com/arai"
+bearer_env = "ARAI_TELEMETRY_TOKEN"   # optional; env var NAME, not the token
+```
+
+Default behavior is unchanged when `endpoint` is unset. Opt-outs win
+regardless of endpoint. HTTPS required (plain HTTP allowed only for
+loopback dev collectors), batches retry on failure, and the payload
+schema is documented in
+[docs/telemetry-payload.md](docs/telemetry-payload.md) so you know
+exactly what you're receiving. The audit log remains a separate,
+local-only channel.
+
 ## Built By
 
 [Taniwha.ai](https://taniwha.ai) — extracted from the [Kete](https://github.com/taniwhaai/kete) code intelligence platform.
