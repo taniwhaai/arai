@@ -42,6 +42,25 @@
 //! Remaining modules (`init`, `mcp`, `stats`, `scenarios`, …) back specific
 //! CLI subcommands; they are exported for the `arai` binary but hidden from
 //! docs and not part of the supported library API.
+//!
+//! # Security model
+//!
+//! The library runs with its caller's privileges and trust domain.  APIs
+//! that mutate enforcement state (severity overrides, rule disabling,
+//! trust-list writes, audit purge) are the same operations the CLI exposes
+//! to the local user — embedding Arai does not create a privilege boundary,
+//! and a hostile caller with the user's filesystem access could edit the
+//! underlying SQLite/TOML state directly regardless.  The audit chain is
+//! *tamper-evident* (hash-chained, `arai audit --verify`), not
+//! access-controlled: entries appended through this API are sealed into the
+//! chain, but the chain does not authenticate *who* appended them.
+//!
+//! # Stability
+//!
+//! The CLI surface, hook protocol, and on-disk formats are semver-stable
+//! (v1.0.0).  The **library API is not yet** — item-level surface audit is
+//! ongoing, and signatures may change in minor releases until the library
+//! API is declared stable.  Pin a minor version if you embed Arai.
 
 pub mod audit;
 pub mod canonicalize;
@@ -80,6 +99,10 @@ pub mod style;
 #[doc(hidden)]
 pub mod sync;
 #[doc(hidden)]
-pub mod telemetry;
-#[doc(hidden)]
 pub mod upgrade;
+
+// Not exported at all: telemetry is consumed only by lib-internal callers
+// (hooks, init, mcp).  Keeping it private means no external caller can
+// enqueue events into the telemetry channel — the audit/telemetry
+// separation stays enforced by visibility, not just convention.
+mod telemetry;

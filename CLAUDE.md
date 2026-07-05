@@ -46,7 +46,8 @@ ARAI_DENY_MODE=off cargo run -- guardrails --match-stdin  # Advise-only (no deny
 
 ```
 src/
-├── main.rs               # CLI entry (clap) — init, status, guardrails, scan, add, audit, mcp, upgrade, why
+├── lib.rs                # Library crate root — pub mods for the embeddable core (parser, store, guardrails, hooks, audit, …); CLI-support modules #[doc(hidden)]; telemetry private
+├── main.rs               # Thin CLI over the library (clap) — arg parsing + IO only; init, status, guardrails, scan, add, audit, mcp, upgrade, why
 ├── config.rs             # Config, project paths + slug, env vars, LLM command
 ├── discovery.rs          # Instruction file discovery (CLAUDE.md, .cursorrules, etc.)
 ├── parser.rs             # Rule extraction from markdown (7 layers of pattern matching); tracks layer + expiry
