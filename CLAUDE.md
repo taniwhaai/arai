@@ -23,6 +23,8 @@ cargo run -- audit --event=Compliance   # Compliance verdicts (Pre/Post correlat
 cargo run -- audit --outcome=ignored    # Rules the model ran despite a Pre-firing
 cargo run -- audit --rule alembic       # Filter audit by rule subject/predicate/object
 cargo run -- audit --verify             # Walk hash chain across every day-bucket
+cargo run -- audit --ship               # Ship pending day-buckets to [ship] url from config
+cargo run -- audit --ship https://collector.example.com/arai  # One-off collector URL
 cargo run -- audit --purge --older=90 --dry-run   # Plan a 90-day retention sweep
 cargo run -- audit --purge --project=old-proj     # Full wipe of one project's audit
 cargo run -- stats             # Aggregate the audit log (top rules, tools, days, compliance)

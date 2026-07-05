@@ -93,6 +93,8 @@ pub mod migrate;
 #[doc(hidden)]
 pub mod scenarios;
 #[doc(hidden)]
+pub mod ship;
+#[doc(hidden)]
 pub mod stats;
 #[doc(hidden)]
 pub mod style;
