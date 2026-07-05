@@ -109,6 +109,12 @@ the enforcement.
   a `.head.YYYYMMDD` sidecar. `arai audit --verify` walks the chain across
   every day-bucket and exits non-zero on any tamper / reorder / deletion —
   drop it in a cron or pre-archive job to gate evidence integrity.
+- **Bring your own collector** — `arai audit --ship <url>` sends pending
+  day-buckets *with their chain-head sidecars* to your own HTTPS
+  collector, so the hash chain verifies server-side too. Resume cursor,
+  idempotent re-ship, optional bearer auth via env var, explicit opt-in
+  only. See [docs/audit-ship.md](docs/audit-ship.md) for the payload
+  and a minimal collector.
 - **Retention controls** — `arai audit --purge --older=90` drops day-buckets
   older than 90 days; `arai audit --purge --project=<slug>` wipes a specific
   project (offboarding / decommission). Today's bucket is always preserved

@@ -29,6 +29,14 @@ All notable changes to this project will be documented in this file.
   documented but unimplemented). Payload schema documented in
   docs/telemetry-payload.md
   ([#151](https://github.com/taniwhaai/arai/issues/151))
+- *(audit)* `arai audit --ship <url>`: send audit day-buckets — plus
+  their `.head.YYYYMMDD` chain sidecars — to your own HTTPS collector,
+  so the hash chain can be verified server-side (tamper evidence
+  survives transport). Resume cursor, idempotent re-ship (dedupe on
+  per-entry chain hash), `[ship]` config section with optional
+  `bearer_env` auth, non-zero exit on rejection, and never on the hook
+  hot path. Collector reference: docs/audit-ship.md
+  ([#149](https://github.com/taniwhaai/arai/issues/149))
 
 ## [1.0.2] - 2026-06-09
 

@@ -3,7 +3,7 @@
 
 use arai::{
     audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks, init,
-    intent, mcp, migrate, parser, scenarios, stats, store, style, sync, upgrade,
+    intent, mcp, migrate, parser, scenarios, ship, stats, store, style, sync, upgrade,
 };
 use clap::{Parser, Subcommand};
 
@@ -127,6 +127,14 @@ enum Commands {
         /// pre-purge review can diff against.
         #[arg(long)]
         dry_run: bool,
+        /// Ship pending audit day-buckets (plus their chain-head sidecars)
+        /// to your own HTTPS collector, with a resume cursor and
+        /// idempotent re-ship.  Pass a URL here or configure `[ship] url`
+        /// (+ optional `bearer_env`) in config.toml.  Explicit opt-in
+        /// only; never runs on the hook hot path.  Mutually exclusive
+        /// with `--verify` / `--purge`.
+        #[arg(long, value_name = "URL", num_args = 0..=1, default_missing_value = "")]
+        ship: Option<String>,
     },
     /// Run the Ārai MCP server on stdio (for integration into Claude Code or
     /// any MCP-capable client).  Exposes `arai_add_guard` + `arai_list_guards`
@@ -387,8 +395,10 @@ fn main() {
             older,
             project,
             dry_run,
+            ship,
         } => cmd_audit(
             since, tool, event, outcome, rule, limit, json, verify, purge, older, project, dry_run,
+            ship,
         ),
         Commands::Mcp => mcp::run(),
         Commands::Lint { file, json } => cmd_lint(&file, json),
@@ -764,11 +774,70 @@ fn cmd_audit(
     older: Option<u32>,
     project: Option<String>,
     dry_run: bool,
+    ship: Option<String>,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
 
     if verify && purge {
         return Err("`--verify` and `--purge` are mutually exclusive".to_string());
+    }
+
+    // `--ship` is the third administrative subcommand.  Explicit opt-in
+    // only — nothing ships unless this flag (or a cron job invoking it)
+    // says so.
+    if let Some(ship_arg) = ship {
+        if verify || purge {
+            return Err("`--ship` is mutually exclusive with `--verify` / `--purge`".to_string());
+        }
+        let ship_cfg = ship::load_ship_config(&cfg.arai_base_dir);
+        let url = if ship_arg.is_empty() {
+            ship_cfg.url.clone().ok_or_else(|| {
+                "no collector URL: pass `--ship <url>` or set `[ship] url` in config.toml"
+                    .to_string()
+            })?
+        } else {
+            ship_arg
+        };
+        let bearer = ship_cfg
+            .bearer_env
+            .as_deref()
+            .and_then(|name| std::env::var(name).ok())
+            .filter(|v| !v.is_empty());
+        if bearer.is_none() {
+            if let Some(name) = ship_cfg.bearer_env.as_deref() {
+                eprintln!(
+                    "arai: ship bearer env var {name} is unset or empty; shipping unauthenticated"
+                );
+            }
+        }
+        let report = ship::ship(
+            &cfg.arai_base_dir,
+            &cfg.project_slug(),
+            &url,
+            bearer.as_deref(),
+        )?;
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|e| e.to_string())?
+            );
+        } else if report.shipped.is_empty() {
+            println!(
+                "nothing to ship ({} bucket(s) already up to date)",
+                report.skipped
+            );
+        } else {
+            println!(
+                "shipped {} bucket(s) ({} bytes), {} already up to date",
+                report.shipped.len(),
+                report.shipped_bytes,
+                report.skipped
+            );
+            for day in &report.shipped {
+                println!("  {day}");
+            }
+        }
+        return Ok(());
     }
 
     // `--purge` is the second administrative subcommand alongside
