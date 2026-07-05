@@ -78,7 +78,10 @@ pub fn run() -> Result<(), String> {
         // .claude/settings.json compatibility layer that Grok loads.
         eprintln!("    \u{26a0} Grok native hook registration skipped: {e}");
     } else {
-        println!("    \u{2713} .grok/hooks/arai.json updated (native Grok TUI)");
+        println!("    \u{2713} .grok/hooks/arai.json updated (native Grok Build)");
+        println!("      Grok Build gates project hooks behind trust: run /hooks-trust in the");
+        println!("      Grok session (or launch with --trust) the first time, or Arai's hooks");
+        println!("      stay inactive on the native path.");
     }
 
     // Track init event + flush queued telemetry
@@ -235,8 +238,19 @@ fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Register Arai hooks into the Grok TUI native location (.grok/hooks/arai.json).
-/// This is the preferred path for users who primarily use the Grok TUI.
+/// Hook events Grok Build actually supports (per docs.x.ai/build/features/hooks:
+/// SessionStart/End, UserPromptSubmit, Pre/PostToolUse, PostToolUseFailure,
+/// PermissionDenied, Stop/StopFailure, Notification, SubagentStart/Stop,
+/// Pre/PostCompact).  Arai registers only the events it handles with
+/// Grok-verified semantics — the Claude-only tier events (FileChanged,
+/// InstructionsLoaded, CwdChanged, PostToolBatch) don't exist on Grok, and
+/// Grok's PermissionDenied payload/retry contract is unverified, so neither
+/// goes in the native file.
+const GROK_HOOK_EVENTS: &[&str] = &["PreToolUse", "PostToolUse", "UserPromptSubmit"];
+
+/// Register Arai hooks into the Grok Build native location (.grok/hooks/arai.json).
+/// This is the preferred path for users who primarily use Grok Build
+/// (formerly Grok TUI / supergrok).
 fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
     let hooks_dir = cfg.grok_hooks_dir();
 
@@ -254,6 +268,12 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
         .ok_or("Could not create hooks object")?;
 
     for (event, matcher) in ARAI_HOOK_REGISTRATIONS {
+        // Only write events Grok Build supports — unsupported registrations
+        // would sit dead in the file and read as misconfiguration in the
+        // /hooks extensions modal.
+        if !GROK_HOOK_EVENTS.contains(event) {
+            continue;
+        }
         let event_arr = hooks_obj
             .entry(event.to_string())
             .or_insert_with(|| serde_json::json!([]))
