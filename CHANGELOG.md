@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-05
+
+### Added
+
+- Restructure as library + thin CLI binary ([#153](https://github.com/taniwhaai/arai/pull/153))
+- *(extends)* Authenticated arai:extends for private rule sources ([#154](https://github.com/taniwhaai/arai/pull/154))
+- *(telemetry)* Configurable endpoint for self-hosted collectors ([#155](https://github.com/taniwhaai/arai/pull/155))
+- *(audit)* Arai audit --ship — send the audit trail to your own collector ([#156](https://github.com/taniwhaai/arai/pull/156))
+
+### Documentation
+
+- *(site)* Surface v1.1 features and sharpen the value proposition ([#158](https://github.com/taniwhaai/arai/pull/158))
+
+### Fixed
+
+- *(grok)* Realign integration with current Grok Build hooks contract ([#159](https://github.com/taniwhaai/arai/pull/159))
+
+### Refactored
+
+- *(lib)* Item-level library API surface audit ([#162](https://github.com/taniwhaai/arai/pull/162)) ([#163](https://github.com/taniwhaai/arai/pull/163))
+
+
 ### Fixed
 
 - *(grok)* Realign the Grok Build (formerly Grok TUI / supergrok)
