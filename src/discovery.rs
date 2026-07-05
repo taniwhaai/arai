@@ -3,13 +3,20 @@ use crate::extends;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// One instruction file found by [`discover`], with its content already
+/// read and any `arai:extends` directives resolved.
 #[derive(Debug, Clone)]
 pub struct DiscoveredFile {
+    /// Filesystem path the file was read from.
     pub path: String,
+    /// Source-type tag (`claude_md_project`, `cursor_rules`, `agents_md`, …)
+    /// used as the extraction-confidence namespace.
     pub source_type: String,
+    /// Base extraction confidence for rules from this file.
     pub confidence: f64,
+    /// Full file content (post-`extends` resolution).
     pub content: String,
-    #[allow(dead_code)]
+    /// Parsed YAML-ish frontmatter key/value pairs, empty when absent.
     pub frontmatter: HashMap<String, String>,
 }
 
@@ -195,7 +202,7 @@ fn read_memory_file(path: &PathBuf) -> Option<DiscoveredFile> {
 
 /// Parse YAML-like frontmatter from markdown.
 /// Returns (frontmatter_map, body_without_frontmatter).
-pub fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
+pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
     let mut map = HashMap::new();
 
     if !content.starts_with("---") {

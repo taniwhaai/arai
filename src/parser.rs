@@ -2,19 +2,35 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
+/// One extracted rule as a subject–predicate–object triple, plus extraction
+/// metadata (confidence, source location, parser layer, annotations,
+/// provenance).  This is the parser's output shape and the store's input
+/// shape — `store::upsert_file` persists a `Vec<Triple>` per source file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Triple {
+    /// Rule subject — usually the tool or domain the rule is about (e.g. `git`).
     #[serde(rename = "s")]
     pub subject: String,
+    /// Rule predicate — the normalised modality (`never`, `always`,
+    /// `requires`, `prefers`, …).  Drives severity classification.
     #[serde(rename = "p")]
     pub predicate: String,
+    /// Rule object — what the rule requires or forbids, with trailing
+    /// annotations (`(expires …)`, `(noenrich)`) already stripped.
     #[serde(rename = "o")]
     pub object: String,
+    /// Extraction confidence inherited from the source file's type
+    /// (project CLAUDE.md ranks above global memory files).
     pub confidence: f64,
+    /// Source-type namespace, e.g. `memory.claude_md_project`.
     pub domain: String,
+    /// Path of the instruction file the rule came from.  May be empty at
+    /// extraction time; callers fill it in before persisting.
     pub source_file: String,
+    /// First line of the source list item, 1-based.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_start: Option<i64>,
+    /// Last line of the source list item, 1-based.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_end: Option<i64>,
     /// Which of the seven `match_imperative` layers fired.  Lets `arai audit` /
@@ -188,7 +204,6 @@ pub fn extract_rules_with_provenance(
 /// This is the provenance-aware variant of [`extract_rules`].  Callers that
 /// use the flat `resolve()` output should call this function so rules from
 /// upstream blocks are correctly stamped.
-#[allow(dead_code)]
 pub fn extract_rules_from_resolved(
     content: &str,
     source_type: &str,
@@ -307,7 +322,7 @@ fn extract_kv_attr(s: &str, key: &str) -> Option<String> {
 /// from the rule object and return the cleaned object plus the parsed date.
 /// Accepts case-insensitive `expires` / `expire` / `until`.  If nothing is
 /// found, the object is returned unchanged with `None`.
-pub fn extract_expiry(object: &str) -> (String, Option<String>) {
+pub(crate) fn extract_expiry(object: &str) -> (String, Option<String>) {
     static EXPIRY_RE: OnceLock<Regex> = OnceLock::new();
     let re = EXPIRY_RE.get_or_init(|| {
         Regex::new(r"(?i)\s*\((?:expires?|until)\s+(\d{4}-\d{2}-\d{2})\)\s*$").expect("valid regex")
@@ -325,7 +340,7 @@ pub fn extract_expiry(object: &str) -> (String, Option<String>) {
 /// the cleaned object plus a flag indicating whether the marker was present.
 /// Case-insensitive.  Used to opt a single rule out of LLM/API enrichment
 /// without disabling the feature globally.
-pub fn extract_noenrich(object: &str) -> (String, bool) {
+pub(crate) fn extract_noenrich(object: &str) -> (String, bool) {
     static NOENRICH_RE: OnceLock<Regex> = OnceLock::new();
     let re =
         NOENRICH_RE.get_or_init(|| Regex::new(r"(?i)\s*\(noenrich\)\s*$").expect("valid regex"));
@@ -342,7 +357,7 @@ pub fn extract_noenrich(object: &str) -> (String, bool) {
 /// hides anything to its left from the other regex; we loop until neither
 /// strips anything to handle `(expires ...) (noenrich)` and the reverse
 /// uniformly.
-pub fn extract_annotations(object: &str) -> (String, Option<String>, bool) {
+pub(crate) fn extract_annotations(object: &str) -> (String, Option<String>, bool) {
     let mut current = object.to_string();
     let mut expires: Option<String> = None;
     let mut noenrich = false;

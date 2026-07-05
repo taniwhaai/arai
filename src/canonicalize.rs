@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// Root of a canonical `arai.toml` rules file (see `docs/rules-file-spec.md`).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CanonicalFile {
     pub meta: Meta,
@@ -26,6 +27,7 @@ pub struct CanonicalFile {
     pub rules: Vec<CanonicalRule>,
 }
 
+/// The `[meta]` header of a canonical rules file.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Meta {
     pub schema_version: u32,
@@ -35,17 +37,22 @@ pub struct Meta {
     pub extends: Vec<String>,
 }
 
+/// One `[[rule]]` entry in a canonical rules file.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CanonicalRule {
+    /// Stable, human-readable rule id (unique within the file).
     pub id: String,
     pub description: String,
     pub when: When,
     pub then: Then,
+    /// Severity label (`block` / `warn` / `inform`).
     pub severity: String,
+    /// Optional ISO expiry date, mirroring the `(expires …)` annotation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
 }
 
+/// The `when` clause of a canonical rule — what tool calls it applies to.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct When {
     pub tool: Vec<String>,
@@ -55,16 +62,22 @@ pub struct When {
     pub command_pattern: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_pattern: Option<String>,
+    /// Prerequisite terms that must NOT have been seen in the session for
+    /// the rule to fire (e.g. `["cargo", "test"]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub session_lacks: Vec<String>,
 }
 
+/// The `then` clause of a canonical rule — what happens on a match.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Then {
+    /// Action label (`deny` / `warn` / `inform`).
     pub action: String,
+    /// Message surfaced to the model / user when the rule fires.
     pub message: String,
 }
 
+/// What [`run`] did: how many rules were written from how many files.
 pub struct Summary {
     pub rules_written: usize,
     pub files_read: usize,

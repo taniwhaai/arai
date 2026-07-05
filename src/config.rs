@@ -2,16 +2,32 @@ use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+/// Resolved runtime configuration: project root, state directory, and the
+/// optional knobs from `{arai_base}/config.toml` plus environment variables.
+/// Build one with [`Config::load`]; nearly every library entry point takes
+/// a `&Config`.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// The enclosing git repository root (found by walking up from the CWD).
     pub project_root: PathBuf,
+    /// The user's home directory.
     pub home_dir: PathBuf,
+    /// Arai's state root (default `~/.taniwha/arai`) — DB, audit log,
+    /// sessions, trust list all live under here.
     pub arai_base_dir: PathBuf,
+    /// Extra instruction-file paths from `[sources] extra` in config.toml,
+    /// relative to the project root.
     pub extra_sources: Vec<String>,
+    /// Guardrails mode from config.toml (`"advise"` by default).
     pub guardrails_mode: String,
+    /// Shell command for Tier-3 LLM enrichment (`ARAI_LLM_CMD` env var or
+    /// `[enrich] llm_command`).
     pub llm_command: Option<String>,
+    /// OpenAI-compatible endpoint for API enrichment.
     pub api_url: Option<String>,
+    /// Name of the env var holding the API key (never the key itself).
     pub api_key_env: Option<String>,
+    /// Model name for API enrichment.
     pub api_model: Option<String>,
 }
 
@@ -20,7 +36,7 @@ pub struct Config {
 /// human-readable message string the caller can emit verbatim to standard
 /// error.  The two variants are mutually exclusive.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeprecationNotice {
+pub(crate) enum DeprecationNotice {
     /// Branch 2: the deprecated `ARAI_DB_DIR` environment variable
     /// supplied the path.  The message instructs the user to rename the
     /// environment variable to `ARAI_BASE_DIR`.
@@ -33,7 +49,7 @@ pub enum DeprecationNotice {
 
 impl DeprecationNotice {
     /// Borrow the human-readable message string carried by this notice.
-    pub fn message(&self) -> &str {
+    pub(crate) fn message(&self) -> &str {
         match self {
             DeprecationNotice::DeprecatedEnvVar(msg) => msg,
             DeprecationNotice::DeprecatedDefaultPath(msg) => msg,
@@ -47,9 +63,9 @@ impl DeprecationNotice {
 /// when the chosen path was selected via a deprecated mechanism (branches
 /// 2 and 4 in the resolver's five-branch precedence order).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedBaseDir {
-    pub path: String,
-    pub notice: Option<DeprecationNotice>,
+pub(crate) struct ResolvedBaseDir {
+    pub(crate) path: String,
+    pub(crate) notice: Option<DeprecationNotice>,
 }
 
 /// Pure resolver for the Arai base directory.
@@ -80,7 +96,11 @@ pub struct ResolvedBaseDir {
 /// 3. else `path_exists(<home>/.taniwha/arai)` true → that path, no notice.
 /// 4. else `path_exists(<home>/.arai)` true → that path, `DeprecatedDefaultPath` notice.
 /// 5. else fresh-install fallback → `<home>/.taniwha/arai`, no notice.
-pub fn resolve_base_dir<E, P>(env_lookup: E, path_exists: P, home_dir: &str) -> ResolvedBaseDir
+pub(crate) fn resolve_base_dir<E, P>(
+    env_lookup: E,
+    path_exists: P,
+    home_dir: &str,
+) -> ResolvedBaseDir
 where
     E: Fn(&str) -> Option<String>,
     P: Fn(&str) -> bool,
@@ -142,6 +162,10 @@ where
 }
 
 impl Config {
+    /// Load configuration for the current working directory's project:
+    /// locate the git root, resolve the Arai base directory (env vars,
+    /// then existing default paths), and merge `{arai_base}/config.toml`
+    /// with enrichment env vars (env wins).
     pub fn load() -> Result<Config, String> {
         let project_root = find_project_root()?;
         let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
@@ -267,13 +291,13 @@ impl Config {
     }
 
     /// Claude Code memory slug: /home/matt/r/arai → -home-matt-r-arai
-    pub fn claude_memory_slug(&self) -> String {
+    pub(crate) fn claude_memory_slug(&self) -> String {
         let path_str = self.project_root.to_string_lossy();
         path_str.replace('/', "-")
     }
 
     /// Path to Claude Code memory files for this project
-    pub fn claude_memory_dir(&self) -> PathBuf {
+    pub(crate) fn claude_memory_dir(&self) -> PathBuf {
         self.home_dir
             .join(".claude")
             .join("projects")
@@ -282,19 +306,19 @@ impl Config {
     }
 
     /// Path to the project's .claude/settings.json
-    pub fn claude_settings_path(&self) -> PathBuf {
+    pub(crate) fn claude_settings_path(&self) -> PathBuf {
         self.project_root.join(".claude").join("settings.json")
     }
 
     /// Path to the project's .grok/hooks directory (for native Grok TUI hook registration).
     /// We prefer writing arai.json here when the user has a .grok/ project layout.
-    pub fn grok_hooks_dir(&self) -> PathBuf {
+    pub(crate) fn grok_hooks_dir(&self) -> PathBuf {
         self.project_root.join(".grok").join("hooks")
     }
 
     /// Path to the global Grok hooks directory (~/.grok/hooks).
     #[allow(dead_code)]
-    pub fn grok_global_hooks_dir(&self) -> PathBuf {
+    pub(crate) fn grok_global_hooks_dir(&self) -> PathBuf {
         self.home_dir.join(".grok").join("hooks")
     }
 }
