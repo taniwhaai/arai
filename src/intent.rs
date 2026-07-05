@@ -47,6 +47,11 @@ impl Severity {
         }
     }
 
+    // Not `std::str::FromStr`: this parser is infallible — unknown input
+    // falls back to `Warn` instead of erroring, which FromStr can't express
+    // without a lying `Err` type.  Rename is deferred to the library API
+    // surface audit (#148 follow-up).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "block" => Severity::Block,
@@ -91,6 +96,8 @@ impl Timing {
         }
     }
 
+    // Infallible fallback parser — see the note on `Severity::from_str`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "tool_call" => Timing::ToolCall,
@@ -144,6 +151,8 @@ impl Action {
         }
     }
 
+    // Infallible fallback parser — see the note on `Severity::from_str`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "create" => Action::Create,

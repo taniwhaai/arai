@@ -2,8 +2,8 @@
 //! All enforcement logic lives in [`arai`] (see `src/lib.rs`).
 
 use arai::{
-    audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks,
-    init, intent, mcp, migrate, parser, scenarios, stats, store, style, sync, upgrade,
+    audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks, init,
+    intent, mcp, migrate, parser, scenarios, stats, store, style, sync, upgrade,
 };
 use clap::{Parser, Subcommand};
 
