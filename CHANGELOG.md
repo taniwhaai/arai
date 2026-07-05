@@ -19,6 +19,16 @@ All notable changes to this project will be documented in this file.
   never reaches disk, logs, audit, telemetry, or error messages, and
   redirects stay disabled so the header cannot leak cross-host
   ([#150](https://github.com/taniwhaai/arai/issues/150))
+- *(telemetry)* Configurable telemetry endpoint: `[telemetry] endpoint`
+  (+ optional `bearer_env`) in config.toml points the existing queue at
+  a self-hosted collector — same events, no PostHog api_key, 5 s
+  timeout, queue retained on failure. Default sink unchanged when
+  unset; `ARAI_TELEMETRY=off` / `DO_NOT_TRACK=1` / `enabled = false`
+  win regardless of endpoint (the config-level `enabled = false`
+  opt-out is now actually enforced at the egress point — it was
+  documented but unimplemented). Payload schema documented in
+  docs/telemetry-payload.md
+  ([#151](https://github.com/taniwhaai/arai/issues/151))
 
 ## [1.0.2] - 2026-06-09
 
