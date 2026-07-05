@@ -1383,6 +1383,57 @@ mod tests {
         assert_eq!(scrub_secret("plain".to_string(), Some("")), "plain");
     }
 
+    /// Live-transport test for the two transport-level guarantees:
+    /// the Authorization header reaches the requested URL, and a 30x is an
+    /// error rather than a followed redirect (so the header can never be
+    /// re-sent to another host).  Uses a plain-HTTP listener on loopback —
+    /// `fetch_remote` is below the HTTPS gate (`validate_url` runs in
+    /// `fetch`), which is exactly what makes it testable here.
+    #[test]
+    fn bearer_header_sent_once_and_redirect_not_followed() {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            requests.push(String::from_utf8_lossy(&buf[..n]).to_string());
+            // Redirect to a port nothing listens on — the request log below
+            // is the authoritative assertion that it was never followed.
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            requests
+        });
+
+        let url = format!("http://127.0.0.1:{port}/org-rules.md");
+        let result = fetch_remote(&url, Some("sekrit-token"));
+
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 1, "exactly one request must be made");
+        // ureq lowercases header names on the wire (HTTP/1.1 headers are
+        // case-insensitive) — compare case-insensitively.
+        assert!(
+            requests[0]
+                .to_lowercase()
+                .contains("authorization: bearer sekrit-token"),
+            "bearer header must reach the requested URL; got:\n{}",
+            requests[0]
+        );
+        // The 302 must surface as an error (redirects disabled), and the
+        // error text must not leak the token.
+        let err = result.expect_err("30x must be an error, not a followed redirect");
+        assert!(
+            !err.contains("sekrit-token"),
+            "error message leaked the token: {err}"
+        );
+    }
+
     #[test]
     fn bearer_env_name_validation_rejects_pasted_tokens() {
         let tmp = std::env::temp_dir().join(format!("arai_bearer_val_{}", std::process::id()));

@@ -1126,10 +1126,10 @@ fn cmd_trust(
             };
             if added {
                 println!("  Trusted: {url}{suffix}");
-            } else if suffix.is_empty() {
-                println!("  Already trusted: {url}");
             } else {
-                println!("  Updated: {url}{suffix}");
+                // trust_add returned false: entry already present with this
+                // exact configuration — nothing changed.
+                println!("  Already trusted: {url}{suffix}");
             }
         }
         (None, Some(url)) => {
