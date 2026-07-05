@@ -617,6 +617,34 @@ URLs. On `arai init`, trusted upstream content is inlined ahead of the
 local rules before the parser runs, so the rest of the pipeline sees
 one merged file.
 
+### Private policy sources (authenticated extends)
+
+If your org policy file lives behind auth (an internal service, a
+private GitHub raw URL, an artifact store), give the trust entry the
+*name* of an environment variable holding a bearer token:
+
+```bash
+arai trust --add https://policy.internal.example/org-rules.md \
+           --bearer-env ARAI_EXTENDS_TOKEN
+export ARAI_EXTENDS_TOKEN="<token>"   # e.g. from your secret manager
+arai scan                             # fetches with Authorization: Bearer <token>
+```
+
+Secret handling, by construction:
+
+- Only the variable **name** is stored (in `trusted_extends.toml`); the
+  token itself never touches disk, the audit log, telemetry, or error
+  messages.
+- The header is sent **only** to the exact trusted URL (and its
+  `<url>.sig` signature sidecar on the same origin). Redirects are
+  disabled on the fetch path, so a 30x can never carry the token to
+  another host. HTTPS only, as always.
+- If the variable is unset or empty, the fetch proceeds
+  unauthenticated with a warning — same behavior as before the
+  credential was configured.
+- Content pinning (`@sha256:`), ed25519 signatures, tiers, caching,
+  and the size cap all work unchanged on authenticated responses.
+
 ## MCP: agent-authored guardrails
 
 `arai mcp` is also the integration path for assistants that don't have a

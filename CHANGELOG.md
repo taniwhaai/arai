@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
   dependency. The CLI surface, hook contract, and DB schema are
   unchanged; `src/main.rs` is now a thin CLI over the library
   ([#148](https://github.com/taniwhaai/arai/issues/148))
+- *(extends)* Authenticated `arai:extends` for private rule sources:
+  `arai trust --add <url> --bearer-env <ENV_VAR>` attaches
+  `Authorization: Bearer <token>` to fetches of that exact trusted URL
+  (and its `.sig` sidecar). Only the variable name is stored; the token
+  never reaches disk, logs, audit, telemetry, or error messages, and
+  redirects stay disabled so the header cannot leak cross-host
+  ([#150](https://github.com/taniwhaai/arai/issues/150))
 
 ## [1.0.2] - 2026-06-09
 
