@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Ārai now builds as a library crate (`src/lib.rs`) alongside the CLI
+  binary, making the core — parser layers, rule store, guardrail
+  matching, audit chain, hook decision logic — embeddable as a
+  dependency. The CLI surface, hook contract, and DB schema are
+  unchanged; `src/main.rs` is now a thin CLI over the library
+  ([#148](https://github.com/taniwhaai/arai/issues/148))
+
 ## [1.0.2] - 2026-06-09
 
 ### Fixed
