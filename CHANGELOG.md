@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-06
+
+### Miscellaneous
+
+- *(legal)* Complete the dual-license apparatus ([#164](https://github.com/taniwhaai/arai/pull/164))
+
+
 ## [1.1.0] - 2026-07-05
 
 ### Added
