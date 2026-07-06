@@ -89,4 +89,7 @@ src/
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache-2.0 license.
+By contributing, you agree that your contributions will be dual-licensed under
+the same MIT OR Apache-2.0 terms as the project (see [LICENSE-MIT](LICENSE-MIT)
+and [LICENSE-APACHE](LICENSE-APACHE)), without any additional terms or
+conditions.
