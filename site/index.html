@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arai — Instruction files that actually work</title>
-    <meta name="description" content="Your AI assistant ignores CLAUDE.md when it matters. Arai turns instruction files into enforced guardrails — blocked tool calls, a tamper-evident audit trail, per-rule compliance stats. One command. Local. Zero cost.">
+    <title>Ārai — Instruction files that actually work</title>
+    <meta name="description" content="Your AI assistant ignores CLAUDE.md when it matters. Ārai turns instruction files into enforced guardrails — blocked tool calls, a tamper-evident audit trail, per-rule compliance stats. One command. Local. Zero cost.">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -324,7 +324,7 @@
     <div class="container">
         <div class="eyebrow">Runtime policy enforcement for AI coding agents</div>
         <h1>Instruction files that actually block.</h1>
-        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Arai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
+        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -337,7 +337,7 @@
     <div class="container">
         <h2>Why not just write a CLAUDE.md?</h2>
         <table class="contrast-table">
-            <tr><th>An instruction file alone</th><th>With Arai</th></tr>
+            <tr><th>An instruction file alone</th><th>With Ārai</th></tr>
             <tr><td>Advice the model can skip under pressure</td><td>Prohibitions deny the tool call at the hook</td></tr>
             <tr><td>No record of what was ignored</td><td>Hash-chained audit log; <code>arai audit --verify</code></td></tr>
             <tr><td>You hope it listened</td><td>Per-rule obeyed / ignored / unclear verdicts</td></tr>
@@ -377,7 +377,7 @@
         <div class="example-block">
             <span class="dim">You: "Create a new database migration"</span><br><br>
             <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
-            <span class="warm">&rarr; Arai: <strong>deny</strong></span><br>
+            <span class="warm">&rarr; Ārai: <strong>deny</strong></span><br>
             <span class="warm">&nbsp;&nbsp;reason: "Alembic never: hand-write migration files"</span><br>
             <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from your rules:12, layer-1 imperative]</span><br><br>
             <span class="dim">Assistant: "I should use alembic revision --autogenerate instead..."</span>
@@ -423,11 +423,11 @@
             </div>
             <div class="feature">
                 <h3>Session tracking</h3>
-                <p>"Never push without tests" silences after cargo test runs. Arai remembers what happened this session.</p>
+                <p>"Never push without tests" silences after cargo test runs. Ārai remembers what happened this session.</p>
             </div>
             <div class="feature">
                 <h3>Rule set stays live</h3>
-                <p>Edit CLAUDE.md and Arai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
+                <p>Edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
@@ -491,7 +491,7 @@
             </div>
             <div class="feature">
                 <h3>Self-pruning rules</h3>
-                <p>Annotate a rule with <code>(expires 2026-12-31)</code> or <code>(until 2027-06-30)</code>. Arai filters it out after the date automatically &mdash; perfect for incident-driven rules that have a shelf life.</p>
+                <p>Annotate a rule with <code>(expires 2026-12-31)</code> or <code>(until 2027-06-30)</code>. Ārai filters it out after the date automatically &mdash; perfect for incident-driven rules that have a shelf life.</p>
             </div>
             <div class="feature">
                 <h3>One source of truth</h3>
@@ -517,7 +517,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and Arai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and Ārai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>
@@ -543,7 +543,7 @@
             </div>
             <div class="feature">
                 <h3>Embeddable library</h3>
-                <p>Arai builds as a Rust library alongside the CLI: parser layers, rule store, guardrail matching, audit chain, and hook decisions as a crates.io dependency. Wrappers and IDE integrations consume enforcement directly instead of shelling out.</p>
+                <p>Ārai builds as a Rust library alongside the CLI: parser layers, rule store, guardrail matching, audit chain, and hook decisions as a crates.io dependency. Wrappers and IDE integrations consume enforcement directly instead of shelling out.</p>
             </div>
             <div class="feature">
                 <h3>Any LLM enrichment</h3>
@@ -557,7 +557,7 @@
 <section class="family">
     <div class="container">
         <h2>Audit &amp; compliance &mdash; controls aligned with SOC 2 TSC</h2>
-        <p>Arai gives you the evidence trail and the controls your InfoSec / procurement team will ask for. Arai itself is not a certified product &mdash; the certification is yours to pursue. The controls are designed to align with the <strong>SOC 2 Trust Service Criteria</strong>:</p>
+        <p>Ārai gives you the evidence trail and the controls your InfoSec / procurement team will ask for. Ārai itself is not a certified product &mdash; the certification is yours to pursue. The controls are designed to align with the <strong>SOC 2 Trust Service Criteria</strong>:</p>
         <ul class="compliance-list">
             <li><strong>CC6.1 logical access</strong> &mdash; audit dir locked to owner (0700/0600 on Unix; <code>icacls</code>-pinned on Windows).</li>
             <li><strong>CC6.6 supply chain</strong> &mdash; SHA-256 binary verification on every install path; <code>arai:extends</code> SSRF-hardened transport plus cache-at-rest signature.</li>
@@ -602,14 +602,14 @@
 <section class="family">
     <div class="container">
         <h2>Part of the Taniwha family</h2>
-        <p>Arai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. Arai handles per-developer enforcement and audit locally, and ships the self-hosting primitives &mdash; private rule sources via authenticated <code>arai:extends</code>, audit shipping to your own collector, a configurable telemetry endpoint &mdash; for teams that want to assemble centralisation themselves. Kete is the managed layer on top: rule distribution without running an endpoint, aggregated compliance dashboards across a fleet of developers, semantic enrichment, and impact analysis across callers and transitive dependents. The local audit and verdict pipeline doesn&rsquo;t change either way. If your instruction files just need enforcing on one machine, Arai is all you need. For the full feature inventory mapped to procurement-review questions, see the <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">compliance inventory</a>.</p>
+        <p>Ārai is the open-source guardrail core of <a href="https://taniwha.ai/kete">Kete</a>, Taniwha AI&rsquo;s runtime reliability platform for AI coding agents. Ārai handles per-developer enforcement and audit locally, and ships the self-hosting primitives &mdash; private rule sources via authenticated <code>arai:extends</code>, audit shipping to your own collector, a configurable telemetry endpoint &mdash; for teams that want to assemble centralisation themselves. Kete is the managed layer on top: rule distribution without running an endpoint, aggregated compliance dashboards across a fleet of developers, semantic enrichment, and impact analysis across callers and transitive dependents. The local audit and verdict pipeline doesn&rsquo;t change either way. If your instruction files just need enforcing on one machine, Ārai is all you need. For the full feature inventory mapped to procurement-review questions, see the <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">compliance inventory</a>.</p>
         <p class="family-links"><a href="https://taniwha.ai">Taniwha.ai</a> &middot; <a href="https://taniwha.ai/kete">Kete</a> &middot; <a href="https://taniwha.ai/products">All products</a></p>
     </div>
 </section>
 
 <footer>
     <div class="container">
-        <p>Built by <a href="https://taniwha.ai">Taniwha.ai</a> &middot; MIT / Apache-2.0 &middot; <a href="https://github.com/taniwhaai/arai">GitHub</a> &middot; <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">Compliance inventory</a></p>
+        <p>Built by <a href="https://taniwha.ai">Taniwha.ai</a> &middot; Apache-2.0 / MIT &middot; <a href="https://github.com/taniwhaai/arai">GitHub</a> &middot; <a href="https://github.com/taniwhaai/arai/blob/main/docs/arai-compliance-features.pdf">Compliance inventory</a></p>
     </div>
 </footer>
 
