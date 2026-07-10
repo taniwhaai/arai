@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-07-10
+
+### Atlas
+
+- Correct taniwha.yaml (arai/kete dep direction; codeworld lineage) ([#169](https://github.com/taniwhaai/arai/pull/169))
+
+
 ## [1.1.1] - 2026-07-06
 
 ### Miscellaneous
