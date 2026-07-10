@@ -1,12 +1,15 @@
 name: arai
 repo: taniwhaai/arai
-role: Edge enforcement for AI coding agents (open-core wrapper around kete)
+role: Open enforcement core for AI coding agents (public, Apache-2.0)
 layer: tooling
-language: python
+language: rust
 status: active
 successor_of: null
-upstream: [kete]
-downstream: []
+upstream: []
+downstream: [kete]
 runs_product: null
 notes: >
-  DEV TOOLING. Contribution flow is PR-to-main (unlike kraken's push-to-master).
+  DEV TOOLING. The open-core enforcement engine ("the wedge"): deterministic
+  edge enforcement + append-only JSONL compliance log. Extracted from the Kete
+  platform; kete-agent depends on arai as a library, i.e. kete consumes arai as
+  its enforcement core (arai is upstream of kete). Contribution flow is PR-to-main.
