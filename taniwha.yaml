@@ -1,0 +1,12 @@
+name: arai
+repo: taniwhaai/arai
+role: Edge enforcement for AI coding agents (open-core wrapper around kete)
+layer: tooling
+language: python
+status: active
+successor_of: null
+upstream: [kete]
+downstream: []
+runs_product: null
+notes: >
+  DEV TOOLING. Contribution flow is PR-to-main (unlike kraken's push-to-master).
