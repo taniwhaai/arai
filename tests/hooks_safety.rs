@@ -135,7 +135,7 @@ fn arai_disabled_falsey_does_not_short_circuit() {
     assert!(stdout.trim().is_empty() || stdout.contains("permissionDecision"));
 }
 
-/// Smoke test for Grok TUI shaped payloads + environment.
+/// Smoke test for Grok Build shaped payloads + environment.
 /// Ensures we don't crash on Grok tool names and correctly take the Grok path.
 #[test]
 fn grok_tui_payload_does_not_crash() {
