@@ -46,7 +46,7 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
             "claude_md_project",
             0.92,
         ),
-        // Grok TUI native project rules (AGENTS.md family). These are high
+        // Grok Build native project rules (AGENTS.md family). These are high
         // value for Grok users and are checked by Grok in this approximate
         // priority order.
         (cfg.project_root.join("AGENTS.md"), "agents_md", 0.91),

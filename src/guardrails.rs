@@ -10,7 +10,7 @@ const SKIP_TOOLS: &[&str] = &["Read", "Glob", "Agent", "ToolSearch"];
 /// Canonical internal tool names used throughout Arai's matching and intent logic.
 /// These are the names that appear in SKIP_TOOLS, extract_terms dispatch, etc.
 /// This list serves as the single source of truth for tool names coming from
-/// any supported coding agent hook (Claude Code, Grok TUI, etc.).
+/// any supported coding agent hook (Claude Code, Grok Build, etc.).
 pub const CANONICAL_TOOLS: &[&str] = &[
     "Bash",
     "Edit",
@@ -27,19 +27,22 @@ pub const CANONICAL_TOOLS: &[&str] = &[
 /// Normalizes raw `tool_name` values from any supported coding agent's hook payload
 /// into Arai's canonical internal names.
 ///
-/// This is the single place that knows about provider-specific naming (e.g. Grok's
-/// `run_terminal_cmd` vs Claude's `Bash`). Call this immediately after reading
-/// `tool_name` from JSON, before passing the value anywhere else.
+/// This is the single place that knows about provider-specific naming (e.g. Grok
+/// Build's `run_terminal_command` vs Claude's `Bash`). Call this immediately
+/// after reading `tool_name` from JSON, before passing the value anywhere else.
 ///
 /// Designed for minimal impact: all existing match arms, `.contains()`, and `==`
 /// checks continue to work unchanged after normalization.
 pub fn normalize_tool_name(raw: &str) -> String {
     match raw {
-        // Grok Build (formerly Grok TUI / supergrok) names, from docs and
-        // hook samples.  Grok also auto-maps its tools to Claude names in
-        // hook payloads for some events, so canonical names may arrive
-        // directly — the pass-through arm below covers that.
-        "run_terminal_cmd" | "bash" => "Bash".to_string(),
+        // Grok Build names from docs.x.ai and live hook samples.  Grok also
+        // auto-maps some tools to Claude names for some events, so canonical
+        // names may arrive directly — the pass-through arm below covers that.
+        //
+        // `run_terminal_command` is the live Grok Build tool name (see
+        // docs.x.ai PreToolUse examples and issue #161 live verify). The
+        // older `run_terminal_cmd` alias is kept for compatibility.
+        "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
         "search_replace" | "edit_file" | "apply_patch" => "Edit".to_string(),
         "read_file" => "Read".to_string(),
         "list_dir" => "Glob".to_string(),
@@ -58,6 +61,7 @@ pub fn normalize_tool_name(raw: &str) -> String {
         other => {
             let lower = other.to_ascii_lowercase();
             match lower.as_str() {
+                "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
                 "write" | "notebookedit" | "notebook_edit" | "write_file" | "writefile"
                 | "create_file" | "createfile" => "Write".to_string(),
                 "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit".to_string(),
@@ -869,6 +873,17 @@ fn shell_tokenize(input: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_tool_name_grok_terminal_aliases() {
+        // Live Grok Build name (docs.x.ai + issue #161) and legacy short form.
+        assert_eq!(normalize_tool_name("run_terminal_command"), "Bash");
+        assert_eq!(normalize_tool_name("run_terminal_cmd"), "Bash");
+        assert_eq!(normalize_tool_name("bash"), "Bash");
+        assert_eq!(normalize_tool_name("Bash"), "Bash");
+        // Case-insensitive fallback path
+        assert_eq!(normalize_tool_name("Run_Terminal_Command"), "Bash");
+    }
 
     #[test]
     fn test_skip_tools() {

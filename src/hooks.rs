@@ -48,7 +48,7 @@ fn is_disabled_via_env() -> bool {
 
 /// Supported coding agent hosts that can invoke Arai's hook handler.
 /// Detection is best-effort via environment variables injected by the host
-/// (Grok TUI sets GROK_* vars; Claude Code sets CLAUDE_* vars).
+/// (Grok Build sets GROK_* vars; Claude Code sets CLAUDE_* vars).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Host {
     Claude,
@@ -57,7 +57,7 @@ enum Host {
 }
 
 fn detect_host(hook: &Value) -> Host {
-    // Grok TUI (supergrok) injects these on hook invocations.
+    // Grok Build injects these on hook invocations.
     if std::env::var("GROK_HOOK_EVENT").is_ok() || std::env::var("GROK_SESSION_ID").is_ok() {
         return Host::Grok;
     }
@@ -1020,7 +1020,7 @@ fn deny_reason(matched: &[(Guardrail, u8)]) -> String {
     "Arai: a rule blocked this action.".to_string()
 }
 
-/// Emit a Grok TUI compatible decision response.
+/// Emit a Grok Build compatible decision response.
 fn emit_grok_decision(
     allow: bool,
     reason: Option<&str>,
@@ -1171,7 +1171,7 @@ mod tests {
     fn hook_fields_accept_both_casings_snake_wins() {
         let camel = serde_json::json!({
             "hookEventName": "PreToolUse",
-            "toolName": "run_terminal_cmd",
+            "toolName": "run_terminal_command",
             "toolInput": {"command": "git push --force"},
             "sessionId": "sess-1",
         });
@@ -1181,7 +1181,7 @@ mod tests {
         );
         assert_eq!(
             hook_field_str(&camel, "tool_name", "toolName"),
-            Some("run_terminal_cmd")
+            Some("run_terminal_command")
         );
         assert_eq!(
             hook_field_str(&camel, "session_id", "sessionId"),
@@ -1224,15 +1224,16 @@ mod tests {
     fn match_hook_camelcase_equals_snakecase() {
         let (db, path) = temp_db();
         let cfg = test_cfg();
+        // Live Grok Build name is `run_terminal_command` (docs.x.ai + issue #161).
         let snake = serde_json::json!({
             "hook_event_name": "PreToolUse",
-            "tool_name": "run_terminal_cmd",
+            "tool_name": "run_terminal_command",
             "tool_input": {"command": "git push --force origin main"},
             "session_id": "sess-camel-eq",
         });
         let camel = serde_json::json!({
             "hookEventName": "PreToolUse",
-            "toolName": "run_terminal_cmd",
+            "toolName": "run_terminal_command",
             "toolInput": {"command": "git push --force origin main"},
             "sessionId": "sess-camel-eq",
         });
@@ -1244,6 +1245,19 @@ mod tests {
         assert_eq!(a.tool_name, "Bash", "grok terminal tool must normalize");
         assert_eq!(a.terms, b.terms);
         std::fs::remove_file(&path).ok();
+    }
+
+    /// The live Grok Build terminal tool name and the older short alias both
+    /// normalize to Bash (issue #161 — missing alias made PreToolUse fail-open).
+    #[test]
+    fn grok_terminal_tool_aliases_normalize_to_bash() {
+        assert_eq!(
+            guardrails::normalize_tool_name("run_terminal_command"),
+            "Bash"
+        );
+        assert_eq!(guardrails::normalize_tool_name("run_terminal_cmd"), "Bash");
+        assert_eq!(guardrails::normalize_tool_name("bash"), "Bash");
+        assert_eq!(guardrails::normalize_tool_name("Bash"), "Bash");
     }
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);

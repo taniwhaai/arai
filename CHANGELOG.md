@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- *(grok)* Map live Grok Build tool name `run_terminal_command` → `Bash` (the
+  older `run_terminal_cmd` alias is kept). Without this, PreToolUse rules that
+  scope to Bash silently fail-open on native Grok Build hooks ([#161](https://github.com/taniwhaai/arai/issues/161))
+
+### Documentation
+
+- *(grok)* User-facing copy says **Grok Build** (not "Grok TUI" / supergrok);
+  README documents that under Grok Build, block is load-bearing and warn/inform
+  `additionalContext` is best-effort ([#161](https://github.com/taniwhaai/arai/issues/161))
+
 ## [1.1.1] - 2026-07-06
 
 ### Miscellaneous
