@@ -72,7 +72,7 @@ pub fn run() -> Result<(), String> {
     inject_hooks(&cfg)?;
     println!("    \u{2713} .claude/settings.json updated");
 
-    // Also register for native Grok TUI support (if possible).
+    // Also register for native Grok Build support (if possible).
     if let Err(e) = inject_grok_hooks(&cfg) {
         // Non-fatal for now — many users will still get value via the
         // .claude/settings.json compatibility layer that Grok loads.
@@ -99,7 +99,7 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
-    println!("\n  Arai is enforcing this project's rules (Claude Code and Grok TUI).");
+    println!("\n  Arai is enforcing this project's rules (Claude Code and Grok Build).");
     Ok(())
 }
 

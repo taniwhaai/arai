@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "arai",
     version,
-    about = "Instruction files that actually work (Claude + Grok TUI)."
+    about = "Instruction files that actually work (Claude + Grok Build)."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -457,7 +457,7 @@ fn cmd_status() -> Result<(), String> {
     println!("  Sources:    {} file(s)", files.len());
 
     println!("  {}", style::structural("Integration", col));
-    println!("    Hooks:    Claude Code + Grok TUI (native)");
+    println!("    Hooks:    Claude Code + Grok Build (native)");
     println!("              • .claude/settings.json");
     println!("              • .grok/hooks/arai.json");
     for f in &files {
