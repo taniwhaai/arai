@@ -105,15 +105,9 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
-    println!(
-        "\n  Arai is registered for Claude Code and Grok Build (PreToolUse hooks)."
-    );
-    println!(
-        "  Grok: use --trust (or /hooks-trust) so project hooks run; bare `arai`"
-    );
-    println!(
-        "  PATH must resolve to this binary, or re-run init after installing."
-    );
+    println!("\n  Arai is registered for Claude Code and Grok Build (PreToolUse hooks).");
+    println!("  Grok: use --trust (or /hooks-trust) so project hooks run; bare `arai`");
+    println!("  PATH must resolve to this binary, or re-run init after installing.");
     Ok(())
 }
 

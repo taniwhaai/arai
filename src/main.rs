@@ -669,8 +669,7 @@ fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
     // `arai why` returns 0 rules — enforcement that presents as present.
     let mut inert: Vec<String> = Vec::new();
     for t in &triples {
-        let intent =
-            intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
         if intent.timing.hook_event() == "none" {
             inert.push(format!("{} {}: {}", t.subject, t.predicate, t.object));
         }
@@ -715,7 +714,10 @@ fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
     }
 
     for t in &triples {
-        if inert.iter().any(|s| s.contains(&t.subject) && s.contains(&t.object)) {
+        if inert
+            .iter()
+            .any(|s| s.contains(&t.subject) && s.contains(&t.object))
+        {
             println!(
                 "  Added (inert): {} {}: {}",
                 t.subject, t.predicate, t.object
