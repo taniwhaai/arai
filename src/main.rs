@@ -54,9 +54,17 @@ enum Commands {
         enrich_file: Option<String>,
     },
     /// Manually add a guardrail rule
+    ///
+    /// Rules whose subject does not map to an enforceable tool domain are
+    /// refused by default (they would print `Added:` and never fire).  Pass
+    /// `--allow-inert` to keep them as documentary rules.
     Add {
         /// The rule text (e.g. "Never force-push to main")
         rule: String,
+        /// Keep rules that cannot map to an enforceable tool domain
+        /// (documentary only — they will never block a tool call).
+        #[arg(long)]
+        allow_inert: bool,
     },
     /// Upgrade arai binary to latest version or switch variant
     Upgrade {
@@ -380,7 +388,7 @@ fn main() {
             enrich_api,
             enrich_file,
         } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
-        Commands::Add { rule } => cmd_add(&rule),
+        Commands::Add { rule, allow_inert } => cmd_add_inner(&rule, allow_inert),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
         Commands::Audit {
             since,
@@ -536,10 +544,21 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
             return Ok(());
         }
         for r in &rules {
-            println!(
-                "- {}",
-                style::passage(&format!("{} {}: {}", r.subject, r.predicate, r.object), col)
-            );
+            let inert = r
+                .intent
+                .as_ref()
+                .map(|i| i.timing.hook_event() == "none")
+                .unwrap_or(false);
+            let body = format!("{} {}: {}", r.subject, r.predicate, r.object);
+            if inert {
+                println!(
+                    "- {}  {}",
+                    style::passage(&body, col),
+                    style::structural("[inert — never fires on tool calls]", col)
+                );
+            } else {
+                println!("- {}", style::passage(&body, col));
+            }
         }
     }
     Ok(())
@@ -629,7 +648,10 @@ fn scan_code_graph(cfg: &config::Config, db: &store::Store) -> Result<(), String
     Ok(())
 }
 
-fn cmd_add(rule: &str) -> Result<(), String> {
+/// Body for `arai add`.  `allow_inert` retains rules that cannot map
+/// to any enforceable tool domain (documentary rules).  Default refuses them
+/// so `Added:` is never printed for a rule that can never fire.
+fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let db = store::Store::open(&cfg.db_path())?;
 
@@ -638,6 +660,28 @@ fn cmd_add(rule: &str) -> Result<(), String> {
     if triples.is_empty() {
         return Err(format!(
             "Could not extract a rule from: \"{rule}\"\nPhrase it as an imperative, e.g. \"Never force-push to main\"."
+        ));
+    }
+
+    // Refuse rules that will never match a tool call (zero eligible domains).
+    // "Never run echo foo" extracts cleanly and prints Added: but the subject
+    // is not a known tool, timing is Principle (hook_event = "none"), and
+    // `arai why` returns 0 rules — enforcement that presents as present.
+    let mut inert: Vec<String> = Vec::new();
+    for t in &triples {
+        let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        if intent.timing.hook_event() == "none" {
+            inert.push(format!("{} {}: {}", t.subject, t.predicate, t.object));
+        }
+    }
+    if !inert.is_empty() && !allow_inert {
+        let listed = inert.join("\n  - ");
+        return Err(format!(
+            "Rule not added: its subject does not map to any enforceable tool domain.\n  \
+             - {listed}\n\
+             Rewrite the rule against a known tool (git, cargo, npm, docker, …) \
+             or the shell/Bash tool, or pass --allow-inert to retain it as a \
+             non-enforcing rule."
         ));
     }
 
@@ -664,8 +708,23 @@ fn cmd_add(rule: &str) -> Result<(), String> {
         enrich::enrich_guardrails(&db, &cfg.arai_base_dir).ok();
     }
 
+    // Manual-only projects often never re-run init; make sure host hooks exist.
+    if let Err(e) = init::ensure_hooks() {
+        eprintln!("  Warning: could not ensure host hooks: {e}");
+    }
+
     for t in &triples {
-        println!("  Added: {} {}: {}", t.subject, t.predicate, t.object);
+        if inert
+            .iter()
+            .any(|s| s.contains(&t.subject) && s.contains(&t.object))
+        {
+            println!(
+                "  Added (inert): {} {}: {}",
+                t.subject, t.predicate, t.object
+            );
+        } else {
+            println!("  Added: {} {}: {}", t.subject, t.predicate, t.object);
+        }
     }
     Ok(())
 }
