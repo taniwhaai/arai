@@ -6,12 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- *(grok)* Canonicalise Grok Build 1.0+ snake_case hook events (`pre_tool_use`
+  → `PreToolUse`). Live host payloads used camelCase field names with a
+  snake_case *value*; Arai only recognised PascalCase, so every rule failed the
+  timing gate and the hook returned empty stdout / exit 0 (fail-open) while
+  host-only bash deny hooks still worked
+  ([#173](https://github.com/taniwhaai/arai/issues/173))
+- *(init)* Always register Claude Code and Grok Build hooks even when no
+  instruction files are found. Empty projects previously printed
+  `No instruction files found` and returned before writing
+  `.claude/settings.json` / `.grok/hooks/arai.json`, so `arai add` rules never
+  reached a live host path ([#173](https://github.com/taniwhaai/arai/issues/173))
+- *(init)* Register hook commands with the absolute path of the running binary
+  (`current_exe`) so a stale `arai` earlier on `PATH` cannot fail-open
+- *(add)* Refuse rules that cannot map to an enforceable tool domain
+  (timing would be non-tool / inert). Pass `--allow-inert` for documentary
+  rules; `arai guardrails` marks inert rules in the list
 - *(grok)* Map live Grok Build tool name `run_terminal_command` → `Bash` (the
   older `run_terminal_cmd` alias is kept). Without this, PreToolUse rules that
   scope to Bash silently fail-open on native Grok Build hooks ([#161](https://github.com/taniwhaai/arai/issues/161))
 
 ### Documentation
 
+- *(grok)* Re-verified host PreToolUse deny on Grok Build **1.0.0** headless;
+  evidence in `docs/upstream/grok-hooks-reverification-1.0.0.md`
+  ([#173](https://github.com/taniwhaai/arai/issues/173))
 - *(grok)* User-facing copy says **Grok Build** (not "Grok TUI" / supergrok);
   README documents that under Grok Build, block is load-bearing and warn/inform
   `additionalContext` is best-effort ([#161](https://github.com/taniwhaai/arai/issues/161))

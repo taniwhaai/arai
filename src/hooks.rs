@@ -79,24 +79,55 @@ fn detect_host(hook: &Value) -> Host {
 /// still fails closed instead of being silently treated as a non-deny
 /// event.  Returns `Some(canonical_str)` for recognised events so the
 /// caller stores the static literal rather than a heap copy of the JSON.
+///
+/// Grok Build 1.0+ delivers native events in **snake_case**
+/// (`pre_tool_use`) while Claude Code and Arai's internal matcher use
+/// **PascalCase** (`PreToolUse`).  Both spellings map to the same
+/// canonical form.  Without this, live Grok payloads match zero rules
+/// (timing gate compares against `"PreToolUse"`) and the hook exits 0
+/// with empty stdout — fail-open.  Diagnosed on 2026-08-10 via a wrapper
+/// that logged stdin from a real `grok -p` session (#173).
 fn known_hook_event(event: &str) -> Option<&'static str> {
     match event {
+        // Claude Code / Arai-internal (PascalCase)
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
         "UserPromptSubmit" => Some("UserPromptSubmit"),
+        // Grok Build native (snake_case) — live host payload 1.0.0
+        "pre_tool_use" => Some("PreToolUse"),
+        "post_tool_use" => Some("PostToolUse"),
+        "user_prompt_submit" => Some("UserPromptSubmit"),
         // Observability-only events that keep Arai's rule set in sync with
         // disk and context.  Handled in `handle_stdin_impl` before the
         // match pipeline — they never produce a `permissionDecision`.
-        "FileChanged" => Some("FileChanged"),
-        "InstructionsLoaded" => Some("InstructionsLoaded"),
-        "CwdChanged" => Some("CwdChanged"),
-        "PostToolBatch" => Some("PostToolBatch"),
+        "FileChanged" | "file_changed" => Some("FileChanged"),
+        "InstructionsLoaded" | "instructions_loaded" => Some("InstructionsLoaded"),
+        "CwdChanged" | "cwd_changed" => Some("CwdChanged"),
+        "PostToolBatch" | "post_tool_batch" => Some("PostToolBatch"),
         // PermissionDenied is decision-bearing (can return retry: true)
         // but isn't a tool-call event; handled in its own dispatch
         // branch alongside the observability events.
-        "PermissionDenied" => Some("PermissionDenied"),
+        "PermissionDenied" | "permission_denied" => Some("PermissionDenied"),
+        // Additional Grok-native passive events (recognised, no matching)
+        "session_start" | "SessionStart" => Some("SessionStart"),
+        "session_end" | "SessionEnd" => Some("SessionEnd"),
+        "post_tool_use_failure" | "PostToolUseFailure" => Some("PostToolUseFailure"),
+        "stop" | "Stop" => Some("Stop"),
+        "stop_failure" | "StopFailure" => Some("StopFailure"),
+        "notification" | "Notification" => Some("Notification"),
+        "subagent_start" | "SubagentStart" => Some("SubagentStart"),
+        "subagent_stop" | "SubagentStop" => Some("SubagentStop"),
+        "pre_compact" | "PreCompact" => Some("PreCompact"),
+        "post_compact" | "PostCompact" => Some("PostCompact"),
         _ => None,
     }
+}
+
+/// Canonical event name for matching and response emission.
+/// Unknown/unrecognised names fall back to `"PreToolUse"` so a typo in a
+/// fail-closed payload still denies rather than fail-opens.
+fn canonical_hook_event(raw: &str) -> &'static str {
+    known_hook_event(raw).unwrap_or("PreToolUse")
 }
 
 /// Does this absolute path look like an AI-coding-assistant instruction
@@ -252,9 +283,13 @@ fn hook_field_str<'a>(hook: &'a Value, snake: &str, camel: &str) -> Option<&'a s
 /// *and* by the `arai test` scenario runner — both paths see the same
 /// matching logic so scenarios stay faithful to production.
 pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, String> {
-    let event = hook_field_str(hook, "hook_event_name", "hookEventName")
-        .unwrap_or("PreToolUse")
-        .to_string();
+    // Canonicalise before any timing/response comparison.  Grok Build
+    // sends snake_case (`pre_tool_use`); the matcher and deny path are
+    // keyed on PascalCase (`PreToolUse`).
+    let event = canonical_hook_event(
+        hook_field_str(hook, "hook_event_name", "hookEventName").unwrap_or("PreToolUse"),
+    )
+    .to_string();
     let raw_tool_name = hook_field_str(hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
     // Sanitize session_id at the boundary — anything that wouldn't survive
@@ -481,7 +516,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
 
     let raw_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
-    let event = hook_field(&hook, "hook_event_name", "hookEventName")
+    let raw_event = hook_field(&hook, "hook_event_name", "hookEventName")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
     // Tell the outer wrapper what event we're processing so a later error
@@ -491,10 +526,15 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // emit and letting the tool through (the very behaviour C10 fixed for
     // the byte-flip / oversize cases).  Unknown events leave event_hint at
     // its safe default so the wrapper still fails closed.
-    if let Some(known) = known_hook_event(event) {
+    //
+    // Canonical form (PascalCase) is what the rest of this function uses —
+    // Grok's live snake_case (`pre_tool_use`) must not leak into the
+    // match/deny path or every rule fails the timing gate silently.
+    if let Some(known) = known_hook_event(raw_event) {
         event_hint.clear();
         event_hint.push_str(known);
     }
+    let event = canonical_hook_event(raw_event);
     // Sanitize session_id (see `session::valid_session_id`).  Hostile
     // payloads with `..` or `/` bytes in the id no longer reach the
     // session-file writer.
@@ -1247,6 +1287,51 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// Live Grok 1.0.0: camelCase fields *and* snake_case event value
+    /// (`pre_tool_use`).  Without event canonicalisation every rule fails
+    /// the timing gate and the hook fails open (empty stdout, exit 0).
+    #[test]
+    fn match_hook_live_grok_snake_case_event_canonicalises() {
+        use crate::parser::Triple;
+        let (db, dir) = temp_db();
+        let cfg = test_cfg();
+        let triples = vec![Triple {
+            subject: "Cargo".to_string(),
+            predicate: "never".to_string(),
+            object: "run cargo clean".to_string(),
+            confidence: 0.95,
+            domain: "manual".to_string(),
+            source_file: "manual://test".to_string(),
+            line_start: Some(1),
+            line_end: Some(1),
+            layer: Some(1),
+            expires_at: None,
+            noenrich: false,
+            tier: None,
+            source_label: None,
+        }];
+        db.upsert_file("manual://test", "Never run cargo clean", &triples, "manual")
+            .unwrap();
+        db.classify_all_guardrails().unwrap();
+
+        // Exact shapes from the 2026-08-10 diagnostic wrapper log.
+        let live = serde_json::json!({
+            "hookEventName": "pre_tool_use",
+            "sessionId": "019fe8d8-f14c-7b61-8679-3e01ff203dda",
+            "toolName": "run_terminal_command",
+            "toolInput": {"command": "cargo clean"},
+        });
+        let result = match_hook(&live, &cfg, &db).expect("match_hook");
+        assert_eq!(result.event, "PreToolUse", "snake_case must canonicalise");
+        assert_eq!(result.tool_name, "Bash");
+        assert!(
+            !result.matched.is_empty(),
+            "cargo clean block rule must fire on live Grok payload; matched={}",
+            result.matched.len()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The live Grok Build terminal tool name and the older short alias both
     /// normalize to Bash (issue #161 — missing alias made PreToolUse fail-open).
     #[test]
@@ -1330,6 +1415,21 @@ mod tests {
         );
     }
 
+    /// Grok Build 1.0+ delivers snake_case event names in the live hook
+    /// payload.  These must canonicalise to PascalCase or every rule's
+    /// timing gate fails closed-as-open (empty match, exit 0).  #173 E2E.
+    #[test]
+    fn known_hook_event_accepts_grok_snake_case() {
+        assert_eq!(known_hook_event("pre_tool_use"), Some("PreToolUse"));
+        assert_eq!(known_hook_event("post_tool_use"), Some("PostToolUse"));
+        assert_eq!(
+            known_hook_event("user_prompt_submit"),
+            Some("UserPromptSubmit")
+        );
+        assert_eq!(canonical_hook_event("pre_tool_use"), "PreToolUse");
+        assert_eq!(canonical_hook_event("totally_unknown"), "PreToolUse");
+    }
+
     #[test]
     fn known_hook_event_rejects_spoofed_and_typos() {
         // Suffix that defeats string equality — this is the actual M1 bug.
@@ -1340,7 +1440,7 @@ mod tests {
         assert_eq!(
             known_hook_event("pretooluse"),
             None,
-            "case-sensitive on purpose"
+            "collapsed case is not a recognised spelling"
         );
         assert_eq!(known_hook_event(""), None);
         assert_eq!(known_hook_event("PreToolUse\nPostToolUse"), None);
@@ -1348,17 +1448,53 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// `known_hook_event` accepts EXACTLY the canonical three strings
-        /// and nothing else.  Any other input — typo, prefix, suffix, case
-        /// variant, control char, arbitrary Unicode — must return `None`.
-        /// This is the property that closes the M1 fail-closed-bypass
-        /// regression: an attacker cannot smuggle a near-miss through the
-        /// JSON `hook_event_name` field.
+        /// `known_hook_event` accepts only the documented PascalCase and
+        /// Grok snake_case spellings.  Any other input — typo, prefix,
+        /// suffix, collapsed case, control char, arbitrary Unicode — must
+        /// return `None`.  Closes the M1 fail-closed-bypass regression
+        /// while admitting the live Grok 1.0 spelling.
         #[test]
         fn prop_known_hook_event_only_accepts_canonical(s in ".{0,80}") {
-            let canonical = matches!(s.as_str(),
-                "PreToolUse" | "PostToolUse" | "UserPromptSubmit");
-            if canonical {
+            let accepted = matches!(
+                s.as_str(),
+                "PreToolUse"
+                    | "PostToolUse"
+                    | "UserPromptSubmit"
+                    | "FileChanged"
+                    | "InstructionsLoaded"
+                    | "CwdChanged"
+                    | "PostToolBatch"
+                    | "PermissionDenied"
+                    | "SessionStart"
+                    | "SessionEnd"
+                    | "PostToolUseFailure"
+                    | "Stop"
+                    | "StopFailure"
+                    | "Notification"
+                    | "SubagentStart"
+                    | "SubagentStop"
+                    | "PreCompact"
+                    | "PostCompact"
+                    | "pre_tool_use"
+                    | "post_tool_use"
+                    | "user_prompt_submit"
+                    | "file_changed"
+                    | "instructions_loaded"
+                    | "cwd_changed"
+                    | "post_tool_batch"
+                    | "permission_denied"
+                    | "session_start"
+                    | "session_end"
+                    | "post_tool_use_failure"
+                    | "stop"
+                    | "stop_failure"
+                    | "notification"
+                    | "subagent_start"
+                    | "subagent_stop"
+                    | "pre_compact"
+                    | "post_compact"
+            );
+            if accepted {
                 proptest::prop_assert!(known_hook_event(&s).is_some());
             } else {
                 proptest::prop_assert_eq!(known_hook_event(&s), None,

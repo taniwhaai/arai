@@ -7,9 +7,15 @@ pub fn run() -> Result<(), String> {
     println!("  Scanning for instruction files...");
     let files = discovery::discover(&cfg)?;
 
+    // Always open the store and register hooks — even when no instruction
+    // files exist yet.  Users who start with `arai add` (manual rules only)
+    // previously hit a silent dead path: init printed "No instruction files
+    // found" and returned before writing `.claude/settings.json` or
+    // `.grok/hooks/arai.json`, so the host never invoked Arai.  Rules that
+    // present as present and aren't is the same shape of defect as #173.
     if files.is_empty() {
         println!("  No instruction files found.");
-        return Ok(());
+        println!("  (Hooks will still be registered so `arai add` rules can enforce.)");
     }
 
     for f in &files {
@@ -99,7 +105,15 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
-    println!("\n  Arai is enforcing this project's rules (Claude Code and Grok Build).");
+    println!(
+        "\n  Arai is registered for Claude Code and Grok Build (PreToolUse hooks)."
+    );
+    println!(
+        "  Grok: use --trust (or /hooks-trust) so project hooks run; bare `arai`"
+    );
+    println!(
+        "  PATH must resolve to this binary, or re-run init after installing."
+    );
     Ok(())
 }
 
@@ -300,7 +314,7 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "arai guardrails --match-stdin",
+                        "command": arai_hook_command(),
                         "timeout": 3
                     }
                 ]
@@ -314,6 +328,26 @@ fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
         .map_err(|e| format!("Could not write .grok/hooks/arai.json: {e}"))?;
 
     Ok(())
+}
+
+/// Command string registered into host hook configs.
+///
+/// Prefer the absolute path of the running binary so a stale `arai` earlier
+/// on `PATH` cannot fail-open (empty stdout + exit 0 → host treats as allow).
+/// Fall back to bare `arai` only if `current_exe` is unavailable.
+fn arai_hook_command() -> String {
+    match std::env::current_exe() {
+        Ok(path) => {
+            let p = path.display().to_string();
+            // Quote when the path has whitespace; hosts pass the command to a shell.
+            if p.chars().any(|c| c.is_whitespace()) {
+                format!("\"{p}\" guardrails --match-stdin")
+            } else {
+                format!("{p} guardrails --match-stdin")
+            }
+        }
+        Err(_) => "arai guardrails --match-stdin".to_string(),
+    }
 }
 
 /// Idempotently register Arai's hook command under one event in the
@@ -352,13 +386,23 @@ fn register_arai_hook(
             "hooks": [
                 {
                     "type": "command",
-                    "command": "arai guardrails --match-stdin",
+                    "command": arai_hook_command(),
                     "timeout": 3
                 }
             ]
         });
         event_arr.push(arai_hook);
     }
+    Ok(())
+}
+
+/// Ensure Claude + Grok hook registrations exist for the current project.
+/// Safe to call from `arai add` so manual-only projects get a live host path
+/// without requiring a second `arai init`.
+pub fn ensure_hooks() -> Result<(), String> {
+    let cfg = config::Config::load()?;
+    inject_hooks(&cfg)?;
+    inject_grok_hooks(&cfg)?;
     Ok(())
 }
 

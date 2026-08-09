@@ -64,12 +64,15 @@ enforcement strength depends on what surface the assistant exposes.
 
 - **Claude Code** and **Grok Build** both support real PreToolUse hooks, so Arai
   can issue `deny` decisions and actually block tool calls.
-- On **Grok Build**, block is load-bearing (`decision: deny` + exit 2). Advisory
-  text is still emitted as `additionalContext` on allow responses and recorded
-  in the audit log, but Grok's documented PreToolUse contract only specifies
+- On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
+  host invokes hooks (verified on **1.0.0** headless with `--trust`; project
+  hooks stay inactive until the folder is trusted). Advisory text is still
+  emitted as `additionalContext` on allow responses and recorded in the audit
+  log, but Grok's documented PreToolUse contract only specifies
   `allow` / `deny`+`reason` — so warn/inform injection into the model is
   **best-effort** until the host surfaces that field. Treat block as the
-  guarantee; treat advise as optional context.
+  guarantee; treat advise as optional context. See
+  [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
 - Cursor and Windsurf are MCP clients today — they get strong advisory
   enforcement via the MCP server.
 - GitHub Copilot currently has no live enforcement surface; the file is
