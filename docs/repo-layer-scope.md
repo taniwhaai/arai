@@ -8,12 +8,12 @@ A pre-commit (and/or server-side) hook that runs Arai's rule engine on git diffs
 
 ## Why this matters
 
-Today's enforcement is per-tool. Each AI tool ships its own surface (Claude Code hooks, Grok TUI hooks, Cursor MCP context, Copilot ingest-only) and the strength of enforcement tracks what the tool exposes. The matrix has gaps:
+Today's enforcement is per-tool. Each AI tool ships its own surface (Claude Code hooks, Grok Build hooks, Cursor MCP context, Copilot ingest-only) and the strength of enforcement tracks what the tool exposes. The matrix has gaps:
 
 | Tool                | Pre-tool-call block | Pre-commit block (this work) |
 |---------------------|---------------------|-------------------------------|
 | Claude Code         | ✅ hook              | ✅                             |
-| Grok TUI            | ✅ hook              | ✅                             |
+| Grok Build          | ✅ hook              | ✅                             |
 | Cursor              | ⚠️ context only      | ✅                             |
 | Copilot             | ⚠️ context only      | ✅                             |
 | Windsurf            | ⚠️ context only      | ✅                             |

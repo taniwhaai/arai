@@ -356,8 +356,8 @@
                 <span>Native PreToolUse hooks — full blocking support</span>
             </div>
             <div class="supported-item">
-                <strong>Grok TUI</strong>
-                <span>Native hooks — full blocking support</span>
+                <strong>Grok Build</strong>
+                <span>Native hooks — blocking support (advisory context best-effort)</span>
             </div>
             <div class="supported-item">
                 <strong>Cursor, Windsurf, Cline &amp; others</strong>
@@ -411,7 +411,7 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok TUI (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok Build (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise &mdash; injected as context in Claude Code, best-effort under Grok Build. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
             </div>
             <div class="feature">
                 <h3>Intent-aware</h3>
@@ -517,7 +517,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and Ārai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok TUI.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and Ārai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok Build.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>

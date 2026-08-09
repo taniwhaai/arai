@@ -19,7 +19,7 @@ That's it. Arai discovers your instruction files, extracts the rules, classifies
 
 ## What It Does
 
-When your AI coding assistant (Claude Code or Grok TUI) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
+When your AI coding assistant (Claude Code or Grok Build) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
 
 ```
 You: "Create a new database migration"
@@ -52,9 +52,9 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | File | Tool | Enforcement |
 |------|------|-------------|
 | `CLAUDE.md` | Claude Code | Hooks (block + advise) |
-| `AGENTS.md` / `Agents.md` | Grok TUI (native) | Hooks (block + advise) |
+| `AGENTS.md` / `Agents.md` | Grok Build (native) | Hooks (block; advise best-effort) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
-| `~/.grok/` AGENTS.* files | Grok TUI (global) | Hooks (block + advise) |
+| `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
 | `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
@@ -62,8 +62,17 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 Rules from every file are parsed, classified, and stored the same way — but
 enforcement strength depends on what surface the assistant exposes.
 
-- **Claude Code** and **Grok TUI** both support real PreToolUse hooks, so Arai
+- **Claude Code** and **Grok Build** both support real PreToolUse hooks, so Arai
   can issue `deny` decisions and actually block tool calls.
+- On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
+  host invokes hooks (verified on **1.0.0** headless with `--trust`; project
+  hooks stay inactive until the folder is trusted). Advisory text is still
+  emitted as `additionalContext` on allow responses and recorded in the audit
+  log, but Grok's documented PreToolUse contract only specifies
+  `allow` / `deny`+`reason` — so warn/inform injection into the model is
+  **best-effort** until the host surfaces that field. Treat block as the
+  guarantee; treat advise as optional context. See
+  [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
 - Cursor and Windsurf are MCP clients today — they get strong advisory
   enforcement via the MCP server.
 - GitHub Copilot currently has no live enforcement surface; the file is
