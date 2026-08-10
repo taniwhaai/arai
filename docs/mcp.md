@@ -5,19 +5,22 @@ The stdio MCP server: agent-authored guards, decision self-checks, and authentic
 ## MCP: agent-authored guardrails
 
 `arai mcp` is also the integration path for assistants that don't have a
-native PreToolUse hook surface. Cursor and Windsurf are both MCP clients — point
-them at `arai mcp` and the agent can read the same rule set, register new guards
-mid-session, and self-check recent decisions.
-The strongest blocking enforcement is available in assistants with native hook
-support (currently Claude Code and Grok TUI), but everything else — rule lookup,
-agent-authored guards, decision history — is shared via MCP.
+native PreToolUse hook surface. Cursor, Windsurf, and Cline are MCP clients —
+point them at `arai mcp` and the agent can read the same rule set, register new
+guards mid-session, and self-check recent decisions.
+
+**MCP does not block or inject on tool calls by itself.** The strongest
+enforcement is available on hosts with native PreToolUse hooks (currently
+**Claude Code** and **Grok Build**). On MCP-only hosts, Arai exposes rule
+lookup, agent-authored guards, and decision history — the agent must call those
+tools; there is no automatic PreToolUse deny path.
 
 `arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
 server on stdio. Three tools, exposed to any MCP-capable agent:
 
 | Tool | What it does |
 |------|--------------|
-| `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. Takes effect on the next PreToolUse hook — same enforcement path as rules in your CLAUDE.md. |
+| `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. On hosts with native PreToolUse hooks it takes effect on the next tool call (same path as CLAUDE.md rules). On MCP-only hosts it updates the store for later use / listing — it does not auto-deny tools. |
 | `arai_list_guards(pattern?)` | List active guardrails, optionally substring-filtered, so the agent can check what constraints are live before acting. |
 | `arai_recent_decisions(session_id?, limit?, since?)` | Look up recent Ārai decisions (deny / inject / review) so the agent can self-check after a refusal — closes the model-side feedback loop. |
 
