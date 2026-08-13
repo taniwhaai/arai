@@ -1,11 +1,16 @@
 # Grok Build hook invocation — re-verification on 1.0.0
 
-**Date:** 2026-08-10  
-**Host:** Grok Build **1.0.0** (`3cd0d0cbce`), WSL2  
-**Related:** [#173](https://github.com/taniwhaai/arai/issues/173) (0.2.112 ACP path showed no hook invocation)
+**Status: CLOSED 2026-08-13.** Arai-side defects fixed in #174; host PreToolUse
+deny verified on headless and ACP stdio.
 
-This note freezes a fresh host probe and the Arai-side defect that made
-live Grok sessions look like a pure host failure when they were not.
+| Field | Value |
+| --- | --- |
+| First probe | 2026-08-10 — Grok Build **1.0.0** (`3cd0d0cbce`), WSL2 |
+| Close-out probe | 2026-08-13 — same host binary; Arai **1.1.1** built from `main` @ `169173a` (Grok fixes) |
+| Related | [#173](https://github.com/taniwhaai/arai/issues/173) · [#174](https://github.com/taniwhaai/arai/pull/174) |
+
+This note freezes the host probe and the Arai-side defects that made live Grok
+sessions look like a pure host failure when they were not.
 
 ---
 
@@ -27,10 +32,6 @@ command hooks **are invoked** and **deny is honoured**. This is a material
 change from the 0.2.112 ACP diagnosis in #173 (no hook step between
 `tool_prep_done` and `tool.exec_done`).
 
-ACP `grok agent stdio` was **not** fully exercised (JSON-RPC handshake not
-completed in this session). Treat the TUI/headless path as verified; treat
-ACP/agent as **unverified on 1.0.0**, not as still broken.
-
 ---
 
 ## Arai-side defect found while reproducing #173
@@ -47,7 +48,7 @@ Manual rules added via `arai add` then sat in the store with:
 That is the same shape of bug the plan called out: *enforcement that presents
 as present and isn't* — on Arai's side this time.
 
-### Fixes landed with this verification
+### Fixes landed (#174)
 
 1. **`arai init` always registers hooks** even when zero instruction files
    are found (so `arai add`-only projects get a live host path).
@@ -59,6 +60,8 @@ as present and isn't* — on Arai's side this time.
    `arai guardrails`.
 4. **`arai add` calls `ensure_hooks()`** so a project that skipped a full
    init still gets host registration.
+5. **Snake_case event values** (`pre_tool_use`) canonicalised to `PreToolUse`
+   before the timing gate (see below).
 
 ---
 
@@ -87,14 +90,57 @@ before matching and deny emission (see `src/hooks.rs`).
 
 ---
 
-## What remains open (not closed by this note)
+## Close-out verification (2026-08-13)
+
+Arai built from `main` @ `169173a`, installed to `~/.local/bin/arai` (version
+string **1.1.1**; includes Unreleased Grok fixes after the v1.1.1 tag line).
+
+### A. Stdin / match-stdin (no host)
+
+Empty project → `arai init` → `arai add "never run cargo clean"` → Grok-shaped
+PreToolUse stdin:
+
+| Payload | Result |
+| --- | --- |
+| `run_terminal_command` / `cargo clean` | `decision: deny`, exit **2**, reason cites the rule |
+| `run_terminal_command` / `echo hi` | allow, exit **0** |
+
+Hooks registered at absolute path: `/home/tim/.local/bin/arai guardrails --match-stdin`.
+
+### B. Headless CLI (`grok -p --trust --always-approve`)
+
+Prompt: run exactly `cargo clean`.
+
+| Check | Result |
+| --- | --- |
+| Agent output | Hook blocked; Arai deny reason shown; **command did not run** |
+| `arai audit` | PreToolUse / Bash / `cargo clean` firings recorded |
+
+### C. ACP stdio (`grok agent stdio`)
+
+JSON-RPC: `initialize` → `session/new` → `session/prompt` (same cargo clean
+instruction) in a trusted project with the same Arai rule.
+
+| Check | Result |
+| --- | --- |
+| Host advertises hooks | `x.ai/hooks` with `blockingEvents` including `pre_tool_use` |
+| `hook_execution` for `pre_tool_use` | **failed / denied** with Arai reason |
+| Tool call status | **failed** — `Hook denied: … Arai: "Cargo never run cargo clean"` |
+| `arai audit` | Additional PreToolUse deny recorded for the ACP attempt |
+
+**Conclusion:** On Grok Build **1.0.0**, both the **headless CLI** and **ACP
+stdio** tool paths invoke project PreToolUse hooks and honour Arai deny. The
+0.2.112 “no hook step between prep and exec” diagnosis does **not** reproduce
+on 1.0.0 for these entrypoints. #173 is closed on both host and Arai sides.
+
+### D. Still out of scope (not blocking close)
 
 | Item | Status |
 | --- | --- |
-| ACP / `grok agent` entrypoint on 1.0.0 | Unverified (handshake incomplete) |
-| Interactive TUI (non-headless) on 1.0.0 | Unverified here (headless proved host contract) |
-| Upstream filing for 0.2.112 | May be obsolete if fixed in 1.0.0; confirm ACP before closing #173 as host-fixed |
-| Full support-table audit by entrypoint | Still recommended follow-up |
+| Interactive fullscreen TUI (non-headless, non-ACP) | Not re-probed 2026-08-13; same hook registration as headless when `--trust` / trusted folder applies |
+| Host upgrade to 1.0.3 | Available; close-out ran on 1.0.0 |
+| Warn/inform via `additionalContext` | Still **best-effort**; **block** is the load-bearing contract |
+| Shipping a numbered release that bumps past 1.1.1 with Unreleased Grok notes | Optional product packaging; code is on `main` |
 
 ---
 
@@ -129,4 +175,16 @@ EOF
 grok -p "Run exactly this shell command and nothing else: echo should_not_run" \
   --trust --always-approve --max-turns 2 --output-format plain
 # Expect: Hook denied: $REASON ; marker file present ; command not run
+```
+
+## Reproduction (Arai + headless)
+
+```bash
+PROBE=$(mktemp -d) && cd "$PROBE" && git init -q
+# use an Arai binary that includes #174 (main @ 169173a or later)
+arai init
+arai add "never run cargo clean"
+grok -p "Run exactly this shell command and nothing else: cargo clean" \
+  --trust --always-approve --max-turns 3 --output-format plain
+# Expect: Arai deny reason; cargo clean did not run; arai audit shows PreToolUse
 ```
