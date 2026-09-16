@@ -34,7 +34,7 @@ remain open. Continue on PR #180; preserve original working copies.
 - [x] Reproduce discovery/refresh and other evident enforcement gaps; design scope handling before ingesting nested or path-scoped instructions.
 - [x] Fix confirmed gaps with regressions, preserving public embedding APIs, offline/local decisions, provenance, and externally managed policy state.
 - [x] Add an embedding compatibility check based on Kete's consumption; update architecture/coverage docs and eliminate surfaced test-only lint defects.
-- [ ] Review the combined change; run platform tests, enrichment CI, formatting and lint; update PR #180 with evidence and remaining operational requirements.
+- [x] Review the combined change; run platform tests, enrichment CI, formatting and lint; update PR #180 with evidence and remaining operational requirements.
 
 Architectural starting point from Atlas: Arai is the open enforcement library
 upstream of kete-agent; Kete adds the graph/org control plane and carries
@@ -47,8 +47,10 @@ and Linux (712), with one existing ignored doc test on each. All-target Clippy
 passes; Linux no-default-features embedding/audit tests (13) and all-target lint
 pass. Language-only scanner compilation and five normalization tests pass.
 Actionlint and patch whitespace checks pass. Independent review covered source
-scope, ownership migration, provenance and audit concurrency. Hosted final-head
-CI remains to be checked after pushing. RELEASE_TOKEN metadata now shows an
+scope, ownership migration, provenance and audit concurrency. Hosted run
+35049540138 passed default, enrichment, Windows, formatting and release checks;
+its newer all-target Clippy found one test-only chunks_exact warning, now fixed.
+The rerun is tracked on PR #180. RELEASE_TOKEN metadata now shows an
 update at 2026-09-16T02:20:50Z; the last main release failure predates that update,
 so the replacement token is unverified rather than known-invalid. No Homebrew
 tap token is configured. No release or host-trust state was changed.
