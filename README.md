@@ -16,6 +16,22 @@ arai init
 
 That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up native hooks so guardrails fire at the right moment.
 
+To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
+
+```bash
+arai init --pre-commit
+```
+
+Or add the [pre-commit](https://pre-commit.com) framework hook:
+
+```yaml
+repos:
+  - repo: https://github.com/taniwhaai/arai
+    rev: v1.1.1   # or a later tag
+    hooks:
+      - id: arai-check-diff
+```
+
 
 ## What It Does
 
@@ -125,14 +141,17 @@ Arai doesn't just do keyword matching. It understands your rules:
 
 ```bash
 arai init                  # Discover, extract, classify, scan, set up hooks
+arai init --pre-commit     # Also install a git hook: arai check-diff --cached
 arai status                # Show what's being enforced
 arai guardrails            # List all active rules
 arai why "git push --force" # Explain which rules would fire (dry-run, no audit write)
+arai check-diff --cached   # Match the staged diff against guardrails (repo layer)
 arai scan                  # Re-scan instruction files
 arai scan --code           # Also scan source code (tree-sitter AST)
 arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
-arai add "Never X"         # Add a rule manually
+arai add "Never X"         # Add a rule manually (refuses rules that can never fire)
+arai add --allow-inert "…" # Keep a documentary rule that will not enforce
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring

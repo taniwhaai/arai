@@ -10,6 +10,8 @@ cargo test                     # Run tests
 cargo install --path .         # Install lean binary
 cargo install --path . --features enrich  # Install with ONNX enrichment
 cargo run -- init              # Test init flow
+cargo run -- init --pre-commit # Also install .git/hooks/pre-commit (check-diff --cached)
+cargo run -- check-diff --cached  # Match the staged git diff against guardrails
 cargo run -- guardrails        # List guardrails
 cargo run -- status            # Show enforcement status
 cargo run -- why "git push --force origin main"  # Explain matches (dry-run)
@@ -67,6 +69,7 @@ src/
 ├── compliance.rs         # Pre/Post correlation — Obeyed/Ignored/Unclear verdicts per rule
 ├── stats.rs              # Aggregate views — `arai stats`, per-rule compliance, token economics
 ├── scenarios.rs          # Scenario replay harness — `arai test <file>`
+├── repo_check.rs         # Repo-layer matcher — git diffs synthesised as Write/Edit
 ├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
 ├── mcp.rs                # Stdio MCP server — arai_add_guard + arai_list_guards for agent-authored rules
 ├── telemetry.rs          # Anonymous usage analytics (opt-out, no project context)

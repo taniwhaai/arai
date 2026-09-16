@@ -1,0 +1,7 @@
+- id: arai-check-diff
+  name: arai check-diff
+  description: Block commits that violate Arai guardrails (repo-layer enforcement)
+  entry: arai check-diff --cached
+  language: system
+  pass_filenames: false
+  always_run: true

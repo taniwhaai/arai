@@ -4,17 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Documentation
+### Added
 
-- Site + README: qualify Grok blocking (folder trust), demote MCP hosts from
-  "strong advisory enforcement" to agent-facing tools (no native block), fix
-  audit "no data egress" wording, and scope live re-scan / monorepo `cd` to
-  hosts that emit those events (Claude Code today)
-- MCP docs: rename Grok TUI → Grok Build; state clearly that MCP does not
-  auto-deny tool calls
-- Homebrew: `brew install taniwhaai/tap/arai` is live via
-  [taniwhaai/homebrew-tap](https://github.com/taniwhaai/homebrew-tap); release
-  workflow bumps the formula when `HOMEBREW_TAP_TOKEN` is set
+- *(lib)* Export `hooks::highest_severity` so embedders (kete-agent) derive
+  deny/inject from the same calculus as the CLI
+  ([#170](https://github.com/taniwhaai/arai/issues/170))
+- *(lib)* `Config::load_from(project_dir)` — path-parameterised constructor
+  so an embedding process can target a project without mutating CWD
+  ([#171](https://github.com/taniwhaai/arai/issues/171))
+- *(lib)* `audit::list_buckets` + `AuditBucket::jsonl_bytes` — read-only
+  enumeration of day-buckets and chain-head sidecars. Embedders ship the
+  canonical bytes themselves; the HTTP POST stays a CLI concern
+- *(check-diff)* `arai check-diff` runs the live matcher on a git diff
+  (stdin, `--cached`, or `--from-rev`/`--to-rev`). Added files synthesise
+  Write; modified/renamed files synthesise Edit. Block-severity matches
+  exit 1. `arai init --pre-commit` installs a local git hook; the repo
+  ships `.pre-commit-hooks.yaml` for the pre-commit framework
+  ([#82](https://github.com/taniwhaai/arai/issues/82))
+- *(add/mcp)* `arai_add_guard` refuses inert rules (same as `arai add`).
+  `arai scan` / `arai lint` warn on instruction-file rules that will never
+  fire. `arai status` reports last firing so "hooks registered but never
+  invoked" is visible without reading JSONL
 
 ### Fixed
 

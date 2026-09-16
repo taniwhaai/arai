@@ -59,6 +59,28 @@ own column and are never touched by re-classification. Drop one with
 predicate.
 
 
+## arai check-diff — repo-layer enforcement
+
+Host hooks are per-tool. `arai check-diff` sits at the git diff, so the
+same rule engine blocks a violating change whether Claude Code, Grok Build,
+Cursor, Copilot, or a human produced it.
+
+```bash
+arai check-diff --cached              # staged changes (pre-commit default)
+git diff origin/main | arai check-diff
+arai check-diff --from-rev origin/main --to-rev HEAD --json
+arai init --pre-commit                # install .git/hooks/pre-commit
+```
+
+Added files synthesise a `Write`; modified and renamed files synthesise an
+`Edit`. Any Block-severity match exits 1. Warn/inform matches print and
+exit 0. No matches: silent, exit 0. Bypass the local hook with
+`git commit --no-verify`.
+
+Deleted files are reported but not matched — the canonical schema has no
+"this path went away" shape yet (see `docs/repo-layer-scope.md`).
+
+
 ## arai why — explain before you commit
 
 `arai why <action>` replays a hypothetical tool call through the live

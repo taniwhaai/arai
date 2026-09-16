@@ -3,7 +3,7 @@
 
 use arai::{
     audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks, init,
-    intent, mcp, migrate, parser, scenarios, ship, stats, store, style, sync, upgrade,
+    intent, mcp, migrate, parser, repo_check, scenarios, ship, stats, store, style, sync, upgrade,
 };
 use clap::{Parser, Subcommand};
 
@@ -21,7 +21,42 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Discover instruction files, extract guardrails, set up hooks
-    Init,
+    Init {
+        /// Also install a local `.git/hooks/pre-commit` that runs
+        /// `arai check-diff --cached`.  Refuses if a hook already exists
+        /// unless `--force`.
+        #[arg(long)]
+        pre_commit: bool,
+        /// Overwrite an existing `.git/hooks/pre-commit`.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Match a git diff against the live guardrail set (repo-layer enforcement).
+    ///
+    /// Added files synthesise a Write; modified/renamed files synthesise an
+    /// Edit.  Any Block-severity match exits 1.  Warn/inform matches print
+    /// and exit 0.  No matches: silent, exit 0.
+    ///
+    /// Examples:
+    ///   git diff --cached | arai check-diff
+    ///   arai check-diff --cached
+    ///   arai check-diff --from-rev origin/main --to-rev HEAD
+    CheckDiff {
+        /// Read `git diff --cached` (staged changes).  Default when stdin
+        /// is a TTY and no `--from-rev` is set.
+        #[arg(long)]
+        cached: bool,
+        /// Old revision (`git diff <from>..<to>`).  Alone, diffs against
+        /// the working tree.
+        #[arg(long, value_name = "REV")]
+        from_rev: Option<String>,
+        /// New revision.  Requires `--from-rev`.
+        #[arg(long, value_name = "REV")]
+        to_rev: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove Arai hooks from .claude/settings.json
     Deinit,
     /// Show what's being enforced
@@ -371,7 +406,13 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init => init::run(),
+        Commands::Init { pre_commit, force } => init::run(pre_commit, force),
+        Commands::CheckDiff {
+            cached,
+            from_rev,
+            to_rev,
+            json,
+        } => cmd_check_diff(cached, from_rev, to_rev, json),
         Commands::Deinit => init::deinit(),
         Commands::Status => cmd_status(),
         Commands::Guardrails { match_stdin, json } => {
@@ -477,6 +518,19 @@ fn cmd_status() -> Result<(), String> {
         println!("  Last scan:  never (run `arai init`)");
     }
 
+    let recent = audit::query(&cfg.arai_base_dir, &cfg.project_slug(), None, None, None, 1)?;
+    if let Some(e) = recent.first() {
+        let ts = e.get("ts").and_then(|v| v.as_str()).unwrap_or("?");
+        let ev = e.get("event").and_then(|v| v.as_str()).unwrap_or("?");
+        let tool = e.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+        let decision = e.get("decision").and_then(|v| v.as_str()).unwrap_or("?");
+        println!("  Last firing: {ts}  {ev} {tool} → {decision}");
+    } else {
+        println!(
+            "  Last firing: never (hooks registered but none have invoked Arai in this project)"
+        );
+    }
+
     let graph_tools = db.code_graph_tool_count().map_err(|e| e.to_string())?;
     let graph_files = db.code_graph_file_count().map_err(|e| e.to_string())?;
     if graph_files > 0 {
@@ -544,11 +598,7 @@ fn cmd_guardrails(json: bool) -> Result<(), String> {
             return Ok(());
         }
         for r in &rules {
-            let inert = r
-                .intent
-                .as_ref()
-                .map(|i| i.timing.hook_event() == "none")
-                .unwrap_or(false);
+            let inert = r.intent.as_ref().map(intent::is_inert).unwrap_or(false);
             let body = format!("{} {}: {}", r.subject, r.predicate, r.object);
             if inert {
                 println!(
@@ -591,6 +641,7 @@ fn cmd_scan(
     db.set_meta("last_scan", &chrono_now())
         .map_err(|e| e.to_string())?;
     println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
+    warn_inert_rules(&db)?;
 
     if code {
         scan_code_graph(&cfg, &db)?;
@@ -634,6 +685,155 @@ fn cmd_scan(
     Ok(())
 }
 
+/// Warn on instruction-file rules that will never fire on a tool call.
+/// Does not fail the scan — CLAUDE.md is allowed to contain principles.
+fn warn_inert_rules(db: &store::Store) -> Result<(), String> {
+    let rules = db.load_guardrails().map_err(|e| e.to_string())?;
+    let inert: Vec<_> = rules
+        .iter()
+        .filter(|g| g.intent.as_ref().map(intent::is_inert).unwrap_or(false))
+        .collect();
+    if inert.is_empty() {
+        return Ok(());
+    }
+    eprintln!(
+        "  {} rule(s) will never fire on tool calls (no known tool / principle timing):",
+        inert.len()
+    );
+    for g in inert.iter().take(10) {
+        eprintln!(
+            "    - {} {}: {}  ({})",
+            g.subject, g.predicate, g.object, g.file_path
+        );
+    }
+    if inert.len() > 10 {
+        eprintln!("    … {} more", inert.len() - 10);
+    }
+    Ok(())
+}
+
+fn cmd_check_diff(
+    cached: bool,
+    from_rev: Option<String>,
+    to_rev: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    if to_rev.is_some() && from_rev.is_none() {
+        return Err("--to-rev requires --from-rev".to_string());
+    }
+
+    let cfg = config::Config::load()?;
+    let db_path = cfg.db_path();
+    if !db_path.exists() {
+        return Err("No rule database found.  Run `arai init` first.".to_string());
+    }
+    let db = store::Store::open(&db_path)?;
+
+    let diff = read_check_diff_input(cached, from_rev.as_deref(), to_rev.as_deref(), &cfg)?;
+    let report = repo_check::check_diff(&diff, &cfg, &db)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        print_check_diff_report(&report);
+    }
+
+    if report.blocked {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn read_check_diff_input(
+    cached: bool,
+    from_rev: Option<&str>,
+    to_rev: Option<&str>,
+    cfg: &config::Config,
+) -> Result<String, String> {
+    if cached && from_rev.is_some() {
+        return Err("--cached and --from-rev are mutually exclusive".to_string());
+    }
+    if cached {
+        return git_diff(&["diff", "--cached", "--no-ext-diff", "--no-color"], cfg);
+    }
+    if let Some(from) = from_rev {
+        return match to_rev {
+            Some(to) => git_diff(&["diff", "--no-ext-diff", "--no-color", from, to], cfg),
+            None => git_diff(&["diff", "--no-ext-diff", "--no-color", from], cfg),
+        };
+    }
+
+    use std::io::{IsTerminal, Read};
+    if std::io::stdin().is_terminal() {
+        // No flags, nothing piped: default to the staged diff so
+        // `arai check-diff` in a pre-commit hook / local run just works.
+        return git_diff(&["diff", "--cached", "--no-ext-diff", "--no-color"], cfg);
+    }
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("read stdin: {e}"))?;
+    if buf.len() > 10 * 1024 * 1024 {
+        return Err("diff exceeds 10 MiB cap".to_string());
+    }
+    Ok(buf)
+}
+
+fn git_diff(args: &[&str], cfg: &config::Config) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(&cfg.project_root)
+        .env("GIT_PAGER", "cat")
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    // git diff exits 0 with or without changes (unless --exit-code).
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("git {} failed: {err}", args.join(" ")));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn print_check_diff_report(report: &repo_check::CheckDiffReport) {
+    let col = style::should_colorize(style::Stream::Stdout);
+    let interesting: Vec<_> = report
+        .files
+        .iter()
+        .filter(|f| !f.skipped && !f.matched.is_empty())
+        .collect();
+    if interesting.is_empty() {
+        return;
+    }
+    println!(
+        "{}",
+        style::structural(
+            &format!(
+                "arai check-diff: {} file(s) with matches",
+                interesting.len()
+            ),
+            col
+        )
+    );
+    for f in interesting {
+        let label = if f.severity == "block" {
+            style::error(&format!("BLOCK  {}  ({})", f.path, f.tool), col)
+        } else {
+            style::passage(&format!("{:<5}  {}  ({})", f.severity, f.path, f.tool), col)
+        };
+        println!("{label}");
+        for m in &f.matched {
+            let loc = match m.line {
+                Some(n) => format!("{}:{n}", m.source),
+                None => m.source.clone(),
+            };
+            println!("  - {} {}: {}  [{loc}]", m.subject, m.predicate, m.object);
+        }
+    }
+}
+
 fn scan_code_graph(cfg: &config::Config, db: &store::Store) -> Result<(), String> {
     println!("\n  Scanning source code for imports...");
     let imports = code_scanner::scan_project(&cfg.project_root);
@@ -669,8 +869,9 @@ fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
     // `arai why` returns 0 rules — enforcement that presents as present.
     let mut inert: Vec<String> = Vec::new();
     for t in &triples {
-        let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
-        if intent.timing.hook_event() == "none" {
+        let classified =
+            intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        if intent::is_inert(&classified) {
             inert.push(format!("{} {}: {}", t.subject, t.predicate, t.object));
         }
     }
@@ -1171,6 +1372,7 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
                     "timing": format!("{:?}", intent.timing),
                     "tools": intent.tools,
                     "severity": intent.severity.as_str(),
+                    "inert": intent::is_inert(&intent),
                 })
             })
             .collect();
@@ -1189,25 +1391,39 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
 
     println!("Lint: {path}");
     println!("  {} rule(s) extracted\n", triples.len());
+    let mut inert_count = 0usize;
     for t in &triples {
-        let intent = intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
-        let timing = format!("{:?}", intent.timing);
+        let classified =
+            intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        let timing = format!("{:?}", classified.timing);
         let line_info = t.line_start.map(|l| format!(" L{l}")).unwrap_or_default();
+        let inert_tag = if intent::is_inert(&classified) {
+            inert_count += 1;
+            "  [inert — never fires on tool calls]"
+        } else {
+            ""
+        };
         println!(
-            "  [{:<7}] {}{}\n    subject:   {}\n    predicate: {}\n    object:    {}\n    action:    {}  timing: {}  tools: {}\n",
-            intent.action.as_str(),
+            "  [{:<7}] {}{}{}\n    subject:   {}\n    predicate: {}\n    object:    {}\n    action:    {}  timing: {}  tools: {}\n",
+            classified.action.as_str(),
             t.source_file,
             line_info,
+            inert_tag,
             t.subject,
             t.predicate,
             t.object,
-            intent.action.as_str(),
+            classified.action.as_str(),
             timing,
-            if intent.tools.is_empty() {
+            if classified.tools.is_empty() {
                 "<any>".to_string()
             } else {
-                intent.tools.join(", ")
+                classified.tools.join(", ")
             },
+        );
+    }
+    if inert_count > 0 {
+        eprintln!(
+            "  {inert_count} rule(s) will never fire on tool calls. Rewrite against a known tool, or keep as documentary."
         );
     }
     Ok(())

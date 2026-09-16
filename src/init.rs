@@ -1,7 +1,7 @@
 use crate::{code_scanner, config, discovery, parser, store};
 use serde_json::Value;
 
-pub fn run() -> Result<(), String> {
+pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
 
     println!("  Scanning for instruction files...");
@@ -105,6 +105,12 @@ pub fn run() -> Result<(), String> {
     );
     crate::telemetry::flush(&cfg.arai_base_dir);
 
+    if pre_commit {
+        println!("\n  Installing git pre-commit hook...");
+        install_pre_commit(&cfg, force)?;
+        println!("    \u{2713} .git/hooks/pre-commit → arai check-diff --cached");
+    }
+
     println!("\n  Arai is registered for Claude Code and Grok Build (PreToolUse hooks).");
     println!("  Grok: use --trust (or /hooks-trust) so project hooks run; bare `arai`");
     println!("  PATH must resolve to this binary, or re-run init after installing.");
@@ -166,6 +172,22 @@ pub fn deinit() -> Result<(), String> {
         match std::fs::remove_file(&grok_hook_file) {
             Ok(_) => println!("  Removed Arai native hook file from .grok/hooks/"),
             Err(e) => eprintln!("  Warning: could not remove Grok hook file: {e}"),
+        }
+    }
+
+    let pre_commit = cfg
+        .project_root
+        .join(".git")
+        .join("hooks")
+        .join("pre-commit");
+    if pre_commit.exists() {
+        if let Ok(body) = std::fs::read_to_string(&pre_commit) {
+            if body.contains("arai check-diff") {
+                match std::fs::remove_file(&pre_commit) {
+                    Ok(_) => println!("  Removed Arai pre-commit hook"),
+                    Err(e) => eprintln!("  Warning: could not remove pre-commit hook: {e}"),
+                }
+            }
         }
     }
 
@@ -386,6 +408,43 @@ fn register_arai_hook(
             ]
         });
         event_arr.push(arai_hook);
+    }
+    Ok(())
+}
+
+/// Install `.git/hooks/pre-commit` that runs `arai check-diff --cached`.
+/// Uses the absolute path of this binary so a stale `arai` earlier on PATH
+/// cannot fail-open.  Refuses to overwrite an existing hook unless `force`.
+pub fn install_pre_commit(cfg: &config::Config, force: bool) -> Result<(), String> {
+    let git_dir = cfg.project_root.join(".git");
+    if !git_dir.exists() {
+        return Err("no .git directory — cannot install a pre-commit hook".to_string());
+    }
+    let hooks_dir = git_dir.join("hooks");
+    std::fs::create_dir_all(&hooks_dir).map_err(|e| format!("Could not create .git/hooks: {e}"))?;
+    let path = hooks_dir.join("pre-commit");
+    if path.exists() && !force {
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if existing.contains("arai check-diff") {
+            return Ok(());
+        }
+        return Err(".git/hooks/pre-commit already exists; pass --force to overwrite".to_string());
+    }
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Could not resolve current executable: {e}"))?;
+    let exe_str = exe.display().to_string().replace('\'', "'\\''");
+    let script = format!(
+        "#!/bin/sh\n\
+         # Installed by `arai init --pre-commit`. Evaluates the staged diff\n\
+         # against Arai guardrails. Bypass with `git commit --no-verify`.\n\
+         exec '{exe_str}' check-diff --cached\n"
+    );
+    std::fs::write(&path, script).map_err(|e| format!("Could not write pre-commit hook: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("Could not chmod pre-commit hook: {e}"))?;
     }
     Ok(())
 }
