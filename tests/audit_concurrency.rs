@@ -172,6 +172,50 @@ fn unchained_legacy_tail_requires_explicit_migration() {
 }
 
 #[test]
+fn purge_respects_a_writer_still_holding_yesterdays_bucket_lock() {
+    let project = Project::new();
+    let cfg = project.config();
+    let dir = cfg.arai_base_dir.join("audit").join(cfg.project_slug());
+    fs::create_dir_all(&dir).unwrap();
+    // A writer can select a day just before UTC midnight and still hold its
+    // lock when purge sees that same day as old. Fix the day to reproduce the
+    // boundary without racing a clock or sleeping in the test.
+    let log = dir.join("20000101.jsonl");
+    let head = dir.join(".head.20000101");
+    let lock_path = dir.join(".lock.20000101");
+    fs::write(&log, b"retained evidence\n").unwrap();
+    fs::write(&head, b"retained head\n").unwrap();
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    let result = audit::purge(&cfg.arai_base_dir, &cfg.project_slug(), Some(0), false);
+    assert!(
+        result.is_err(),
+        "purge must refuse a busy bucket: {result:?}"
+    );
+    assert_eq!(fs::read(&log).unwrap(), b"retained evidence\n");
+    assert_eq!(fs::read(&head).unwrap(), b"retained head\n");
+
+    let preview = audit::purge(&cfg.arai_base_dir, &cfg.project_slug(), Some(0), true).unwrap();
+    assert_eq!(preview.removed_files.len(), 2);
+    assert!(log.exists() && head.exists());
+    drop(lock);
+    let report = audit::purge(&cfg.arai_base_dir, &cfg.project_slug(), Some(0), false).unwrap();
+    assert_eq!(report.removed_files.len(), 2);
+    assert_eq!(report.removed_bytes, preview.removed_bytes);
+    assert!(!log.exists() && !head.exists());
+    assert!(
+        lock_path.exists(),
+        "the stable lock marker must survive purge"
+    );
+}
+
+#[test]
 fn concurrent_processes_produce_one_complete_chain() {
     let project = Project::new();
     let cfg = project.config();

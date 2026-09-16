@@ -54,3 +54,9 @@ The rerun is tracked on PR #180. RELEASE_TOKEN metadata now shows an
 update at 2026-09-16T02:20:50Z; the last main release failure predates that update,
 so the replacement token is unverified rather than known-invalid. No Homebrew
 tap token is configured. No release or host-trust state was changed.
+
+Hosted rerun 35049787601 passed every applicable check, including lean and
+enrichment builds. A final reproduced retention race is also fixed: purge
+respects the writer's bucket lock and reports failed removals accurately.
+Focused audit checks pass on Windows (24 tests) and Linux (26); the final PR
+run rechecks the complete suites after this bounded follow-up.

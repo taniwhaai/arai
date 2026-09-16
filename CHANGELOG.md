@@ -28,6 +28,8 @@ All notable changes to this project will be documented in this file.
   their native fields; file paths and Git diff configuration are normalized safely.
 - Concurrent audit writers serialize appends across processes, recover from the
   canonical tail rather than a stale head, and refuse incomplete or invalid tails.
+- Audit retention honors writer locks across day changes and reports removal
+  failures instead of counting files that remain on disk as removed.
 - Library builds with default features disabled compile without code-graph types.
 - Compound shell commands starting with `arai` no longer bypass matching.
 - Applicable Block rules survive relevance ranking alongside advisory rules.

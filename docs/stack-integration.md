@@ -122,6 +122,12 @@ or rotation policy if same-day recording is required, retaining the original
 bytes and acknowledging the coverage boundary. The next UTC day naturally
 starts a new bucket; it does not repair or authenticate prior evidence.
 
+Retention purge uses the same bucket lock and fails explicitly if a writer is
+active or a file cannot be removed. Its JSONL and head sidecar are removed under
+one lock, and the persistent lock marker is retained. A failure can follow
+earlier successful bucket removals; retrying the requested purge is idempotent.
+Dry-run previews remain read-only and cannot guarantee later file availability.
+
 Kete's spec distinguishes implemented cryptographic operations, agent-side
 protocol invariants and distributed guarantees. Its current agent primitives
 must not be described as a completed, live end-to-end deployment.

@@ -426,6 +426,12 @@ fn seal_and_append(cfg: &Config, mut entry: Value) {
 /// while another process waits on it would allow two independent locks.
 /// Dropping the returned File releases the OS lock, including process exit.
 fn lock_bucket(log_path: &Path) -> std::io::Result<fs::File> {
+    let file = open_bucket_lock(log_path)?;
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
+}
+
+fn open_bucket_lock(log_path: &Path) -> std::io::Result<fs::File> {
     let day = log_path.file_stem().unwrap_or_default().to_string_lossy();
     let path = log_path.with_file_name(format!(".lock.{day}"));
     let mut opts = OpenOptions::new();
@@ -435,9 +441,7 @@ fn lock_bucket(log_path: &Path) -> std::io::Result<fs::File> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let file = opts.open(path)?;
-    fs2::FileExt::lock_exclusive(&file)?;
-    Ok(file)
+    opts.open(path)
 }
 
 /// SHA-256(prev_hash || "|" || canonical_bytes).  Hex-encoded so the hash
@@ -747,6 +751,9 @@ pub struct PurgeReport {
 /// Returns a `PurgeReport` regardless of whether the project's audit
 /// directory existed (an absent directory yields an empty report — not
 /// an error, because a nothing-to-do purge should succeed quietly).
+/// A busy bucket or failed removal returns an error; earlier removals may
+/// already have succeeded and retrying is safe. Each bucket's log and head
+/// share the writer lock. Persistent lock markers are never deleted.
 pub fn purge(
     arai_base: &Path,
     target_slug: &str,
@@ -754,15 +761,19 @@ pub fn purge(
     dry_run: bool,
 ) -> Result<PurgeReport, String> {
     let dir = arai_base.join("audit").join(target_slug);
-    if !dir.exists() {
-        return Ok(PurgeReport {
-            project_slug: target_slug.to_string(),
-            removed_files: Vec::new(),
-            removed_bytes: 0,
-            kept_today: false,
-            dry_run,
-        });
-    }
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PurgeReport {
+                project_slug: target_slug.to_string(),
+                removed_files: Vec::new(),
+                removed_bytes: 0,
+                kept_today: false,
+                dry_run,
+            });
+        }
+        Err(error) => return Err(format!("read audit dir {}: {error}", dir.display())),
+    };
 
     let today = today_yyyymmdd();
     let cutoff: Option<String> = older_than_days.map(yyyymmdd_n_days_ago);
@@ -770,12 +781,10 @@ pub fn purge(
     let mut removed_files: Vec<PathBuf> = Vec::new();
     let mut removed_bytes: u64 = 0;
     let mut kept_today = false;
+    let mut buckets = std::collections::BTreeMap::<String, Vec<PathBuf>>::new();
 
-    for entry in fs::read_dir(&dir).map_err(|e| format!("read audit dir: {e}"))? {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("read audit dir entry: {error}"))?;
         let path = entry.path();
         let name = match path.file_name().and_then(|s| s.to_str()) {
             Some(n) => n,
@@ -784,7 +793,7 @@ pub fn purge(
 
         // Two filename shapes carry the YYYYMMDD date: `YYYYMMDD.jsonl`
         // (log) and `.head.YYYYMMDD` (sidecar).  Anything else
-        // (`.arai_acl_set` on Windows, future markers, stray garbage) is
+        // (`.lock.YYYYMMDD`, `.arai_acl_set`, stray garbage) is
         // left alone — `purge` is not a recursive `rm`.
         let day = if let Some(stem) = name.strip_suffix(".jsonl") {
             stem.to_string()
@@ -817,17 +826,42 @@ pub fn purge(
             }
         }
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        removed_bytes += size;
-        removed_files.push(path.clone());
+        buckets.entry(day).or_default().push(path);
+    }
 
-        if !dry_run {
-            // Best-effort: a removal that fails (read-only mount, race
-            // with another process) is surfaced in the report only as a
-            // path that's still on disk afterwards.  We don't unwind on
-            // partial failure — purging is idempotent and the next run
-            // will retry.
-            let _ = fs::remove_file(&path);
+    for (day, mut paths) in buckets {
+        // Hold one lock across both files. A writer can still own an old day
+        // after UTC midnight; fail explicitly rather than hang behind it.
+        // Dry-run remains read-only, including not creating lock markers.
+        let _lock = if dry_run {
+            None
+        } else {
+            let lock = open_bucket_lock(&dir.join(format!("{day}.jsonl"))).map_err(|error| {
+                format!("Could not open lock for audit bucket {day}: {error}. Earlier buckets may already have been removed; retry purge.")
+            })?;
+            fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+                format!("Audit bucket {day} is busy or could not be locked: {error}. No files from this bucket were removed; earlier buckets may already have been removed. Retry purge.")
+            })?;
+            Some(lock)
+        };
+        // Remove the log before its cache so a log-removal failure preserves
+        // the existing pair. Either failure is reported, never counted as done.
+        paths.sort_by_key(|path| path.extension().and_then(|ext| ext.to_str()) != Some("jsonl"));
+        for path in paths {
+            let size = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("Could not inspect audit path {}: {error}. Earlier paths may already have been removed; retry purge.", path.display())),
+            };
+            if !dry_run {
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(format!("Could not remove audit path {}: {error}. Earlier paths may already have been removed; retry purge.", path.display())),
+                }
+            }
+            removed_bytes += size;
+            removed_files.push(path);
         }
     }
 
@@ -1226,6 +1260,11 @@ mod tests {
         assert!(dir.join(format!("{yesterday}.jsonl")).exists());
         assert!(!dir.join(format!("{ancient}.jsonl")).exists());
         assert!(!dir.join(format!(".head.{ancient}")).exists());
+        assert_eq!(
+            report.removed_bytes,
+            b"{}\n".len() as u64 + b"deadbeef\n".len() as u64
+        );
+        assert!(dir.join(format!(".lock.{ancient}")).exists());
 
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1256,6 +1295,10 @@ mod tests {
         assert!(
             dir.join(format!(".head.{ancient}")).exists(),
             "dry-run must not delete the sidecar"
+        );
+        assert!(
+            !dir.join(format!(".lock.{ancient}")).exists(),
+            "dry-run must not create lock markers"
         );
 
         std::fs::remove_dir_all(&base).ok();
@@ -1337,6 +1380,29 @@ mod tests {
         assert!(report.removed_files.is_empty());
         assert!(!report.kept_today);
         assert_eq!(report.removed_bytes, 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_reports_failed_removal_and_possible_partial_progress() {
+        let base = make_purge_fixture("purge_failure", "proj-failure", &["20000101"]);
+        let dir = base.join("audit/proj-failure");
+        // A directory with the bucket name cannot be removed as a file on
+        // either platform; no permissions/privileged-user assumptions needed.
+        let failed = dir.join("20000102.jsonl");
+        std::fs::create_dir(&failed).unwrap();
+        std::fs::write(failed.join("retain"), b"evidence").unwrap();
+        let error = purge(&base, "proj-failure", None, false).unwrap_err();
+        assert!(error.contains("20000102.jsonl"), "{error}");
+        assert!(
+            error.contains("Earlier paths may already have been removed"),
+            "{error}"
+        );
+        assert!(error.contains("retry purge"), "{error}");
+        assert!(!dir.join("20000101.jsonl").exists());
+        assert!(!dir.join(".head.20000101").exists());
+        assert!(failed.join("retain").exists());
+        assert!(dir.join(".lock.20000101").exists());
         std::fs::remove_dir_all(&base).ok();
     }
 
