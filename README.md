@@ -14,7 +14,9 @@ cd your-project
 arai init
 ```
 
-That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up native hooks so guardrails fire at the right moment.
+Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
+
+The changes under **Unreleased**, including Codex support and the hardening described below, require a build from this source revision until a release ships them: `cargo install --path . --locked` from this checkout, then `arai init` in your project. The published v1.1.1 binary does not include them.
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
 
@@ -22,20 +24,24 @@ To also block violating diffs at `git commit` (universal across tools that have 
 arai init --pre-commit
 ```
 
-Or add the [pre-commit](https://pre-commit.com) framework hook:
+Or add this local [pre-commit](https://pre-commit.com) framework hook. It requires an installed `arai` with `check-diff` on PATH; `language: system` does not install Arai. The v1.1.1 tag predates the repository hook manifest.
 
 ```yaml
 repos:
-  - repo: https://github.com/taniwhaai/arai
-    rev: v1.1.1   # or a later tag
+  - repo: local
     hooks:
       - id: arai-check-diff
+        name: Arai staged-diff check
+        entry: arai check-diff --cached
+        language: system
+        pass_filenames: false
+        always_run: true
 ```
 
 
 ## What It Does
 
-When your AI coding assistant (Claude Code or Grok Build) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** instead of just advising.
+When your AI coding assistant (Claude Code, Grok Build, or Codex) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
 
 ```
 You: "Create a new database migration"
@@ -69,6 +75,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 |------|------|-------------|
 | `CLAUDE.md` | Claude Code | Hooks (block + advise) |
 | `AGENTS.md` / `Agents.md` | Grok Build (native) | Hooks (block; advise best-effort) |
+| `AGENTS.md` / `Agents.md` | Codex (native) | Hooks (block + advise; requires host trust) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
 | `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
 | `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
@@ -78,7 +85,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 Rules from every file are parsed, classified, and stored the same way — but
 enforcement strength depends on what surface the assistant exposes.
 
-- **Claude Code** and **Grok Build** both support real PreToolUse hooks, so Arai
+- **Claude Code**, **Grok Build**, and **Codex** support PreToolUse hooks, so Arai
   can issue `deny` decisions and actually block tool calls.
 - On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
   host invokes hooks (verified on **1.0.0** headless with `--trust`; project
@@ -89,15 +96,20 @@ enforcement strength depends on what surface the assistant exposes.
   **best-effort** until the host surfaces that field. Treat block as the
   guarantee; treat advise as optional context. See
   [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
-- Cursor, Windsurf, Cline and other MCP clients get **agent-facing tools**
+- Codex registers `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` in
+  `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
+  `apply_patch` is checked per file, including additions and move destinations.
+  Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
+- Arai's integrations for Cursor, Windsurf, Cline and other MCP clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
-- GitHub Copilot currently has no live enforcement surface; the file is
-  still ingested for `arai stats`, `arai diff`, and the audit log.
+- Arai does not currently register native GitHub Copilot hooks. Its instruction
+  file is still ingested. This describes Arai's adapter coverage, not the
+  current hook capabilities of those platforms.
 
 Arai hooks several more events alongside the standard tool-call events
-**when the host emits them** (Claude Code today; not registered on Grok Build)
+**when the host emits them** (not registered on Grok Build or Codex)
 so the rule set stays accurate to the live working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
@@ -246,7 +258,7 @@ The Word source (`.docx`) is committed alongside it for editing.
 curl -sSf https://arai.taniwha.ai/install | sh
 
 # Full binary (with local sentence transformer)
-ARAI_FULL=1 curl -sSf https://arai.taniwha.ai/install | sh
+curl -sSf https://arai.taniwha.ai/install | ARAI_FULL=1 sh
 
 # npm
 npm install -g @taniwhaai/arai

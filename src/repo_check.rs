@@ -76,6 +76,27 @@ pub struct CheckDiffReport {
     pub files: Vec<FileVerdict>,
 }
 
+struct DiffFile {
+    change: FileChange,
+    old_header: bool,
+    new_header: bool,
+    has_hunk: bool,
+    has_metadata: bool,
+    binary: bool,
+}
+
+impl DiffFile {
+    fn finish(self) -> Result<FileChange, String> {
+        if self.old_header != self.new_header
+            || (self.old_header && !self.has_hunk)
+            || (!self.has_hunk && !self.has_metadata)
+        {
+            return Err(format!("incomplete diff for {}", self.change.path));
+        }
+        Ok(self.change)
+    }
+}
+
 /// Parse a unified diff (`git diff`, `git diff --cached`, or stdin) into
 /// per-file change descriptors.
 pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
@@ -87,74 +108,153 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
     }
 
     let mut files: Vec<FileChange> = Vec::new();
-    let mut current: Option<FileChange> = None;
+    let mut current: Option<DiffFile> = None;
+    // Remaining old/new lines in the current hunk. Header-looking content
+    // must be consumed here before any file-level metadata is considered.
+    let mut hunk: Option<(usize, usize)> = None;
+    let mut last_was_content = false;
 
-    for line in diff.lines() {
+    for (index, line) in diff.lines().enumerate() {
+        let invalid = || format!("invalid or truncated diff at line {}", index + 1);
+        if line == "\\ No newline at end of file" && last_was_content {
+            last_was_content = false;
+            continue;
+        }
+        if let Some((old_left, new_left)) = hunk.as_mut() {
+            if *old_left != 0 || *new_left != 0 {
+                let c = &mut current.as_mut().ok_or_else(invalid)?.change;
+                match line.as_bytes().first() {
+                    Some(b'+') if *new_left > 0 => {
+                        *new_left -= 1;
+                        c.new_content.push_str(&line[1..]);
+                        c.new_content.push('\n');
+                    }
+                    Some(b'-') if *old_left > 0 => {
+                        *old_left -= 1;
+                        c.old_content.push_str(&line[1..]);
+                        c.old_content.push('\n');
+                    }
+                    Some(b' ') if *old_left > 0 && *new_left > 0 => {
+                        *old_left -= 1;
+                        *new_left -= 1;
+                        c.old_content.push_str(&line[1..]);
+                        c.old_content.push('\n');
+                        c.new_content.push_str(&line[1..]);
+                        c.new_content.push('\n');
+                    }
+                    _ => return Err(invalid()),
+                }
+                last_was_content = true;
+                continue;
+            }
+        }
+        last_was_content = false;
         if let Some(rest) = line.strip_prefix("diff --git ") {
             if let Some(c) = current.take() {
-                files.push(c);
+                files.push(c.finish()?);
             }
-            let (old, new) = parse_git_paths(rest)
-                .ok_or_else(|| format!("could not parse diff --git paths: {rest}"))?;
-            current = Some(FileChange {
-                path: new,
-                old_path: Some(old),
-                kind: ChangeKind::Modified,
-                old_content: String::new(),
-                new_content: String::new(),
+            let (old, new) = parse_git_paths(rest)?;
+            current = Some(DiffFile {
+                change: FileChange {
+                    path: new,
+                    old_path: Some(old),
+                    kind: ChangeKind::Modified,
+                    old_content: String::new(),
+                    new_content: String::new(),
+                },
+                old_header: false,
+                new_header: false,
+                has_hunk: false,
+                has_metadata: false,
+                binary: false,
             });
+            hunk = None;
             continue;
         }
         let Some(c) = current.as_mut() else {
-            continue;
+            if line.trim().is_empty() {
+                continue;
+            }
+            return Err(invalid());
         };
-        if line.starts_with("new file mode") {
-            c.kind = ChangeKind::Added;
-        } else if line.starts_with("deleted file mode") {
-            c.kind = ChangeKind::Deleted;
-        } else if line.starts_with("rename from ") {
-            c.kind = ChangeKind::Renamed;
+        if c.binary {
+            // Git's base85 binary body has no textual content to match.
+            // The next diff --git header is still handled above.
+            continue;
+        }
+        if line.starts_with("@@") {
+            if !c.old_header || !c.new_header {
+                return Err(invalid());
+            }
+            let counts = parse_hunk_header(line).ok_or_else(invalid)?;
+            if (c.change.kind == ChangeKind::Added && counts.0 != 0)
+                || (c.change.kind == ChangeKind::Deleted && counts.1 != 0)
+            {
+                return Err(invalid());
+            }
+            hunk = Some(counts);
+            c.has_hunk = true;
+            continue;
+        }
+        // Once hunks have started, metadata/header syntax is no longer
+        // valid until the next file. Extra +/- lines are malformed, not
+        // alternative headers that may rewrite the path being enforced.
+        if c.has_hunk {
+            return Err(invalid());
+        }
+        if line.starts_with("new file mode ") {
+            c.change.kind = ChangeKind::Added;
+            c.has_metadata = true;
+        } else if line.starts_with("deleted file mode ") {
+            c.change.kind = ChangeKind::Deleted;
+            c.has_metadata = true;
+        } else if let Some(path) = line.strip_prefix("rename from ") {
+            c.change.old_path = Some(decode_git_path(path)?);
+            c.change.kind = ChangeKind::Renamed;
+            c.has_metadata = true;
+        } else if let Some(path) = line.strip_prefix("rename to ") {
+            c.change.path = decode_git_path(path)?;
+            c.has_metadata = true;
         } else if let Some(path) = line.strip_prefix("+++ ") {
-            if path != "/dev/null" {
-                c.path = strip_diff_prefix(path);
+            if !c.old_header || c.new_header {
+                return Err(invalid());
+            }
+            c.new_header = true;
+            if path == "/dev/null" {
+                c.change.kind = ChangeKind::Deleted;
+            } else {
+                c.change.path = strip_diff_prefix(&decode_git_path(path)?, "b/")?;
             }
         } else if let Some(path) = line.strip_prefix("--- ") {
-            if path != "/dev/null" {
-                c.old_path = Some(strip_diff_prefix(path));
+            if c.old_header {
+                return Err(invalid());
             }
-        } else if line.starts_with("@@")
-            || line.starts_with("index ")
-            || line.starts_with("similarity ")
-            || line.starts_with("dissimilarity ")
-            || line.starts_with("rename to ")
+            c.old_header = true;
+            if path == "/dev/null" {
+                c.change.kind = ChangeKind::Added;
+            } else {
+                c.change.old_path = Some(strip_diff_prefix(&decode_git_path(path)?, "a/")?);
+            }
+        } else if line.starts_with("index ")
+            || line.starts_with("old mode ")
+            || line.starts_with("new mode ")
+            || line.starts_with("similarity index ")
+            || line.starts_with("dissimilarity index ")
             || line.starts_with("copy ")
-            || line.starts_with('\\')
         {
-            continue;
+            c.has_metadata = true;
         } else if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
-            // Binary: keep the path, drop content.  Matching still sees the
-            // path (alembic-style directory rules); content sniffing is empty.
-            c.old_content.clear();
-            c.new_content.clear();
-        } else if let Some(rest) = line.strip_prefix('+') {
-            if !line.starts_with("+++") {
-                c.new_content.push_str(rest);
-                c.new_content.push('\n');
-            }
-        } else if let Some(rest) = line.strip_prefix('-') {
-            if !line.starts_with("---") {
-                c.old_content.push_str(rest);
-                c.old_content.push('\n');
-            }
-        } else if let Some(rest) = line.strip_prefix(' ') {
-            c.new_content.push_str(rest);
-            c.new_content.push('\n');
-            c.old_content.push_str(rest);
-            c.old_content.push('\n');
+            c.binary = true;
+            c.has_metadata = true;
+        } else {
+            return Err(invalid());
         }
     }
+    if hunk.is_some_and(|(old, new)| old != 0 || new != 0) {
+        return Err("truncated diff hunk at end of input".to_string());
+    }
     if let Some(c) = current {
-        files.push(c);
+        files.push(c.finish()?);
     }
     Ok(files)
 }
@@ -253,30 +353,132 @@ pub fn check_diff(diff: &str, cfg: &Config, db: &Store) -> Result<CheckDiffRepor
     Ok(CheckDiffReport { blocked, files })
 }
 
-fn parse_git_paths(rest: &str) -> Option<(String, String)> {
-    let rest = rest.trim();
-    if rest.starts_with('"') {
-        // `"a/foo bar" "b/foo bar"`
-        let trimmed = rest.trim_matches('"');
-        let (a, b) = trimmed.split_once("\" \"")?;
-        return Some((strip_diff_prefix(a), strip_diff_prefix(b)));
+fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
+    let ranges = line.strip_prefix("@@ -")?;
+    let (old, rest) = ranges.split_once(" +")?;
+    let (new, context) = rest.split_once(" @@")?;
+    if !context.is_empty() && !context.starts_with(' ') {
+        return None;
     }
-    let idx = rest.find(" b/")?;
-    let old = strip_diff_prefix(&rest[..idx]);
-    let new = strip_diff_prefix(&rest[idx + 1..]);
-    Some((old, new))
+    let range_count = |range: &str| {
+        let (start, count) = range.split_once(',').unwrap_or((range, "1"));
+        if start.is_empty()
+            || count.is_empty()
+            || !start.bytes().all(|b| b.is_ascii_digit())
+            || !count.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let start = start.parse::<usize>().ok()?;
+        let count = count.parse::<usize>().ok()?;
+        start.checked_add(count)?;
+        (count == 0 || start > 0).then_some(count)
+    };
+    let old = range_count(old)?;
+    let new = range_count(new)?;
+    (old != 0 || new != 0).then_some((old, new))
 }
 
-fn strip_diff_prefix(path: &str) -> String {
-    let path = path.trim().trim_matches('"');
-    let path = path.split('\t').next().unwrap_or(path);
-    if let Some(s) = path.strip_prefix("a/") {
-        s.to_string()
-    } else if let Some(s) = path.strip_prefix("b/") {
-        s.to_string()
+fn parse_git_paths(rest: &str) -> Result<(String, String), String> {
+    let invalid = || format!("could not parse diff --git paths: {rest}");
+    let (old, new) = if rest.starts_with('"') {
+        let (old, remaining) = decode_quoted_path(rest)?;
+        let new = decode_git_path(remaining.strip_prefix(' ').ok_or_else(invalid)?)?;
+        (old, new)
     } else {
-        path.to_string()
+        // Git may quote either side independently, and leaves spaces in
+        // ordinary filenames unquoted. File headers/rename metadata later
+        // supply the unambiguous names for paths containing " b/".
+        let idx = rest
+            .find(" \"b/")
+            .or_else(|| rest.find(" b/"))
+            .ok_or_else(invalid)?;
+        (
+            decode_git_path(&rest[..idx])?,
+            decode_git_path(&rest[idx + 1..])?,
+        )
+    };
+    Ok((
+        strip_diff_prefix(&old, "a/")?,
+        strip_diff_prefix(&new, "b/")?,
+    ))
+}
+
+fn strip_diff_prefix(path: &str, prefix: &str) -> Result<String, String> {
+    path.strip_prefix(prefix)
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .ok_or_else(|| format!("expected {prefix} diff path: {path}"))
+}
+
+fn decode_git_path(path: &str) -> Result<String, String> {
+    let decoded = if path.starts_with('"') {
+        let (decoded, trailing) = decode_quoted_path(path)?;
+        if !trailing.is_empty() && !trailing.starts_with('\t') {
+            return Err("unexpected text after quoted diff path".to_string());
+        }
+        decoded
+    } else {
+        path.split('\t').next().unwrap_or(path).to_string()
+    };
+    if decoded.is_empty() || decoded.contains('\0') {
+        return Err("empty or NUL-containing diff path".to_string());
     }
+    Ok(decoded)
+}
+
+/// Git uses C quoting, including octal UTF-8 bytes, rather than JSON
+/// escaping. Decode bytes first so non-ASCII paths retain their identity.
+fn decode_quoted_path(path: &str) -> Result<(String, &str), String> {
+    let invalid = || "invalid quoted diff path".to_string();
+    if !path.starts_with('"') {
+        return Err(invalid());
+    }
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::new();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                let value = String::from_utf8(decoded)
+                    .map_err(|_| "diff path is not valid UTF-8".to_string())?;
+                if value.is_empty() || value.contains('\0') {
+                    return Err(invalid());
+                }
+                return Ok((value, &path[i + 1..]));
+            }
+            b'\\' => {
+                i += 1;
+                let escaped = *bytes.get(i).ok_or_else(invalid)?;
+                let value = match escaped {
+                    b'"' | b'\\' => escaped,
+                    b'a' => 7,
+                    b'b' => 8,
+                    b't' => b'\t',
+                    b'n' => b'\n',
+                    b'v' => 11,
+                    b'f' => 12,
+                    b'r' => b'\r',
+                    b'0'..=b'7' => {
+                        let octal = bytes.get(i..i + 3).ok_or_else(invalid)?;
+                        if !octal.iter().all(|b| matches!(b, b'0'..=b'7')) {
+                            return Err(invalid());
+                        }
+                        let value = u16::from(octal[0] - b'0') * 64
+                            + u16::from(octal[1] - b'0') * 8
+                            + u16::from(octal[2] - b'0');
+                        i += 2;
+                        u8::try_from(value).map_err(|_| invalid())?
+                    }
+                    _ => return Err(invalid()),
+                };
+                decoded.push(value);
+            }
+            byte => decoded.push(byte),
+        }
+        i += 1;
+    }
+    Err(invalid())
 }
 
 #[cfg(test)]
@@ -300,7 +502,7 @@ diff --git a/src/foo.py b/src/foo.py
 index 1111111..2222222 100644
 --- a/src/foo.py
 +++ b/src/foo.py
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,3 @@
  def hello():
 -    return 1
 +    return 2
@@ -383,6 +585,102 @@ new file mode 100644
         let files = parse_unified_diff(diff).unwrap();
         assert_eq!(files[0].path, "foo bar.txt");
         assert_eq!(files[0].kind, ChangeKind::Added);
+    }
+
+    #[test]
+    fn header_looking_hunk_lines_remain_content() {
+        let diff = "diff --git a/alembic/notes.txt b/alembic/notes.txt\n\
+--- a/alembic/notes.txt\n\
++++ b/alembic/notes.txt\n\
+@@ -1,2 +1,2 @@\n\
+--- a/old-header-lookalike\n\
+-old\n\
++++ b/new-header-lookalike\n\
++new\n";
+        let files = parse_unified_diff(diff).unwrap();
+        assert_eq!(files[0].path, "alembic/notes.txt");
+        assert_eq!(files[0].old_path.as_deref(), Some("alembic/notes.txt"));
+        assert_eq!(files[0].old_content, "-- a/old-header-lookalike\nold\n");
+        assert_eq!(files[0].new_content, "++ b/new-header-lookalike\nnew\n");
+    }
+
+    #[test]
+    fn parse_multiple_hunks_and_files() {
+        let diff =
+            format!("{MODIFIED}@@ -10,0 +11,2 @@ def another_function():\n+one\n+two\n{ADDED}");
+        let files = parse_unified_diff(&diff).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].new_content.ends_with("one\ntwo\n"));
+        assert_eq!(files[1].kind, ChangeKind::Added);
+    }
+
+    #[test]
+    fn parse_no_newline_markers_without_counting_them() {
+        let diff = "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n\
+@@ -1 +1 @@\n-old\n\\ No newline at end of file\n\
++new\n\\ No newline at end of file\n";
+        let files = parse_unified_diff(diff).unwrap();
+        assert_eq!(files[0].old_content, "old\n");
+        assert_eq!(files[0].new_content, "new\n");
+    }
+
+    #[test]
+    fn parse_git_c_quoted_paths_and_independently_quoted_sides() {
+        let escaped = r#"alembic/caf\303\251\t\".txt"#;
+        let diff = format!(
+            "diff --git \"a/{escaped}\" \"b/{escaped}\"\nnew file mode 100644\n\
+--- /dev/null\n+++ \"b/{escaped}\"\n@@ -0,0 +1 @@\n+hello\n"
+        );
+        let files = parse_unified_diff(&diff).unwrap();
+        assert_eq!(files[0].path, "alembic/caf\u{e9}\t\".txt");
+        assert_eq!(
+            parse_git_paths(r#"a/old.txt "b/new\tname.txt""#).unwrap(),
+            ("old.txt".to_string(), "new\tname.txt".to_string())
+        );
+        assert_eq!(
+            parse_git_paths(r#""a/old\tname.txt" b/new file.txt"#).unwrap(),
+            ("old\tname.txt".to_string(), "new file.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_metadata_only_and_binary_changes() {
+        let diff = "diff --git a/empty b/empty\nnew file mode 100644\nindex 000..111\n\
+diff --git a/image.png b/image.png\nindex 111..222 100644\n\
+Binary files a/image.png and b/image.png differ\n\
+diff --git a/script b/script\nold mode 100644\nnew mode 100755\n\
+diff --git a/old.txt b/new.txt\nsimilarity index 100%\n\
+rename from old.txt\nrename to new.txt\n";
+        let files = parse_unified_diff(diff).unwrap();
+        assert_eq!(files.len(), 4);
+        assert_eq!(files[0].kind, ChangeKind::Added);
+        assert!(files[1].new_content.is_empty());
+        assert_eq!(files[2].path, "script");
+        assert_eq!(files[3].kind, ChangeKind::Renamed);
+        assert_eq!(files[3].path, "new.txt");
+    }
+
+    #[test]
+    fn malformed_or_unsupported_nonempty_diffs_fail_closed() {
+        for diff in [
+            "not a diff\n".to_string(),
+            "diff --cc foo\n".to_string(),
+            "diff --git a/foo b/foo\n".to_string(),
+            ADDED.replace("+def upgrade():\n", ""),
+            format!("{ADDED}+one extra line\n"),
+            ADDED.replace("@@ -0,0 +1,3 @@", "@@ -0,0 +1,4 @@"),
+            ADDED.replace("@@ -0,0 +1,3 @@", "@@@ -0,0 +1,3 @@@"),
+            ADDED.replace("@@ -0,0 +1,3 @@", "@@ -0,0 +1,wat @@"),
+            ADDED.replace("--- /dev/null\n", ""),
+            ADDED.replace("--- /dev/null\n", "--- /dev/null\n--- /dev/null\n"),
+            "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n".to_string(),
+            format!("{}{}", ADDED.replace("+def upgrade():\n", ""), MODIFIED),
+        ] {
+            assert!(parse_unified_diff(&diff).is_err(), "accepted {diff:?}");
+        }
+        for path in [r#""b/unfinished"#, r#""b/bad\q""#, r#""b/bad\777""#] {
+            assert!(decode_git_path(path).is_err(), "accepted {path}");
+        }
     }
 
     #[test]

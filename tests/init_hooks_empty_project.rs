@@ -56,6 +56,7 @@ fn init_without_instruction_files_registers_hooks() {
 
     let claude = project.join(".claude/settings.json");
     let grok = project.join(".grok/hooks/arai.json");
+    let codex = project.join(".codex/hooks.json");
     assert!(
         claude.is_file(),
         "missing .claude/settings.json after empty init"
@@ -64,6 +65,18 @@ fn init_without_instruction_files_registers_hooks() {
         grok.is_file(),
         "missing .grok/hooks/arai.json after empty init"
     );
+    assert!(
+        codex.is_file(),
+        "missing .codex/hooks.json after empty init"
+    );
+    let codex_body: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(codex).unwrap()).unwrap();
+    let hooks = codex_body["hooks"].as_object().unwrap();
+    assert_eq!(hooks.len(), 3);
+    for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+        assert!(hooks.contains_key(event), "missing Codex event {event}");
+    }
+    assert!(stdout.contains("/hooks") && stdout.contains("does not grant trust"));
 
     let grok_body = fs::read_to_string(&grok).expect("read grok hooks");
     assert!(

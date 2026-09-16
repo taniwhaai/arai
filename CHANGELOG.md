@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Native Codex hooks in `.codex/hooks.json`: PreToolUse, PostToolUse and
+  UserPromptSubmit, with explicit `/hooks` trust guidance and Windows commands.
+- Per-file Codex `apply_patch` matching: additions and move destinations use
+  Write rules; updates and deletion paths use Edit rules. Malformed patches
+  fail closed. Structured `tool_response` content feeds post-tool observation.
+
+### Fixed
+
+- Compound shell commands starting with `arai` no longer bypass matching.
+- Applicable Block rules survive relevance ranking alongside advisory rules.
+- Diff parsing validates hunk lengths and quoted paths; added content cannot
+  masquerade as a file header, and malformed input fails explicitly.
+- Hook refresh/removal preserves unrelated handlers, recognises legacy
+  registrations, and supports pre-commit hooks in worktrees and `core.hooksPath`.
+- Release authentication fails clearly on invalid dedicated tokens. Full
+  binaries cannot silently reuse lean output; Homebrew waits for uploaded assets.
+- Installation examples no longer pin pre-commit to a tag without its manifest,
+  and pass `ARAI_FULL` to the installer process. Status distinguishes config-file
+  presence from host trust or proof of hook activation.
+
+
 ## [1.1.2] - 2026-09-16
 
 ### Added

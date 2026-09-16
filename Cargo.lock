@@ -86,6 +86,7 @@ name = "arai"
 version = "1.1.2"
 dependencies = [
  "aho-corasick",
+ "base64 0.22.1",
  "clap",
  "dirs",
  "ed25519-dalek",

@@ -327,14 +327,43 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
 
+    // Codex sends a whole patch as tool_input.command, including additions,
+    // edits, moves and deletions. Match each file action separately so a
+    // Write-only prohibition cannot be lost behind the apply_patch -> Edit
+    // alias or another file's higher-scored advisory match.
+    if crate::codex::is_patch_tool(raw_tool_name, &tool_input) {
+        for action in crate::codex::file_actions(&tool_input)? {
+            let mut file_hook = hook.clone();
+            file_hook["tool_name"] = Value::String(action.tool.into());
+            file_hook["tool_input"] = action.input;
+            let file_match = match_hook(&file_hook, cfg, db)?;
+            out.terms.extend(file_match.terms);
+            for (guard, score) in file_match.matched {
+                if let Some((_, previous_score)) = out
+                    .matched
+                    .iter_mut()
+                    .find(|(previous, _)| previous.triple_id == guard.triple_id)
+                {
+                    *previous_score = (*previous_score).max(score);
+                } else {
+                    out.matched.push((guard, score));
+                }
+            }
+        }
+        out.terms.sort();
+        out.terms.dedup();
+        out.matched.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        return Ok(out);
+    }
+
     // Self-exemption: `arai` CLI commands (`arai why`, `arai severity`, `arai
     // add`, `arai status`, …) are diagnostic / rule-management.  They read or
     // mutate the rule set itself and shouldn't be blocked by it.  Issue #86:
     // `arai why "git status"` was being denied by the very rule it was being
     // asked to explain, and `arai severity "git push" block` was being denied
     // when the user tried to pin a rule's severity.  Treat any Bash command
-    // whose first non-flag argument is the `arai` binary as a skip — same
-    // bypass channel as Read/Glob, no terms extracted, no rules consulted.
+    // that is a standalone literal invocation of `arai` as a skip. Shell
+    // chains, substitutions and redirections must still be checked.
     if tool_name == "Bash" && is_arai_self_command(&tool_input) {
         out.skipped = true;
         return Ok(out);
@@ -345,19 +374,20 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     // PostToolUse: sniff results but don't mutate session state here (that's a
     // side effect the hook handler owns, not the scenario runner)
     if event == "PostToolUse" {
-        if let Some(result) = hook_field_str(hook, "tool_result", "toolResult") {
-            guardrails::sniff_content_for_tools(result, &mut terms);
-        }
+        sniff_hook_response(hook, &mut terms);
         terms.sort();
         terms.dedup();
     }
+
+    // File names can carry no lexical terms (for example x.py), but their
+    // scanned siblings can still identify the domain that owns the file.
+    enrich_hook_terms_from_graph(&mut terms, &tool_name, &tool_input, hook, cfg, db);
 
     let is_timing_event = event == "UserPromptSubmit";
     if terms.is_empty() && !is_timing_event {
         return Ok(out);
     }
 
-    guardrails::enrich_terms_from_graph(&mut terms, &tool_name, &tool_input, db);
     out.terms = terms.clone();
 
     let all_guardrails = db.load_guardrails().map_err(|e| e.to_string())?;
@@ -407,6 +437,77 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
 
     out.matched = matched;
     Ok(out)
+}
+
+/// Code scans store native absolute directory paths. Resolve only the lookup
+/// path here, preserving the original tool input for matching and audit text.
+fn enrich_hook_terms_from_graph(
+    terms: &mut Vec<String>,
+    tool_name: &str,
+    input: &Value,
+    hook: &Value,
+    cfg: &Config,
+    db: &Store,
+) {
+    use std::path::{Component, Path, PathBuf};
+
+    if !matches!(tool_name, "Edit" | "Write" | "NotebookEdit") {
+        return;
+    }
+    let Some(path) = input.get("file_path").and_then(Value::as_str) else {
+        return;
+    };
+    let cwd = hook
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|cwd| !cwd.chars().any(char::is_control))
+        .map(Path::new)
+        .filter(|cwd| cwd.is_absolute() && cwd.is_dir())
+        .unwrap_or(&cfg.project_root);
+    let resolved = cwd.join(path);
+    // Rebuilding from components uses native Windows separators; it also
+    // removes lexical '.'/'..' segments before the exact DB directory lookup.
+    let mut native = PathBuf::new();
+    for component in resolved.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                native.pop();
+            }
+            other => native.push(other.as_os_str()),
+        }
+    }
+    let lookup = serde_json::json!({"file_path": native.to_string_lossy()});
+    guardrails::enrich_terms_from_graph(terms, tool_name, &lookup, db);
+}
+
+// Codex uses tool_response (which can be structured JSON), while older
+// hosts use tool_result/toolResult. Only derive matching terms here.
+fn sniff_hook_response(hook: &Value, terms: &mut Vec<String>) {
+    if let Some(result) =
+        hook_field(hook, "tool_result", "toolResult").or_else(|| hook.get("tool_response"))
+    {
+        match result {
+            Value::String(text) => guardrails::sniff_content_for_tools(text, terms),
+            Value::Null => {}
+            other => guardrails::sniff_content_for_tools(&other.to_string(), terms),
+        }
+    }
+}
+
+fn observed_terms(raw_tool_name: &str, tool_input: &Value) -> Result<Vec<String>, String> {
+    if crate::codex::is_patch_tool(raw_tool_name, tool_input) {
+        let mut terms = Vec::new();
+        for action in crate::codex::file_actions(tool_input)? {
+            terms.extend(guardrails::extract_terms(action.tool, &action.input));
+        }
+        Ok(terms)
+    } else {
+        Ok(guardrails::extract_terms(
+            &guardrails::normalize_tool_name(raw_tool_name),
+            tool_input,
+        ))
+    }
 }
 
 /// Pure truth table: map (host, event, deny_outcome) → desired process exit
@@ -810,10 +911,8 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
             let tool_input = hook_field(&hook, "tool_input", "toolInput")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new()));
-            let mut terms = guardrails::extract_terms(&tool_name, &tool_input);
-            if let Some(result) = hook_field_str(&hook, "tool_result", "toolResult") {
-                guardrails::sniff_content_for_tools(result, &mut terms);
-            }
+            let mut terms = observed_terms(raw_tool_name, &tool_input)?;
+            sniff_hook_response(&hook, &mut terms);
             terms.sort();
             terms.dedup();
             session::record_tool_call(&cfg.arai_base_dir, session_id, &tool_name, &terms);
@@ -1114,25 +1213,25 @@ fn emit_claude_decision(
 /// True when a Bash `tool_input` invokes the `arai` CLI itself.  Matches the
 /// first token of the command (path-stripped) against the literal `arai` — so
 /// `arai why "git push"`, `./arai status`, `/usr/local/bin/arai add ...`, and
-/// `arai severity foo block` are all recognised.  Pipelines / chains: we look
-/// only at the first token of the first segment.  That is intentional — a
-/// user running `something && arai why ...` is composing arai with something
-/// else, and we only want to exempt the standalone case.
+/// `arai severity foo block` are recognised. Shell syntax or expansion
+/// disqualifies the entire invocation; only standalone literal commands
+/// receive this diagnostic exemption.
 fn is_arai_self_command(tool_input: &Value) -> bool {
     let cmd = match tool_input.get("command").and_then(|v| v.as_str()) {
         Some(c) => c,
         None => return false,
     };
-    // First segment up to a pipe / chain operator; first token within that.
-    let first_segment = cmd
-        .split(['|', ';'])
-        .next()
-        .unwrap_or(cmd)
-        .split("&&")
-        .next()
-        .unwrap_or(cmd)
-        .trim();
-    let first_token = first_segment.split_whitespace().next().unwrap_or("");
+    // Deliberately conservative across POSIX shells and PowerShell: even
+    // quoted shell syntax is not exempt. A diagnostic invocation containing
+    // it can pass through ordinary matching; a second command must never
+    // inherit an exemption from the first. This also excludes command
+    // substitution, background execution, redirection and escaped newlines.
+    if cmd.contains([
+        '|', ';', '&', '\n', '\r', '$', '`', '<', '>', '(', ')', '{', '}', '%', '!',
+    ]) {
+        return false;
+    }
+    let first_token = cmd.split_whitespace().next().unwrap_or("");
     let basename = first_token
         .rsplit(['/', '\\'])
         .next()
@@ -1180,11 +1279,17 @@ fn summarize_tool_input(tool_name: &str, input: &Value) -> String {
             .unwrap_or("")
             .to_string(),
         "Edit" | "Write" | "MultiEdit" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            format!("{tool_name} {path}")
+            if let Some(path) = input.get("file_path").and_then(Value::as_str) {
+                format!("{tool_name} {path}")
+            } else if let Ok(actions) = crate::codex::file_actions(input) {
+                actions
+                    .iter()
+                    .map(|a| format!("{} {}", a.tool, a.input["file_path"].as_str().unwrap_or("")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            } else {
+                format!("{tool_name} (unrecognised file input)")
+            }
         }
         _ => input.to_string(),
     };
@@ -1261,6 +1366,71 @@ mod tests {
             api_key_env: None,
             api_model: None,
         }
+    }
+
+    #[test]
+    fn codex_relative_short_file_uses_scanned_sibling_domain() {
+        let (db, dir) = temp_db();
+        let mut cfg = test_cfg();
+        cfg.project_root = dir.clone();
+        let cwd = dir.join("subpackage");
+        std::fs::create_dir_all(&cwd).unwrap();
+        db.upsert_code_graph(&[crate::code_scanner::ImportInfo {
+            tool_name: "alembic".to_string(),
+            source_file: cwd.join("existing.py").to_string_lossy().into_owned(),
+            directory: cwd.to_string_lossy().into_owned(),
+        }])
+        .unwrap();
+        let payload = serde_json::json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "apply_patch",
+            "cwd": cwd,
+            "tool_input": {"command": "*** Begin Patch\n*** Add File: x.py\n+pass\n*** End Patch"}
+        });
+        let result = match_hook(&payload, &cfg, &db).unwrap();
+        assert!(result.terms.iter().any(|term| term == "alembic"));
+        assert_eq!(
+            payload["tool_input"]["command"],
+            "*** Begin Patch\n*** Add File: x.py\n+pass\n*** End Patch"
+        );
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn graph_lookup_uses_project_fallback_and_native_absolute_paths() {
+        let (db, dir) = temp_db();
+        let mut cfg = test_cfg();
+        cfg.project_root = dir.clone();
+        db.upsert_code_graph(&[crate::code_scanner::ImportInfo {
+            tool_name: "alembic".to_string(),
+            source_file: dir.join("existing.py").to_string_lossy().into_owned(),
+            directory: dir.to_string_lossy().into_owned(),
+        }])
+        .unwrap();
+        let absolute = dir.join("x.py").to_string_lossy().replace('\\', "/");
+        for cwd in [
+            serde_json::Value::Null,
+            serde_json::json!("relative"),
+            serde_json::json!("bad\npath"),
+        ] {
+            for path in ["./unused/../x.py", &absolute] {
+                let input = serde_json::json!({"file_path": path});
+                let mut terms = Vec::new();
+                enrich_hook_terms_from_graph(
+                    &mut terms,
+                    "Write",
+                    &input,
+                    &serde_json::json!({"cwd": cwd}),
+                    &cfg,
+                    &db,
+                );
+                assert_eq!(terms, ["alembic"], "cwd={cwd}, path={path}");
+                assert_eq!(input["file_path"], path);
+            }
+        }
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// End-to-end through the pure pipeline: a camelCase Grok Build payload
@@ -1730,14 +1900,29 @@ mod tests {
         assert!(!is_arai_self_command(
             &serde_json::json!({ "command": "echo arai" })
         ));
-        // Compose with arai in the middle of a pipeline — only the first
-        // segment counts.  `git status && arai why` is still a `git`
-        // command from the rule-engine's point of view.
+        // Compound commands must all pass through the matcher.
         assert!(!is_arai_self_command(
             &serde_json::json!({ "command": "git status && arai why x" })
         ));
         assert!(!is_arai_self_command(&serde_json::json!({ "command": "" })));
         assert!(!is_arai_self_command(&serde_json::json!({})));
+        for command in [
+            "arai status && cargo clean",
+            "arai status; cargo clean",
+            "arai status\ncargo clean",
+            "arai status | cargo clean",
+            "arai why $(cargo clean)",
+            "arai why `cargo clean`",
+            "arai status > protected-file",
+            "arai status & cargo clean",
+            "arai why %COMMAND%",
+            "arai why !COMMAND!",
+        ] {
+            assert!(
+                !is_arai_self_command(&serde_json::json!({"command": command})),
+                "{command}"
+            );
+        }
     }
 
     /// End-to-end regression for issue #86: a rule with single-token subject

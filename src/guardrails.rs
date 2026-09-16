@@ -155,6 +155,9 @@ fn extract_bash_terms(tool_input: &Value) -> Vec<String> {
             extract_tokens_from_segment(sub, &mut terms);
         }
     }
+    for segment in shell_boundary_segments(command) {
+        extract_tokens_from_segment(&segment, &mut terms);
+    }
 
     terms.sort();
     terms.dedup();
@@ -360,6 +363,9 @@ pub fn extract_command_phrases(tool_name: &str, tool_input: &Value) -> Vec<Strin
             extract_phrases_from_segment(sub.trim(), &mut phrases);
         }
     }
+    for segment in shell_boundary_segments(command) {
+        extract_phrases_from_segment(&segment, &mut phrases);
+    }
     phrases.sort();
     phrases.dedup();
     phrases
@@ -554,7 +560,9 @@ pub fn match_guardrails(
         )
     });
 
-    // If we have high-relevance matches, suppress low-relevance ones.
+    // If we have high-relevance matches, suppress low-relevance advisories.
+    // A matching prohibition remains enforceable regardless of another
+    // rule's score. Use effective severity so stored overrides are respected.
     //
     // Tier exceptions to the low-relevance filter:
     //
@@ -571,6 +579,14 @@ pub fn match_guardrails(
     if top_score > 1 {
         matched.retain(|(g, s)| {
             if *s >= top_score {
+                return true;
+            }
+            let severity = g
+                .intent
+                .as_ref()
+                .map(|intent| intent.severity)
+                .unwrap_or_else(|| crate::intent::Severity::from_predicate(&g.predicate));
+            if severity == crate::intent::Severity::Block {
                 return true;
             }
             // Strict-tier upstream rules: retain regardless of score (AC9).
@@ -826,6 +842,103 @@ fn format_trace(g: &Guardrail) -> String {
     }
 }
 
+/// Supplement the existing command lexer with executable shell boundaries.
+/// `$(cargo clean)`, backticks and groups must expose `cargo clean` rather
+/// than the unrecognisable words `$(cargo` and `clean)`. Quotes/escapes keep
+/// literal examples from acquiring new command matches; double-quoted
+/// substitutions still execute and get their own quote context.
+///
+/// This recognises common POSIX shell syntax, not arbitrary shell programs
+/// or dynamically assembled command names. Keep the existing extraction
+/// path as well, including its handling of quoted `sh -c` command strings.
+fn shell_boundary_segments(input: &str) -> Vec<String> {
+    if !input.contains(['(', ')', '{', '}', '`']) {
+        return Vec::new();
+    }
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    // Closing delimiter and the surrounding quote context to restore.
+    let mut contexts: Vec<(char, Option<char>)> = Vec::new();
+    let mut chars = input.chars().peekable();
+    let flush = |current: &mut String, segments: &mut Vec<String>| {
+        if !current.trim().is_empty() {
+            segments.push(std::mem::take(current));
+        } else {
+            current.clear();
+        }
+    };
+
+    while let Some(ch) = chars.next() {
+        if quote == Some('\'') {
+            current.push(ch);
+            if ch == '\'' {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\\' {
+            match chars.next() {
+                // A shell continuation joins the word across the newline.
+                Some('\n') => {}
+                Some(next) => {
+                    current.push(ch);
+                    current.push(next);
+                }
+                None => current.push(ch),
+            }
+            continue;
+        }
+        if ch == '$' && chars.peek() == Some(&'(') {
+            chars.next();
+            flush(&mut current, &mut segments);
+            contexts.push((')', quote));
+            quote = None;
+            continue;
+        }
+        if ch == '`' {
+            flush(&mut current, &mut segments);
+            if quote.is_none() && contexts.last().is_some_and(|(end, _)| *end == '`') {
+                quote = contexts.pop().and_then(|(_, quote)| quote);
+            } else {
+                contexts.push(('`', quote));
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '"' {
+            quote = if quote == Some('"') { None } else { Some('"') };
+            current.push(ch);
+            continue;
+        }
+        if quote.is_none() {
+            match ch {
+                '\'' => quote = Some('\''),
+                '(' | '{' => {
+                    flush(&mut current, &mut segments);
+                    contexts.push((if ch == '(' { ')' } else { '}' }, None));
+                    continue;
+                }
+                ')' | '}' => {
+                    flush(&mut current, &mut segments);
+                    if contexts.last().is_some_and(|(end, _)| *end == ch) {
+                        quote = contexts.pop().and_then(|(_, quote)| quote);
+                    }
+                    continue;
+                }
+                '|' | ';' | '&' | '\n' | '\r' => {
+                    flush(&mut current, &mut segments);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        current.push(ch);
+    }
+    flush(&mut current, &mut segments);
+    segments
+}
+
 /// Simple shell tokenizer — splits on whitespace, respects quotes.
 fn shell_tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -912,6 +1025,68 @@ mod tests {
         assert!(terms.contains(&"git".to_string()));
         assert!(terms.contains(&"grep".to_string()));
         assert!(terms.contains(&"cargo".to_string()));
+    }
+
+    #[test]
+    fn shell_substitutions_and_groups_match_the_executed_command() {
+        let mut rule = mk_local(1, "Cargo", "never", "run cargo clean");
+        rule.intent = Some(crate::intent::classify_rule_with_subject(
+            "never",
+            "run cargo clean",
+            Some("Cargo"),
+        ));
+        for command in [
+            "arai why $(cargo clean)",
+            "echo prefix$(cargo clean)suffix",
+            "arai why \"$(cargo clean)\"",
+            "arai why `cargo clean`",
+            "echo \"prefix`cargo clean`suffix\"",
+            "echo $(echo \"$(cargo clean)\")",
+            "echo $(cargo check; cargo clean)",
+            "(cargo clean)",
+            "{ cargo clean; }",
+            "diff <(cargo clean) other.txt",
+            "echo $(cargo c\\\nlean)",
+        ] {
+            let input = serde_json::json!({"command": command});
+            let terms = extract_terms("Bash", &input);
+            let phrases = extract_command_phrases("Bash", &input);
+            assert!(terms.contains(&"cargo".to_string()), "{command}: {terms:?}");
+            assert!(terms.contains(&"clean".to_string()), "{command}: {terms:?}");
+            assert!(
+                phrases.contains(&"cargo clean".to_string()),
+                "{command}: {phrases:?}"
+            );
+            let matched = match_guardrails(
+                std::slice::from_ref(&rule),
+                &terms,
+                &phrases,
+                "Bash",
+                "PreToolUse",
+            );
+            assert_eq!(matched.len(), 1, "{command}");
+        }
+    }
+
+    #[test]
+    fn literal_shell_substitution_examples_do_not_gain_command_matches() {
+        for command in [
+            "arai why '$(cargo clean)'",
+            "arai why '`cargo clean`'",
+            "arai why \"\\$(cargo clean)\"",
+            "arai why \"\\`cargo clean\\`\"",
+        ] {
+            let input = serde_json::json!({"command": command});
+            assert!(
+                !extract_command_phrases("Bash", &input).contains(&"cargo clean".to_string()),
+                "literal example was treated as executable: {command}",
+            );
+        }
+        // Existing lexical support for quoted shell command strings remains.
+        let input = serde_json::json!({"command": "sh -c 'cargo build; git push'"});
+        assert!(extract_terms("Bash", &input).contains(&"build".to_string()));
+        assert!(extract_command_phrases("Bash", &input).contains(&"cargo build".to_string()));
+        assert!(extract_command_phrases("Bash", &input).contains(&"git push".to_string()));
     }
 
     #[test]
@@ -1723,6 +1898,70 @@ mod tests {
             tier: None,
             source_label: None,
         }
+    }
+
+    #[test]
+    fn higher_scoring_advisory_cannot_suppress_a_block() {
+        use crate::intent::{classify_rule_with_subject, Severity};
+
+        let mut prohibition = mk_local(1, "Cargo", "never", "execute cargo");
+        prohibition.intent = Some(classify_rule_with_subject(
+            "never",
+            "execute cargo",
+            Some("Cargo"),
+        ));
+        let mut advisory = mk_local(2, "Cargo", "always", "run cargo clean");
+        advisory.intent = Some(classify_rule_with_subject(
+            "always",
+            "run cargo clean",
+            Some("Cargo"),
+        ));
+        let input = serde_json::json!({"command": "cargo clean"});
+        let terms = extract_terms("Bash", &input);
+        let phrases = extract_command_phrases("Bash", &input);
+
+        // Cover classified rules and the predicate fallback used by legacy rows.
+        for intent in [prohibition.intent.clone(), None] {
+            prohibition.intent = intent;
+            let matched = match_guardrails(
+                &[prohibition.clone(), advisory.clone()],
+                &terms,
+                &phrases,
+                "Bash",
+                "PreToolUse",
+            );
+            assert_eq!(matched.len(), 2, "both applicable rules must survive");
+            assert_eq!(crate::hooks::highest_severity(&matched), Severity::Block);
+        }
+    }
+
+    #[test]
+    fn relevance_filter_respects_severity_overrides() {
+        use crate::intent::Severity;
+
+        let mut low = mk_local(1, "Cargo", "always", "execute cargo");
+        let mut high = mk_local(2, "Cargo", "always", "run cargo clean");
+        high.intent.as_mut().unwrap().severity = Severity::Warn;
+        let terms = vec!["cargo".to_string(), "clean".to_string()];
+        let phrases = vec!["cargo clean".to_string()];
+
+        // A promoted advisory must block even though its predicate is softer.
+        let matched = match_guardrails(
+            &[low.clone(), high.clone()],
+            &terms,
+            &phrases,
+            "Bash",
+            "PreToolUse",
+        );
+        assert!(matched.iter().any(|(g, _)| g.triple_id == 1));
+        assert_eq!(crate::hooks::highest_severity(&matched), Severity::Block);
+
+        // A demoted prohibition remains an advisory and may be condensed.
+        low.predicate = "never".to_string();
+        low.intent.as_mut().unwrap().severity = Severity::Inform;
+        let matched = match_guardrails(&[low, high], &terms, &phrases, "Bash", "PreToolUse");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(crate::hooks::highest_severity(&matched), Severity::Warn);
     }
 
     /// AC9 — strict tier: upstream rule is not shadowed by a same-subject

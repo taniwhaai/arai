@@ -321,6 +321,11 @@ impl Config {
         self.project_root.join(".claude").join("settings.json")
     }
 
+    /// Path to the project's native Codex lifecycle hooks.
+    pub(crate) fn codex_hooks_path(&self) -> PathBuf {
+        self.project_root.join(".codex").join("hooks.json")
+    }
+
     /// Path to the project's .grok/hooks directory (for native Grok Build hook registration).
     /// We prefer writing arai.json here when the user has a .grok/ project layout.
     pub(crate) fn grok_hooks_dir(&self) -> PathBuf {
@@ -408,9 +413,15 @@ mod tests {
             api_model: None,
         };
         let db = cfg.db_path();
-        let db_str = db.to_string_lossy();
-        assert!(db_str.starts_with("/usr/src/.taniwha/arai/projects/myproject-"));
-        assert!(db_str.ends_with("/arai.db"));
+        assert!(db.starts_with(cfg.arai_base_dir.join("projects")));
+        assert_eq!(db.file_name().unwrap(), "arai.db");
+        assert!(db
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("myproject-"));
     }
 
     #[test]

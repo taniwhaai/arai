@@ -506,9 +506,20 @@ fn cmd_status() -> Result<(), String> {
     println!("  Sources:    {} file(s)", files.len());
 
     println!("  {}", style::structural("Integration", col));
-    println!("    Hooks:    Claude Code + Grok Build (native)");
-    println!("              • .claude/settings.json");
-    println!("              • .grok/hooks/arai.json");
+    println!("    Native:   Claude Code, Grok Build, Codex");
+    for path in [
+        ".claude/settings.json",
+        ".grok/hooks/arai.json",
+        ".codex/hooks.json",
+    ] {
+        let state = if cfg.project_root.join(path).is_file() {
+            "config present"
+        } else {
+            "config missing"
+        };
+        println!("              • {path} ({state})");
+    }
+    println!("    Host trust and hook activation must be checked in the host; Codex: /hooks");
     for f in &files {
         println!("    - {f}");
     }
@@ -526,9 +537,7 @@ fn cmd_status() -> Result<(), String> {
         let decision = e.get("decision").and_then(|v| v.as_str()).unwrap_or("?");
         println!("  Last firing: {ts}  {ev} {tool} → {decision}");
     } else {
-        println!(
-            "  Last firing: never (hooks registered but none have invoked Arai in this project)"
-        );
+        println!("  Last firing: none recorded (this does not prove whether hooks are active)");
     }
 
     let graph_tools = db.code_graph_tool_count().map_err(|e| e.to_string())?;
