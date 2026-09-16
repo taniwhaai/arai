@@ -37,6 +37,10 @@ fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
     cmd.arg("guardrails")
         .arg("--match-stdin")
         .env("ARAI_HOME", &arai_home)
+        .env_remove("GROK_HOOK_EVENT")
+        .env_remove("GROK_SESSION_ID")
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

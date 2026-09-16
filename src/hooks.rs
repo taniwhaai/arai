@@ -223,10 +223,15 @@ fn spawn_background_scan(cwd: Option<&str>) {
     let _ = cmd.spawn();
 }
 
-/// Highest severity among the matched rules, if any.  Used to pick between
-/// advise (`allow`) and deny (`deny`) on PreToolUse.  Reads intent from the
-/// guardrail itself — `load_guardrails` already LEFT JOINed it in.
-fn highest_severity(matched: &[(Guardrail, u8)]) -> Severity {
+/// Highest severity among the matched rules, if any.
+///
+/// This is the deny/inject calculus [`match_hook`] uses on PreToolUse.
+/// Embedders that consume `HookMatch.matched` must call this rather than
+/// reimplementing it — `Block` short-circuits, classified intent wins over
+/// the predicate, and a missing intent falls back to
+/// [`Severity::from_predicate`] so pre-migration stores still block on
+/// `never` rules.
+pub fn highest_severity(matched: &[(Guardrail, u8)]) -> Severity {
     let mut highest = Severity::Inform;
     for (g, _) in matched {
         let sev = match g.intent.as_ref() {

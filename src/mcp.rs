@@ -15,7 +15,7 @@
 //! the agent adds a guard via MCP, Ārai stores it through the same
 //! pipeline as `arai add`, and the next PreToolUse hook sees it.
 
-use crate::{audit, config, enrich, parser, store, telemetry};
+use crate::{audit, config, enrich, intent, parser, store, telemetry};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -357,6 +357,26 @@ fn tool_add_guard(args: &Value) -> Result<Value, String> {
         return Err(format!(
             "could not extract a guardrail from: {rule:?} \
              (try an imperative like 'Never force-push to main')"
+        ));
+    }
+
+    // Same refusal as `arai add`: a listed rule that can never fire is
+    // enforcement that presents as present.  Documentary rules go through
+    // the CLI with `--allow-inert`.
+    let mut inert: Vec<String> = Vec::new();
+    for t in &triples {
+        let classified =
+            intent::classify_rule_with_subject(&t.predicate, &t.object, Some(&t.subject));
+        if intent::is_inert(&classified) {
+            inert.push(format!("{} {}: {}", t.subject, t.predicate, t.object));
+        }
+    }
+    if !inert.is_empty() {
+        return Err(format!(
+            "rule not added: its subject does not map to any enforceable tool domain \
+             ({}) — rewrite against a known tool (git, cargo, npm, docker, …) \
+             or the shell/Bash tool; documentary rules: `arai add --allow-inert`",
+            inert.join("; ")
         ));
     }
 

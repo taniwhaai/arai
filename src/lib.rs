@@ -38,6 +38,7 @@
 //! | [`session`] | Per-session prerequisite + seen-rule tracking |
 //! | [`prompt_collector`] | Read-only prompt-pattern observation (no enforcement) |
 //! | [`canonicalize`] | Rule extraction from existing instruction files |
+//! | [`repo_check`] | Repo-layer matcher — git diffs synthesised as Write/Edit |
 //!
 //! Remaining modules (`init`, `mcp`, `stats`, `scenarios`, …) back specific
 //! CLI subcommands; they are exported for the `arai` binary but hidden from
@@ -75,6 +76,7 @@ pub mod hooks;
 pub mod intent;
 pub mod parser;
 pub mod prompt_collector;
+pub mod repo_check;
 pub mod session;
 pub mod store;
 

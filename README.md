@@ -16,6 +16,22 @@ arai init
 
 That's it. Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and sets up native hooks so guardrails fire at the right moment.
 
+To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
+
+```bash
+arai init --pre-commit
+```
+
+Or add the [pre-commit](https://pre-commit.com) framework hook:
+
+```yaml
+repos:
+  - repo: https://github.com/taniwhaai/arai
+    rev: v1.1.1   # or a later tag
+    hooks:
+      - id: arai-check-diff
+```
+
 
 ## What It Does
 
@@ -73,14 +89,16 @@ enforcement strength depends on what surface the assistant exposes.
   **best-effort** until the host surfaces that field. Treat block as the
   guarantee; treat advise as optional context. See
   [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
-- Cursor and Windsurf are MCP clients today — they get strong advisory
-  enforcement via the MCP server.
+- Cursor, Windsurf, Cline and other MCP clients get **agent-facing tools**
+  (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
+  automatic tool-call inject/deny. Blocking still needs a native PreToolUse
+  host.
 - GitHub Copilot currently has no live enforcement surface; the file is
   still ingested for `arai stats`, `arai diff`, and the audit log.
 
 Arai hooks several more events alongside the standard tool-call events
-(when the assistant supports them) so the rule set stays accurate to the live
-working tree:
+**when the host emits them** (Claude Code today; not registered on Grok Build)
+so the rule set stays accurate to the live working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
@@ -93,6 +111,8 @@ working tree:
   Arai correlates each call individually against any PreToolUse firings
   in the same session, so per-rule compliance verdicts (Obeyed /
   Ignored / Unclear) stay accurate on parallel workloads.
+
+On hosts without those events, run `arai scan` after editing instruction files.
 
 
 ## Smart Matching
@@ -121,14 +141,17 @@ Arai doesn't just do keyword matching. It understands your rules:
 
 ```bash
 arai init                  # Discover, extract, classify, scan, set up hooks
+arai init --pre-commit     # Also install a git hook: arai check-diff --cached
 arai status                # Show what's being enforced
 arai guardrails            # List all active rules
 arai why "git push --force" # Explain which rules would fire (dry-run, no audit write)
+arai check-diff --cached   # Match the staged diff against guardrails (repo layer)
 arai scan                  # Re-scan instruction files
 arai scan --code           # Also scan source code (tree-sitter AST)
 arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
-arai add "Never X"         # Add a rule manually
+arai add "Never X"         # Add a rule manually (refuses rules that can never fire)
+arai add --allow-inert "…" # Keep a documentary rule that will not enforce
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring
