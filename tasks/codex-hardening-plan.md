@@ -65,7 +65,7 @@ run rechecks the complete suites after this bounded follow-up.
 
 - [x] Inspect merged main and the skipped release job; identify the exact failing check.
 - [x] Reproduce and remove the audit test's nondeterministic lock-release assumption without weakening its busy-bucket assertion.
-- [ ] Validate the focused change and prepare a small repair PR from the squash merge.
+- [x] Validate the focused change and prepare a small repair PR from the squash merge.
 - [ ] Retry the failed main pipeline once the failure is understood, then verify version/tag/release outcomes and report remaining blockers.
 
 Main a1cbb87 still declares 1.1.2; published GitHub release remains 1.1.1.
@@ -79,3 +79,10 @@ releases it immediately. The fixture now unlocks before its immediate purge
 assertion. All nine audit tests passed 100 consecutive parallel Linux suite
 runs (900 executions) and on Windows. One retry of main reproduced the same
 failure, so further retries are replaced by landing this permanent test fix.
+
+PR #181 contains the repair. Its hosted default/lean and enrichment gates pass.
+Release-plz defaults to release_always=true: main's unpublished Cargo1.1.2 will
+publish directly after gates pass. Its notes parser skips Unreleased, so move
+the shipped Codex/hardening notes into the existing1.1.2 entry before release,
+and state the concrete required version in README. No extra version bump is
+needed while1.1.2 remains unpublished.
