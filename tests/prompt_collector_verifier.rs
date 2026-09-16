@@ -518,11 +518,7 @@ fn verifier_ac7_seed_rules_annotated_as_non_policy() {
         .expect("AC7: SEED_RULES must exist in prompt_collector.rs");
 
     // Look in the 500 characters before SEED_RULES for the annotation.
-    let context_start = if seed_rules_idx > 600 {
-        seed_rules_idx - 600
-    } else {
-        0
-    };
+    let context_start = seed_rules_idx.saturating_sub(600);
     let context = &source[context_start..seed_rules_idx + 200];
 
     let has_non_policy_annotation = context.contains("NOT policy")

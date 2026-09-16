@@ -74,6 +74,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | File | Tool | Enforcement |
 |------|------|-------------|
 | `CLAUDE.md` | Claude Code | Hooks (block + advise) |
+| `.claude/rules/**/*.md` | Claude Code | Path-scoped hooks (block + advise) |
 | `AGENTS.md` / `Agents.md` | Grok Build (native) | Hooks (block; advise best-effort) |
 | `AGENTS.md` / `Agents.md` | Codex (native) | Hooks (block + advise; requires host trust) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
@@ -84,6 +85,12 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 
 Rules from every file are parsed, classified, and stored the same way — but
 enforcement strength depends on what surface the assistant exposes.
+
+Nested instructions retain directory scope; Claude `paths` and Cursor `globs`
+restrict file actions. Local scans preserve externally managed policy and prune
+only sources they own. Existing stores require explicit adoption of legacy local
+sources. See [discovery, activation and upgrade handling](docs/instruction-discovery.md)
+and [Arai's place upstream of Kete](docs/stack-integration.md).
 
 - **Claude Code**, **Grok Build**, and **Codex** support PreToolUse hooks, so Arai
   can issue `deny` decisions and actually block tool calls.

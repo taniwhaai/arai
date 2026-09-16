@@ -21,7 +21,7 @@ use crate::store::{Guardrail, Store};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Genesis-line `prev_hash` sentinel: 64 hex zeros, i.e. SHA-256 length of an
@@ -231,9 +231,11 @@ pub fn list_buckets(arai_base: &Path, project_slug: &str) -> Result<Vec<AuditBuc
     let mut buckets = Vec::new();
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
-        Err(_) => return Ok(buckets),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(buckets),
+        Err(e) => return Err(format!("read audit dir {}: {e}", dir.display())),
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read audit dir entry: {e}"))?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
@@ -244,10 +246,15 @@ pub fn list_buckets(arai_base: &Path, project_slug: &str) -> Result<Vec<AuditBuc
         if day.len() != 8 || !day.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let head = fs::read_to_string(dir.join(format!(".head.{day}")))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
+        let bytes = entry
+            .metadata()
+            .map_err(|e| format!("stat audit bucket {}: {e}", path.display()))?
+            .len();
+        let head = match fs::read_to_string(dir.join(format!(".head.{day}"))) {
+            Ok(s) => s.trim().to_string(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("read audit head {day}: {e}")),
+        };
         buckets.push(AuditBucket {
             day: day.to_string(),
             jsonl_path: path,
@@ -365,8 +372,9 @@ pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str
 ///
 /// Head storage: per-day sidecar at
 /// `{arai_base}/audit/{slug}/.head.{YYYYMMDD}` containing the last hash.
-/// Acts as a cache; if the sidecar is missing or stale, `seal_and_append`
-/// recovers by reading the actual last line of the day-bucket.
+/// Acts as a cache for readers. Writers always recover from the actual last
+/// complete record while holding a per-bucket OS lock, so stale sidecars and
+/// concurrent hook processes cannot branch the chain.
 fn seal_and_append(cfg: &Config, mut entry: Value) {
     let arai_base = &cfg.arai_base_dir;
     let slug = cfg.project_slug();
@@ -374,15 +382,21 @@ fn seal_and_append(cfg: &Config, mut entry: Value) {
         Ok(p) => p,
         Err(_) => return,
     };
-    let day = today_yyyymmdd();
-
-    // Recover previous hash from the per-day sidecar; fall back to scanning
-    // the last line of the day-bucket if the sidecar is missing (process
-    // killed between line-write and head-write).  GENESIS_HASH starts the
-    // chain on a fresh day-bucket.
-    let prev_hash = read_head(arai_base, &slug, &day)
-        .or_else(|| last_line_hash(&log_path))
-        .unwrap_or_else(|| GENESIS_HASH.to_string());
+    // Derive the day once from the selected path, even across UTC midnight.
+    let Some(day) = log_path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let Ok(_lock) = lock_bucket(&log_path) else {
+        return;
+    };
+    // Never trust .head: a crash may occur between append and head update.
+    // An incomplete or corrupt tail is retained for diagnosis; do not append
+    // onto it, truncate evidence, or silently restart from genesis.
+    let prev_hash = match last_line_hash(&log_path) {
+        Ok(Some(hash)) => hash,
+        Ok(None) => GENESIS_HASH.to_string(),
+        Err(_) => return,
+    };
 
     if let Some(obj) = entry.as_object_mut() {
         obj.insert("prev_hash".to_string(), Value::String(prev_hash.clone()));
@@ -398,10 +412,32 @@ fn seal_and_append(cfg: &Config, mut entry: Value) {
     }
 
     if let Ok(mut f) = open_audit_file(&log_path) {
-        if writeln!(f, "{}", entry).is_ok() {
-            let _ = write_head(arai_base, &slug, &day, &new_hash);
+        // Prepare a whole line before writing. A failed/partial append leaves
+        // the old head untouched and the tail visibly invalid on verification.
+        let line = format!("{entry}\n");
+        if f.write_all(line.as_bytes()).is_ok() {
+            let _ = write_head(arai_base, &slug, day, &new_hash);
         }
     }
+}
+
+/// Use a separate, stable lock inode so replacing a cache sidecar cannot
+/// invalidate mutual exclusion. Keep lock markers during purge: unlinking one
+/// while another process waits on it would allow two independent locks.
+/// Dropping the returned File releases the OS lock, including process exit.
+fn lock_bucket(log_path: &Path) -> std::io::Result<fs::File> {
+    let day = log_path.file_stem().unwrap_or_default().to_string_lossy();
+    let path = log_path.with_file_name(format!(".lock.{day}"));
+    let mut opts = OpenOptions::new();
+    opts.create(true).truncate(false).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let file = opts.open(path)?;
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
 }
 
 /// SHA-256(prev_hash || "|" || canonical_bytes).  Hex-encoded so the hash
@@ -424,17 +460,6 @@ fn head_path(arai_base: &Path, project_slug: &str, day: &str) -> PathBuf {
         .join(format!(".head.{day}"))
 }
 
-fn read_head(arai_base: &Path, project_slug: &str, day: &str) -> Option<String> {
-    let path = head_path(arai_base, project_slug, day);
-    let raw = fs::read_to_string(&path).ok()?;
-    let trimmed = raw.trim();
-    if is_sha256_hex(trimmed) {
-        Some(trimmed.to_string())
-    } else {
-        None
-    }
-}
-
 fn write_head(
     arai_base: &Path,
     project_slug: &str,
@@ -453,20 +478,60 @@ fn write_head(
     writeln!(f, "{}", new_hash)
 }
 
-fn last_line_hash(log_path: &Path) -> Option<String> {
-    let file = fs::File::open(log_path).ok()?;
-    let mut last = None;
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        if !line.trim().is_empty() {
-            last = Some(line);
-        }
+fn last_line_hash(log_path: &Path) -> std::io::Result<Option<String>> {
+    let mut file = match fs::File::open(log_path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(None);
     }
-    let line = last?;
-    let v: Value = serde_json::from_str(&line).ok()?;
-    v.get("hash")
-        .and_then(|h| h.as_str())
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid audit tail");
+    file.seek(SeekFrom::End(-1))?;
+    let mut terminator = [0];
+    file.read_exact(&mut terminator)?;
+    if terminator[0] != b'\n' {
+        return Err(invalid());
+    }
+
+    // Read backwards by chunks: recovering one head is proportional to the
+    // last record's size, not the entire day's event history on every hook.
+    let mut position = len - 1;
+    let mut chunks = Vec::new();
+    while position > 0 {
+        let count = position.min(8192) as usize;
+        position -= count as u64;
+        file.seek(SeekFrom::Start(position))?;
+        let mut chunk = vec![0; count];
+        file.read_exact(&mut chunk)?;
+        if let Some(newline) = chunk.iter().rposition(|b| *b == b'\n') {
+            chunks.push(chunk[newline + 1..].to_vec());
+            break;
+        }
+        chunks.push(chunk);
+    }
+    let line: Vec<u8> = chunks.into_iter().rev().flatten().collect();
+    let mut value: Value = serde_json::from_slice(&line).map_err(|_| invalid())?;
+    let hash = value
+        .get("hash")
+        .and_then(Value::as_str)
         .filter(|s| is_sha256_hex(s))
-        .map(|s| s.to_string())
+        .ok_or_else(invalid)?
+        .to_string();
+    let prev_hash = value
+        .get("prev_hash")
+        .and_then(Value::as_str)
+        .filter(|s| is_sha256_hex(s))
+        .ok_or_else(invalid)?
+        .to_string();
+    value.as_object_mut().ok_or_else(invalid)?.remove("hash");
+    let canonical = serde_json::to_string(&value).map_err(|_| invalid())?;
+    if chain_hash(&prev_hash, &canonical) != hash {
+        return Err(invalid());
+    }
+    Ok(Some(hash))
 }
 
 fn is_sha256_hex(s: &str) -> bool {
@@ -493,15 +558,20 @@ pub struct VerifyIssue {
 /// Returns the list of issues; an empty list means the chain verifies clean.
 pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIssue>, String> {
     let dir = arai_base.join("audit").join(project_slug);
-    if !dir.exists() {
-        return Ok(Vec::new());
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("read audit dir {}: {e}", dir.display())),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("read audit dir entry: {e}"))?
+            .path();
+        if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
     }
-    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
-        .map_err(|e| format!("read audit dir: {e}"))?
-        .filter_map(|r| r.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("jsonl"))
-        .collect();
     files.sort();
 
     let mut issues = Vec::new();
@@ -524,21 +594,37 @@ pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIs
             }
         };
         let mut expected_prev = GENESIS_HASH.to_string();
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line_no = idx + 1;
-            let line = match line {
-                Ok(l) if l.trim().is_empty() => continue,
-                Ok(l) => l,
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let mut line_no = 0;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    line_no += 1;
+                    if !line.ends_with('\n') {
+                        issues.push(VerifyIssue {
+                            day: day.clone(),
+                            line_no,
+                            kind: "incomplete_record".to_string(),
+                            detail: "audit record has no terminating newline".to_string(),
+                        });
+                    }
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                }
                 Err(e) => {
                     issues.push(VerifyIssue {
                         day: day.clone(),
-                        line_no,
+                        line_no: line_no + 1,
                         kind: "read_failed".to_string(),
                         detail: e.to_string(),
                     });
                     break;
                 }
-            };
+            }
             let mut v: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(e) => {

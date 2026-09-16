@@ -137,44 +137,7 @@ fn canonical_hook_event(raw: &str) -> &'static str {
 /// costs a few ms of background CPU; a false negative leaves Arai with a
 /// stale rule set, which is the bug we're fixing.
 pub(crate) fn is_instruction_file(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    let normalized = path.replace('\\', "/");
-    let file_name = std::path::Path::new(&normalized)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    // Exact basenames Arai's discovery layer picks up.
-    // Includes both Claude-centric and Grok-native (AGENTS.md family) files.
-    if matches!(
-        file_name,
-        "CLAUDE.md"
-            | "AGENTS.md"
-            | "Agents.md"
-            | "AGENT.md"
-            | "agents.md"
-            | ".cursorrules"
-            | ".windsurfrules"
-            | "copilot-instructions.md"
-    ) {
-        return true;
-    }
-    // Directory-anchored rule files: .claude/rules/*.md, .cursor/rules/*.md.
-    // Matched on path substring so we catch nested and project-local cases.
-    if (normalized.contains("/.claude/rules/") || normalized.contains("/.cursor/rules/"))
-        && file_name.ends_with(".md")
-    {
-        return true;
-    }
-    // Per-project Claude Code memory files: ~/.claude/projects/<slug>/memory/*.md.
-    if normalized.contains("/.claude/projects/")
-        && normalized.contains("/memory/")
-        && file_name.ends_with(".md")
-    {
-        return true;
-    }
-    false
+    crate::source_scope::is_instruction_path(path)
 }
 
 /// Is this host-supplied path a real directory we can safely root a
@@ -281,6 +244,52 @@ fn hook_field_str<'a>(hook: &'a Value, snake: &str, camel: &str) -> Option<&'a s
     hook_field(hook, snake, camel).and_then(|v| v.as_str())
 }
 
+/// Validate the decision-bearing envelope before any no-rule or skip-tool
+/// fast path. Syntactically valid JSON such as `null` is not a valid tool
+/// invocation. Unknown/MCP tools remain extensible: their input need only
+/// be an object; we validate specific fields only for known tool schemas.
+fn validate_hook_input(hook: &Value) -> Result<(), String> {
+    if !hook.is_object() {
+        return Err("Hook payload must be a JSON object".into());
+    }
+    let event = match hook_field(hook, "hook_event_name", "hookEventName") {
+        Some(value) => value.as_str().ok_or("Hook event name must be a string")?,
+        None => "PreToolUse",
+    };
+    if canonical_hook_event(event) != "PreToolUse" {
+        return Ok(());
+    }
+    let raw_tool = hook_field_str(hook, "tool_name", "toolName")
+        .filter(|name| !name.trim().is_empty() && !name.chars().any(char::is_control))
+        .ok_or("PreToolUse requires a nonempty tool_name string")?;
+    let input = hook_field(hook, "tool_input", "toolInput")
+        .filter(|value| value.is_object())
+        .ok_or("PreToolUse requires a tool_input object")?;
+    let tool = guardrails::normalize_tool_name(raw_tool);
+    if tool == "Bash" || crate::codex::is_patch_tool(raw_tool, input) {
+        input
+            .get("command")
+            .and_then(Value::as_str)
+            .filter(|command| !command.contains('\0'))
+            .ok_or("Command tools require a command string without NUL bytes")?;
+    } else if matches!(
+        tool.as_str(),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
+    ) {
+        let path = if tool == "NotebookEdit" {
+            input
+                .get("notebook_path")
+                .or_else(|| input.get("file_path"))
+        } else {
+            input.get("file_path")
+        };
+        path.and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty() && !path.contains('\0'))
+            .ok_or("File tools require a nonempty path string without NUL bytes")?;
+    }
+    Ok(())
+}
+
 /// Apply the full match pipeline to a parsed hook payload.
 ///
 /// Mirrors the behaviour of `handle_stdin` without performing any IO:
@@ -288,6 +297,7 @@ fn hook_field_str<'a>(hook: &'a Value, snake: &str, camel: &str) -> Option<&'a s
 /// *and* by the `arai test` scenario runner — both paths see the same
 /// matching logic so scenarios stay faithful to production.
 pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, String> {
+    validate_hook_input(hook)?;
     // Canonicalise before any timing/response comparison.  Grok Build
     // sends snake_case (`pre_tool_use`); the matcher and deny path are
     // keyed on PascalCase (`PreToolUse`).
@@ -390,7 +400,17 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
 
     out.terms = terms.clone();
 
-    let all_guardrails = db.load_guardrails().map_err(|e| e.to_string())?;
+    let scopes = db.source_scopes().map_err(|e| e.to_string())?;
+    let all_guardrails: Vec<_> = db
+        .load_guardrails()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|guard| {
+            scopes
+                .get(&guard.file_path)
+                .is_none_or(|scope| scope.matches(&guard.file_path, cfg, hook))
+        })
+        .collect();
 
     // UserPromptSubmit: brief summary of active domain guardrails
     if event == "UserPromptSubmit" {
@@ -451,10 +471,17 @@ fn enrich_hook_terms_from_graph(
 ) {
     use std::path::{Component, Path, PathBuf};
 
-    if !matches!(tool_name, "Edit" | "Write" | "NotebookEdit") {
+    if !matches!(tool_name, "Edit" | "Write" | "MultiEdit" | "NotebookEdit") {
         return;
     }
-    let Some(path) = input.get("file_path").and_then(Value::as_str) else {
+    let path = if tool_name == "NotebookEdit" {
+        input
+            .get("notebook_path")
+            .or_else(|| input.get("file_path"))
+    } else {
+        input.get("file_path")
+    };
+    let Some(path) = path.and_then(Value::as_str) else {
         return;
     };
     let cwd = hook
@@ -619,6 +646,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
 
     let hook: Value =
         serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
+    validate_hook_input(&hook)?;
 
     let raw_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);

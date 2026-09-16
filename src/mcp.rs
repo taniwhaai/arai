@@ -390,12 +390,12 @@ fn tool_add_guard(args: &Value) -> Result<Value, String> {
     };
     db.upsert_file(&manual_path, rule, &triples, "mcp")
         .map_err(|e| e.to_string())?;
-    db.classify_all_guardrails().map_err(|e| e.to_string())?;
+    crate::init::classify_source(&db, &manual_path)?;
 
     // Best-effort enrichment if the ST model is already present (no download).
     let model_dir = cfg.arai_base_dir.join("models").join("all-MiniLM-L6-v2");
     if model_dir.join("model.onnx").exists() {
-        enrich::enrich_guardrails(&db, &cfg.arai_base_dir).ok();
+        enrich::enrich_guardrails_for_sources(&db, &cfg.arai_base_dir, &[manual_path]).ok();
     }
 
     // Track via anonymous telemetry the same way a CLI add would.

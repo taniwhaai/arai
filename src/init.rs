@@ -1,4 +1,4 @@
-use crate::{code_scanner, config, discovery, parser, store};
+use crate::{code_scanner, config, discovery, store};
 use base64::Engine;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -32,23 +32,14 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     println!("\n  Extracting rules...");
     let db = store::Store::open(&cfg.db_path())?;
 
-    let mut total_rules = 0;
-    for file in &files {
-        let triples = parser::extract_rules(&file.content, &file.source_type, file.confidence);
-        let count = triples.len();
-        db.upsert_file(&file.path, &file.content, &triples, &file.source_type)
-            .map_err(|e| e.to_string())?;
-        total_rules += count;
-    }
+    let total_rules = sync_discovered_rules(&db, &files)?;
     println!("    \u{2713} {total_rules} rules extracted");
-
-    let classified = db.classify_all_guardrails().map_err(|e| e.to_string())?;
-    println!("    \u{2713} {classified} rules classified by intent");
+    println!("    \u{2713} Discovered rules classified by intent");
 
     // Auto-enrich if the model is already downloaded
     let model_dir = cfg.arai_base_dir.join("models").join("all-MiniLM-L6-v2");
     if model_dir.join("model.onnx").exists() {
-        match crate::enrich::enrich_guardrails(&db, &cfg.arai_base_dir) {
+        match enrich_discovered_rules(&db, &cfg.arai_base_dir) {
             Ok(n) => println!("    \u{2713} {n} rules enriched by model"),
             Err(e) => eprintln!("    \u{26a0} Enrichment failed: {e}"),
         }
@@ -119,6 +110,55 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     println!("\n  Arai is registered for Claude Code, Codex, and Grok Build (PreToolUse hooks).");
     println!("  Re-run init after moving the Arai binary to refresh registered paths.");
     Ok(())
+}
+
+/// Automatic enrichment is limited to sources owned by local discovery.
+pub fn enrich_discovered_rules(db: &store::Store, base: &Path) -> Result<usize, String> {
+    let sources = db.discovered_sources().map_err(|e| e.to_string())?;
+    crate::enrich::enrich_guardrails_for_sources(db, base, &sources)
+}
+
+/// Classify one newly added source without resetting another owner's policy.
+pub fn classify_source(db: &store::Store, path: &str) -> Result<(), String> {
+    for guard in db.rules_for_file(path).map_err(|e| e.to_string())? {
+        let intent = crate::intent::classify_rule_with_subject(
+            &guard.predicate,
+            &guard.object,
+            Some(&guard.subject),
+        );
+        db.upsert_rule_intent(guard.triple_id, &intent)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn sync_discovered_rules(
+    db: &store::Store,
+    files: &[discovery::DiscoveredFile],
+) -> Result<usize, String> {
+    sync_discovered_rules_with_adoption(db, files, false)
+}
+
+/// Adopt only legacy rows that are present in this successful local snapshot,
+/// and only when explicitly requested. Public API sources retain their owner.
+pub fn sync_discovered_rules_with_adoption(
+    db: &store::Store,
+    files: &[discovery::DiscoveredFile],
+    adopt_legacy: bool,
+) -> Result<usize, String> {
+    let count = db
+        .sync_discovered_files(files, adopt_legacy)
+        .map_err(|e| e.to_string())?;
+    let legacy = db.legacy_source_count().map_err(|e| e.to_string())?;
+    if legacy > 0 {
+        eprintln!("  Retained {legacy} legacy source(s) with unknown ownership. To let local discovery manage matching on-disk instruction files, run `arai scan --adopt-legacy-sources`. Absent legacy sources remain retained; see docs/instruction-discovery.md for upgrade handling.");
+    }
+    for (path, scope) in db.source_scopes().map_err(|e| e.to_string())? {
+        if let Some(reason) = scope.inactive_reason() {
+            eprintln!("  Inactive source {path}: {reason}");
+        }
+    }
+    Ok(count)
 }
 
 /// Remove Arai's project registrations, preserving other handlers and settings.
@@ -196,25 +236,15 @@ fn remove_hooks_file(path: &Path, delete_empty: bool) -> Result<usize, String> {
 }
 /// Hook events Arai registers itself into and the `matcher` pattern for
 /// each.  Tool-call events (`PreToolUse`/`PostToolUse`/`UserPromptSubmit`)
-/// use an empty matcher — Arai's own skip-tool list filters; Claude Code
-/// shouldn't pre-filter those.  `FileChanged` uses a narrow basename
-/// matcher so we don't spawn an Arai process on every unrelated file
-/// edit during a build; `InstructionsLoaded` uses an empty matcher
-/// because its payload already names a specific (and small) set of
-/// rule-related files Claude Code loaded into context.
-///
-/// Path-anchored rule files (`.claude/rules/*.md`, `.cursor/rules/*.md`)
-/// aren't expressible in Claude Code's literal-pipe-separated matcher
-/// syntax — `InstructionsLoaded` catches their reload via the
-/// in-process filter in `hooks::is_instruction_file`.
+/// use an empty matcher — Arai's own skip-tool list filters. FileChanged
+/// also uses the shared instruction-path filter in-process, so nested
+/// AGENTS files and rule-directory .md/.mdc files cannot be excluded by
+/// a second, narrower registration list.
 const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
     ("PreToolUse", ""),
     ("PostToolUse", ""),
     ("UserPromptSubmit", ""),
-    (
-        "FileChanged",
-        "CLAUDE.md|.cursorrules|.windsurfrules|copilot-instructions.md",
-    ),
+    ("FileChanged", ""),
     ("InstructionsLoaded", ""),
     // CwdChanged: monorepo navigation.  No matcher — every cd matters
     // because we may be landing in a never-scanned subpackage.

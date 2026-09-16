@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --no-default-features --test embedding_compat --test audit_concurrency
+      - run: cargo clippy --no-default-features -- -D warnings
 
   test-enrich:
     name: Test (with enrich)
@@ -43,12 +45,12 @@ jobs:
       - run: cargo test --features enrich
 
   test-windows-hooks:
-    name: Windows native hooks
+    name: Windows tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test codex_hooks --test hook_registration --test init_hooks_empty_project
+      - run: cargo test
 
   release-safety:
     name: Release safety checks

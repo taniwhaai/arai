@@ -27,8 +27,7 @@ use std::process::Command;
 /// Helper: find the arai binary (prefer debug build).
 fn arai_bin() -> PathBuf {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let debug_bin = workspace.join("target").join("debug").join("arai");
-    debug_bin
+    workspace.join("target").join("debug").join("arai")
 }
 
 /// Verifier smoke-test: when ARAI_BASE_DIR is set in the environment, the binary

@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Recursive instruction discovery with directory scope, Claude `paths`, Cursor
+  `globs`/`alwaysApply`, explicit legacy-source adoption, and external policy custody.
+- Offline embedding regressions based on Kete's actual composition, plus an
+  Atlas-aligned stack integration guide and lean-library CI coverage.
 - Native Codex hooks in `.codex/hooks.json`: PreToolUse, PostToolUse and
   UserPromptSubmit, with explicit `/hooks` trust guidance and Windows commands.
 - Per-file Codex `apply_patch` matching: additions and move destinations use
@@ -14,6 +18,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Local refresh removes deleted sources atomically, preserves severity pins and
+  upstream tier/source provenance, and leaves externally supplied policy intact.
+- Automatic enrichment and manual additions no longer reclassify unrelated
+  embedding policy. Malformed scopes abort refresh instead of widening rules.
+- Copy/rename diff paths cannot evade creation or source-edit rules; diff checks
+  no longer inherit prerequisite history through a shared synthetic session.
+- Malformed pre-tool envelopes fail closed. NotebookEdit and MultiEdit match
+  their native fields; file paths and Git diff configuration are normalized safely.
+- Concurrent audit writers serialize appends across processes, recover from the
+  canonical tail rather than a stale head, and refuse incomplete or invalid tails.
+- Library builds with default features disabled compile without code-graph types.
 - Compound shell commands starting with `arai` no longer bypass matching.
 - Applicable Block rules survive relevance ranking alongside advisory rules.
 - Diff parsing validates hunk lengths and quoted paths; added content cannot

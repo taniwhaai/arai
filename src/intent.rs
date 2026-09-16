@@ -576,6 +576,14 @@ pub fn tool_matches_intent(intent: &RuleIntent, tool_name: &str) -> bool {
         return true;
     }
 
+    // Batch and notebook edits also mutate existing files. Keep their
+    // canonical/explicit scopes above, and let ordinary Edit prohibitions
+    // cover these operations without turning creation-only rules into
+    // editing bans.
+    if matches!(tool_name, "MultiEdit" | "NotebookEdit") {
+        return !intent.allow_inverse && intent.tools.iter().any(|t| t == "Edit");
+    }
+
     // allow_inverse: if rule prohibits creating, allow editing
     if intent.allow_inverse && tool_name == "Edit" {
         return false; // Explicitly skip — the rule doesn't apply to edits

@@ -64,3 +64,7 @@ the Windows hook command. Enabling and observing a live Codex session remains
 a host-level verification step, not something `arai init` can silently approve.
 
 Protocol reference: [OpenAI Codex hooks](https://learn.chatgpt.com/docs/hooks).
+
+Nested `AGENTS.md` files are discovered with directory scope. Host-specific
+`AGENTS.override.md` precedence and configurable fallback filenames are not yet
+implemented; see [instruction discovery and upgrade handling](instruction-discovery.md).

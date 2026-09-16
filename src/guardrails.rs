@@ -107,7 +107,14 @@ pub fn should_skip_tool(tool_name: &str) -> bool {
 pub fn extract_terms(tool_name: &str, tool_input: &Value) -> Vec<String> {
     match tool_name {
         "Bash" => extract_bash_terms(tool_input),
-        "Edit" | "Write" | "NotebookEdit" => extract_file_terms(tool_input),
+        "Edit" | "Write" | "MultiEdit" => extract_file_terms(tool_input),
+        "NotebookEdit" => {
+            let mut input = tool_input.clone();
+            if let Some(path) = tool_input.get("notebook_path") {
+                input["file_path"] = path.clone();
+            }
+            extract_file_terms(&input)
+        }
         "Grep" => extract_grep_terms(tool_input),
         _ => extract_generic_terms(tool_input),
     }
@@ -123,7 +130,11 @@ pub fn enrich_terms_from_graph(
 ) {
     // Only enrich for file-based operations
     let file_path = match tool_name {
-        "Edit" | "Write" | "NotebookEdit" => tool_input.get("file_path").and_then(|v| v.as_str()),
+        "Edit" | "Write" | "MultiEdit" => tool_input.get("file_path").and_then(|v| v.as_str()),
+        "NotebookEdit" => tool_input
+            .get("notebook_path")
+            .or_else(|| tool_input.get("file_path"))
+            .and_then(|v| v.as_str()),
         _ => None,
     };
 
@@ -208,6 +219,10 @@ fn extract_file_terms(tool_input: &Value) -> Vec<String> {
     let mut terms = Vec::new();
 
     if let Some(path) = tool_input.get("file_path").and_then(|v| v.as_str()) {
+        #[cfg(windows)]
+        let normalized = path.replace('\\', "/");
+        #[cfg(windows)]
+        let path = normalized.as_str();
         for component in path.split('/') {
             // Take stem (strip extension)
             let stem = if component.contains('.') {
@@ -231,10 +246,19 @@ fn extract_file_terms(tool_input: &Value) -> Vec<String> {
 
     // Content sniffing: scan file content for known tool names
     // This catches e.g. "from alembic import op" in a migration being written
-    let content_fields = ["content", "new_string", "old_string"];
+    let content_fields = ["content", "new_string", "old_string", "new_source"];
     for field in &content_fields {
         if let Some(content) = tool_input.get(*field).and_then(|v| v.as_str()) {
             sniff_content_for_tools(content, &mut terms);
+        }
+    }
+    if let Some(edits) = tool_input.get("edits").and_then(Value::as_array) {
+        for edit in edits {
+            for field in ["old_string", "new_string"] {
+                if let Some(content) = edit.get(field).and_then(Value::as_str) {
+                    sniff_content_for_tools(content, &mut terms);
+                }
+            }
         }
     }
 

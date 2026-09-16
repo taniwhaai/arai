@@ -82,6 +82,7 @@ pub mod store;
 
 // Native host payload normalization is an internal implementation detail.
 mod codex;
+mod source_scope;
 
 // CLI-support modules: exported so the `arai` binary (and integration
 // tests) can reach them, but hidden from rustdoc — they back specific

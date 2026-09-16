@@ -23,3 +23,32 @@ lints outside this change; the required CI Clippy scope passes.
 Windows registration tests execute the generated PowerShell hook from a path
 with spaces, apostrophe and dollar sign. Live Codex trust/activation and actual
 publishing are not claimed; no credentials or user/global configuration changed.
+
+## Follow-up: remaining holes and stack compatibility
+
+User explicitly requested fixing the surfaced holes, looking for more evident
+defects, and consulting Atlas so Arai's joins with Kete and the wider code stack
+remain open. Continue on PR #180; preserve original working copies.
+
+- [x] Read current Atlas decisions/manifests and Kete's actual embedding contract; distinguish binding architecture from draft proposals.
+- [x] Reproduce discovery/refresh and other evident enforcement gaps; design scope handling before ingesting nested or path-scoped instructions.
+- [x] Fix confirmed gaps with regressions, preserving public embedding APIs, offline/local decisions, provenance, and externally managed policy state.
+- [x] Add an embedding compatibility check based on Kete's consumption; update architecture/coverage docs and eliminate surfaced test-only lint defects.
+- [ ] Review the combined change; run platform tests, enrichment CI, formatting and lint; update PR #180 with evidence and remaining operational requirements.
+
+Architectural starting point from Atlas: Arai is the open enforcement library
+upstream of kete-agent; Kete adds the graph/org control plane and carries
+codeworld grounding. Remote services must not become mandatory for local
+enforcement. No new organization-specific transport or host trust bypass is
+part of this hardening pass.
+
+Follow-up local validation: complete default suites pass on Windows (710 tests)
+and Linux (712), with one existing ignored doc test on each. All-target Clippy
+passes; Linux no-default-features embedding/audit tests (13) and all-target lint
+pass. Language-only scanner compilation and five normalization tests pass.
+Actionlint and patch whitespace checks pass. Independent review covered source
+scope, ownership migration, provenance and audit concurrency. Hosted final-head
+CI remains to be checked after pushing. RELEASE_TOKEN metadata now shows an
+update at 2026-09-16T02:20:50Z; the last main release failure predates that update,
+so the replacement token is unverified rather than known-invalid. No Homebrew
+tap token is configured. No release or host-trust state was changed.

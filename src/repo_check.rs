@@ -2,7 +2,8 @@
 //!
 //! Universal across AI tools because it sits at the repo, not the host hook
 //! surface.  Added files synthesise a `Write` call; modified / renamed files
-//! synthesise an `Edit`.  Deleted files are reported but not matched (no
+//! synthesise an `Edit`. Renames also check the source and destination file
+//! actions; copies count as additions. Deleted files are reported but not matched (no
 //! schema for "this path went away" yet — see `docs/repo-layer-scope.md`).
 //!
 //! Pure — no audit write, no telemetry.  The CLI owns git invocation, stdout,
@@ -11,7 +12,7 @@
 use crate::config::Config;
 use crate::hooks;
 use crate::intent::Severity;
-use crate::store::Store;
+use crate::store::{Guardrail, Store};
 use serde_json::json;
 
 /// Hard cap on a diff piped into [`check_diff`].  Monorepo PRs can be large;
@@ -60,8 +61,8 @@ pub struct MatchedRule {
 pub struct FileVerdict {
     pub path: String,
     pub kind: ChangeKind,
-    /// Canonical tool the change was synthesised as (`Write` / `Edit`),
-    /// empty when the file was skipped.
+    /// Primary canonical tool (`Write` / `Edit`), empty when skipped.
+    /// Renames additionally check source Edit and destination Write scopes.
     pub tool: String,
     pub skipped: bool,
     pub severity: String,
@@ -83,6 +84,7 @@ struct DiffFile {
     has_hunk: bool,
     has_metadata: bool,
     binary: bool,
+    copied: bool,
 }
 
 impl DiffFile {
@@ -167,6 +169,7 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
                 has_hunk: false,
                 has_metadata: false,
                 binary: false,
+                copied: false,
             });
             hunk = None;
             continue;
@@ -187,7 +190,7 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
                 return Err(invalid());
             }
             let counts = parse_hunk_header(line).ok_or_else(invalid)?;
-            if (c.change.kind == ChangeKind::Added && counts.0 != 0)
+            if (c.change.kind == ChangeKind::Added && !c.copied && counts.0 != 0)
                 || (c.change.kind == ChangeKind::Deleted && counts.1 != 0)
             {
                 return Err(invalid());
@@ -215,6 +218,16 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
         } else if let Some(path) = line.strip_prefix("rename to ") {
             c.change.path = decode_git_path(path)?;
             c.has_metadata = true;
+        } else if let Some(path) = line.strip_prefix("copy from ") {
+            c.change.old_path = Some(decode_git_path(path)?);
+            c.change.kind = ChangeKind::Added;
+            c.copied = true;
+            c.has_metadata = true;
+        } else if let Some(path) = line.strip_prefix("copy to ") {
+            c.change.path = decode_git_path(path)?;
+            c.change.kind = ChangeKind::Added;
+            c.copied = true;
+            c.has_metadata = true;
         } else if let Some(path) = line.strip_prefix("+++ ") {
             if !c.old_header || c.new_header {
                 return Err(invalid());
@@ -240,7 +253,6 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
             || line.starts_with("new mode ")
             || line.starts_with("similarity index ")
             || line.starts_with("dissimilarity index ")
-            || line.starts_with("copy ")
         {
             c.has_metadata = true;
         } else if line.starts_with("Binary files ") || line.starts_with("GIT binary patch") {
@@ -262,8 +274,9 @@ pub fn parse_unified_diff(diff: &str) -> Result<Vec<FileChange>, String> {
 /// Match a unified diff against the live guardrail set.
 ///
 /// Deleted files are skipped (reported with `skipped: true`).  Everything
-/// else is synthesised as a PreToolUse `Write` or `Edit` and run through
-/// [`hooks::match_hook`].
+/// else is synthesised as PreToolUse file actions and run through
+/// [`hooks::match_hook`]. Renames check both paths and both destination
+/// scopes, so moving a scratch file cannot bypass a creation prohibition.
 pub fn check_diff(diff: &str, cfg: &Config, db: &Store) -> Result<CheckDiffReport, String> {
     let changes = parse_unified_diff(diff)?;
     let mut files = Vec::with_capacity(changes.len());
@@ -301,19 +314,50 @@ pub fn check_diff(diff: &str, cfg: &Config, db: &Store) -> Result<CheckDiffRepor
             ChangeKind::Deleted => unreachable!(),
         };
 
-        let hook = json!({
-            "hook_event_name": "PreToolUse",
-            "tool_name": tool,
-            "tool_input": tool_input,
-            "session_id": "check-diff",
-        });
-        let result = hooks::match_hook(&hook, cfg, db)?;
-        let top = hooks::highest_severity(&result.matched);
-        if top == Severity::Block && !result.matched.is_empty() {
+        let mut actions = vec![(tool, tool_input)];
+        if change.kind == ChangeKind::Renamed {
+            actions.push((
+                "Write",
+                json!({"file_path": change.path, "content": change.new_content}),
+            ));
+            if let Some(old_path) = &change.old_path {
+                if old_path != &change.path {
+                    actions.push((
+                        "Edit",
+                        json!({
+                            "file_path": old_path,
+                            "old_string": change.old_content,
+                            "new_string": "",
+                        }),
+                    ));
+                }
+            }
+        }
+        let mut matches: Vec<(Guardrail, u8)> = Vec::new();
+        for (action_tool, action_input) in actions {
+            let hook = json!({
+                "hook_event_name": "PreToolUse",
+                "tool_name": action_tool,
+                "tool_input": action_input,
+                "cwd": cfg.project_root,
+            });
+            for (guard, score) in hooks::match_hook(&hook, cfg, db)?.matched {
+                if let Some((_, previous)) = matches
+                    .iter_mut()
+                    .find(|(previous, _)| previous.triple_id == guard.triple_id)
+                {
+                    *previous = (*previous).max(score);
+                } else {
+                    matches.push((guard, score));
+                }
+            }
+        }
+        matches.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        let top = hooks::highest_severity(&matches);
+        if top == Severity::Block && !matches.is_empty() {
             blocked = true;
         }
-        let matched = result
-            .matched
+        let matched = matches
             .iter()
             .map(|(g, pct)| {
                 let severity = match g.intent.as_ref() {
@@ -335,7 +379,7 @@ pub fn check_diff(diff: &str, cfg: &Config, db: &Store) -> Result<CheckDiffRepor
                 }
             })
             .collect();
-        let severity = if result.matched.is_empty() {
+        let severity = if matches.is_empty() {
             "allow".to_string()
         } else {
             top.as_str().to_string()
