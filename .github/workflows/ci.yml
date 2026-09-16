@@ -42,6 +42,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --features enrich
 
+  test-windows-hooks:
+    name: Windows native hooks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test codex_hooks --test hook_registration --test init_hooks_empty_project
+
   release-safety:
     name: Release safety checks
     runs-on: ubuntu-latest
@@ -68,7 +76,7 @@ jobs:
   # After tests pass on main: create release PR + tag/publish on merge
   release-plz:
     name: Release-plz
-    needs: [fmt, test, test-enrich, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -104,7 +112,7 @@ jobs:
   # Build binaries on version tags
   build:
     name: Build (${{ matrix.platform }})
-    needs: [fmt, test, test-enrich, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
@@ -379,7 +387,7 @@ jobs:
   # would dominate the release wall-clock; add a native arm64 runner later.
   container-publish:
     name: Publish container to ghcr.io
-    needs: [fmt, test, test-enrich, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Job-level permissions REPLACE the workflow-level block.
