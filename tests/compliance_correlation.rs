@@ -57,6 +57,12 @@ fn run(args: &[&str], project: &Path, arai_base: &Path) -> (String, String, i32)
         // Disable telemetry so the test doesn't write outside its tmp dir.
         .env("ARAI_TELEMETRY", "off")
         .env("DO_NOT_TRACK", "1")
+        // Parent Grok/Claude sessions inject GROK_* / CLAUDE_* which would
+        // flip host detection (and the stdout JSON shape) under us.
+        .env_remove("GROK_HOOK_EVENT")
+        .env_remove("GROK_SESSION_ID")
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
         .output()
         .expect("spawn arai");
     (
@@ -75,6 +81,10 @@ fn pipe_hook(payload: &str, project: &Path, arai_base: &Path) -> String {
         .env("ARAI_BASE_DIR", arai_base)
         .env("ARAI_TELEMETRY", "off")
         .env("DO_NOT_TRACK", "1")
+        .env_remove("GROK_HOOK_EVENT")
+        .env_remove("GROK_SESSION_ID")
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
         // Force deny-mode on so the Pre firing is recorded with
         // decision="deny" — the audit log still records it either way,
         // but pinning this makes the test's expectations explicit.

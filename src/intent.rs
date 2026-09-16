@@ -142,6 +142,15 @@ impl Timing {
     }
 }
 
+/// True when classified timing never maps to a hook event.
+///
+/// Inert rules can be listed (`arai guardrails`) but never fire on
+/// PreToolUse.  `arai add` and `arai_add_guard` refuse them by default so
+/// a printed `Added:` is never a rule that cannot enforce.
+pub fn is_inert(intent: &RuleIntent) -> bool {
+    intent.timing.hook_event() == "none"
+}
+
 /// The action category a rule targets.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -586,6 +595,21 @@ mod tests {
         assert!(intent.tools.contains(&"Write".to_string()));
         assert!(!intent.tools.contains(&"Edit".to_string()));
         assert!(intent.allow_inverse); // Editing is fine
+    }
+
+    #[test]
+    fn inert_when_timing_has_no_hook_event() {
+        let principle = classify_rule_with_subject("never", "run echo hello", Some("echo"));
+        assert_eq!(principle.timing, Timing::Principle);
+        assert!(is_inert(&principle));
+
+        let toolish = classify_rule_with_subject(
+            "never",
+            "hand-write alembic migration files",
+            Some("alembic"),
+        );
+        assert_eq!(toolish.timing, Timing::ToolCall);
+        assert!(!is_inert(&toolish));
     }
 
     #[test]

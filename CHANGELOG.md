@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- *(lib)* Export `hooks::highest_severity` so embedders (kete-agent) derive
+  deny/inject from the same calculus as the CLI
+  ([#170](https://github.com/taniwhaai/arai/issues/170))
+- *(lib)* `Config::load_from(project_dir)` — path-parameterised constructor
+  so an embedding process can target a project without mutating CWD
+  ([#171](https://github.com/taniwhaai/arai/issues/171))
+- *(lib)* `audit::list_buckets` + `AuditBucket::jsonl_bytes` — read-only
+  enumeration of day-buckets and chain-head sidecars. Embedders ship the
+  canonical bytes themselves; the HTTP POST stays a CLI concern
+- *(check-diff)* `arai check-diff` runs the live matcher on a git diff
+  (stdin, `--cached`, or `--from-rev`/`--to-rev`). Added files synthesise
+  Write; modified/renamed files synthesise Edit. Block-severity matches
+  exit 1. `arai init --pre-commit` installs a local git hook; the repo
+  ships `.pre-commit-hooks.yaml` for the pre-commit framework
+  ([#82](https://github.com/taniwhaai/arai/issues/82))
+- *(add/mcp)* `arai_add_guard` refuses inert rules (same as `arai add`).
+  `arai scan` / `arai lint` warn on instruction-file rules that will never
+  fire. `arai status` reports last firing so "hooks registered but never
+  invoked" is visible without reading JSONL
+
 ### Fixed
 
 - *(grok)* Canonicalise Grok Build 1.0+ snake_case hook events (`pre_tool_use`

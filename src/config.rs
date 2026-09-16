@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Resolved runtime configuration: project root, state directory, and the
 /// optional knobs from `{arai_base}/config.toml` plus environment variables.
@@ -167,7 +167,18 @@ impl Config {
     /// then existing default paths), and merge `{arai_base}/config.toml`
     /// with enrichment env vars (env wins).
     pub fn load() -> Result<Config, String> {
-        let project_root = find_project_root()?;
+        let cwd = std::env::current_dir().map_err(|e| format!("Could not get cwd: {e}"))?;
+        Self::load_from(&cwd)
+    }
+
+    /// Load configuration rooted at `project_dir` instead of the process CWD.
+    ///
+    /// Walks up from `project_dir` looking for a `.git` directory — the same
+    /// resolution [`Config::load`] uses from the working directory.  An
+    /// embedding process can target a project without mutating its own
+    /// (process-global, thread-unsafe) working directory.
+    pub fn load_from(project_dir: &Path) -> Result<Config, String> {
+        let project_root = find_project_root_from(project_dir)?;
         let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
 
         // Resolve the base directory through the pure resolver, injecting
@@ -323,9 +334,27 @@ impl Config {
     }
 }
 
-fn find_project_root() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("Could not get cwd: {e}"))?;
-    let mut dir = cwd.as_path();
+fn find_project_root_from(start: &Path) -> Result<PathBuf, String> {
+    if start.as_os_str().is_empty() {
+        return Err("project directory is empty".to_string());
+    }
+    let start = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        let cwd = std::env::current_dir().map_err(|e| format!("Could not get cwd: {e}"))?;
+        cwd.join(start)
+    };
+    // A file path (e.g. a CLAUDE.md handed to an embedder) still walks from
+    // its parent, so load_from("repo/src/lib.rs") finds repo/.git.
+    let start = if start.is_file() {
+        match start.parent() {
+            Some(p) => p.to_path_buf(),
+            None => start,
+        }
+    } else {
+        start
+    };
+    let mut dir = start.as_path();
     loop {
         if dir.join(".git").exists() {
             return Ok(dir.to_path_buf());
@@ -333,8 +362,8 @@ fn find_project_root() -> Result<PathBuf, String> {
         match dir.parent() {
             Some(parent) => dir = parent,
             None => {
-                // No .git found, use cwd
-                return Ok(cwd);
+                // No .git found — use the starting directory, same as load().
+                return Ok(start);
             }
         }
     }
@@ -382,6 +411,47 @@ mod tests {
         let db_str = db.to_string_lossy();
         assert!(db_str.starts_with("/usr/src/.taniwha/arai/projects/myproject-"));
         assert!(db_str.ends_with("/arai.db"));
+    }
+
+    #[test]
+    fn load_from_walks_up_to_git_without_touching_cwd() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("arai_load_from_{}_{}", std::process::id(), nanos));
+        let project = root.join("proj");
+        let nested = project.join("src").join("pkg");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::write(nested.join("lib.rs"), "fn x() {}").unwrap();
+
+        let cwd_before = std::env::current_dir().unwrap();
+        let found = find_project_root_from(&nested).unwrap();
+        assert_eq!(found, project);
+        let from_file = find_project_root_from(&nested.join("lib.rs")).unwrap();
+        assert_eq!(from_file, project);
+        assert_eq!(std::env::current_dir().unwrap(), cwd_before);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_from_without_git_returns_the_start_dir() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "arai_load_from_nogit_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let found = find_project_root_from(&dir).unwrap();
+        assert_eq!(found, dir);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // -----------------------------------------------------------------

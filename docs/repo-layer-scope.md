@@ -1,6 +1,6 @@
 # Repo-layer enforcement — scoping doc
 
-**Status:** scope, not spec. Resolves [#82](https://github.com/taniwhaai/arai/issues/82). Parent epic: [#63](https://github.com/taniwhaai/arai/issues/63).
+**Status:** phase 1 implemented (`arai check-diff`, `arai init --pre-commit`, `.pre-commit-hooks.yaml`). Phase 2 (GitHub Action) and phase 3 (diff-aware schema / pre-receive) still deferred. Resolves [#82](https://github.com/taniwhaai/arai/issues/82). Parent epic: [#63](https://github.com/taniwhaai/arai/issues/63).
 
 A pre-commit (and/or server-side) hook that runs Arai's rule engine on git diffs. Universal across AI tools because it sits at the repo layer, not the tool layer.
 

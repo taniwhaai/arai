@@ -197,6 +197,68 @@ pub fn query(
     Ok(out)
 }
 
+/// A day-bucket on disk plus its chain-head sidecar.
+///
+/// Embedders (kete-agent) enumerate these, read the raw JSONL bytes from
+/// [`AuditBucket::jsonl_path`] (do not re-serialise — the hash chain is over
+/// those exact bytes), and transport them themselves.  The HTTP POST in
+/// `ship` stays a CLI concern.
+#[derive(Debug, Clone)]
+pub struct AuditBucket {
+    /// `YYYYMMDD` date stamp.
+    pub day: String,
+    /// Path to `{day}.jsonl`.
+    pub jsonl_path: PathBuf,
+    /// Byte length of the JSONL file.
+    pub bytes: u64,
+    /// Contents of `.head.{day}` (empty when the sidecar is missing).
+    pub head: String,
+}
+
+impl AuditBucket {
+    /// Raw JSONL bytes.  Callers that ship the chain must use this (or an
+    /// equivalent `fs::read` of [`Self::jsonl_path`]) rather than parsing
+    /// and re-emitting JSON.
+    pub fn jsonl_bytes(&self) -> Result<Vec<u8>, String> {
+        fs::read(&self.jsonl_path).map_err(|e| format!("read {}: {e}", self.jsonl_path.display()))
+    }
+}
+
+/// List day-buckets for a project, oldest first.  Only well-formed
+/// `YYYYMMDD.jsonl` names are considered — same filter as [`purge`].
+pub fn list_buckets(arai_base: &Path, project_slug: &str) -> Result<Vec<AuditBucket>, String> {
+    let dir = arai_base.join("audit").join(project_slug);
+    let mut buckets = Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(buckets),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(day) = name.strip_suffix(".jsonl") else {
+            continue;
+        };
+        if day.len() != 8 || !day.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let head = fs::read_to_string(dir.join(format!(".head.{day}")))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        buckets.push(AuditBucket {
+            day: day.to_string(),
+            jsonl_path: path,
+            bytes,
+            head,
+        });
+    }
+    buckets.sort_by(|a, b| a.day.cmp(&b.day));
+    Ok(buckets)
+}
+
 /// Compute today's log path, creating parent directories if needed.  On Unix
 /// the directory is locked down to 0700 — the audit log contains session ids,
 /// truncated prompt previews, and rule subjects.  Without this, the default
@@ -835,6 +897,37 @@ mod tests {
         let s = today_yyyymmdd();
         assert_eq!(s.len(), 8);
         assert!(s.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn list_buckets_skips_malformed_names_and_orders_oldest_first() {
+        let dir = std::env::temp_dir().join(format!(
+            "arai_list_buckets_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let slug = "proj-deadbeef";
+        let audit = dir.join("audit").join(slug);
+        std::fs::create_dir_all(&audit).unwrap();
+        std::fs::write(audit.join("20260101.jsonl"), "{\"n\":1}\n").unwrap();
+        std::fs::write(audit.join(".head.20260101"), "abc\n").unwrap();
+        std::fs::write(audit.join("20260102.jsonl"), "{\"n\":2}\n").unwrap();
+        std::fs::write(audit.join("not-a-day.jsonl"), "nope\n").unwrap();
+        std::fs::write(audit.join(".ship_cursor.json"), "{}\n").unwrap();
+
+        let buckets = list_buckets(&dir, slug).unwrap();
+        assert_eq!(
+            buckets.iter().map(|b| b.day.as_str()).collect::<Vec<_>>(),
+            vec!["20260101", "20260102"]
+        );
+        assert_eq!(buckets[0].head, "abc");
+        assert_eq!(buckets[0].jsonl_bytes().unwrap(), b"{\"n\":1}\n");
+        assert!(buckets[1].head.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

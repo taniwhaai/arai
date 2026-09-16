@@ -139,39 +139,19 @@ struct Bucket {
     head: String,
 }
 
-/// List day-buckets for a project, oldest first.  Only well-formed
-/// `YYYYMMDD.jsonl` names are considered — same filter as `purge`.
+/// List day-buckets for a project, oldest first.  Delegates to the public
+/// [`crate::audit::list_buckets`] enumerator so embedders and the CLI ship
+/// path see the same files.
 fn list_buckets(arai_base: &Path, slug: &str) -> Result<Vec<Bucket>, String> {
-    let dir = arai_base.join("audit").join(slug);
-    let mut buckets = Vec::new();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(buckets), // no audit dir → nothing to ship
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let Some(day) = name.strip_suffix(".jsonl") else {
-            continue;
-        };
-        if day.len() != 8 || !day.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let head = std::fs::read_to_string(dir.join(format!(".head.{day}")))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        buckets.push(Bucket {
-            day: day.to_string(),
-            path,
-            bytes,
-            head,
-        });
-    }
-    buckets.sort_by(|a, b| a.day.cmp(&b.day));
-    Ok(buckets)
+    Ok(crate::audit::list_buckets(arai_base, slug)?
+        .into_iter()
+        .map(|b| Bucket {
+            day: b.day,
+            path: b.jsonl_path,
+            bytes: b.bytes,
+            head: b.head,
+        })
+        .collect())
 }
 
 /// Pure skip decision: nothing to ship when the bucket is byte-identical
