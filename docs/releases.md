@@ -26,9 +26,20 @@ permissions and repository rules.
 If this preflight fails, a repository owner must replace `RELEASE_TOKEN` in the
 repository's Actions secrets, then rerun the failed job. Changing workflow YAML
 alone cannot repair an invalid or revoked token. Keep the separate
-`CARGO_REGISTRY_TOKEN` and `NPM_TOKEN` publishing credentials current as well.
+`CARGO_REGISTRY_TOKEN` publishing credential current as well.
+
 `HOMEBREW_TAP_TOKEN` needs Contents write access to `taniwhaai/homebrew-tap`;
 without it the workflow emits a warning and skips that optional channel.
+
+npm publishing uses [trusted publishing](https://docs.npmjs.com/trusted-publishers)
+rather than a stored token. The `npm-publish` job requests `id-token: write`
+and npm exchanges the GitHub Actions OIDC token for a short-lived credential
+at publish time; no `NPM_TOKEN` secret is read. The package's Trusted
+Publisher settings on npmjs.com must name owner `taniwhaai`, repository
+`arai`, workflow filename `ci.yml`, and no environment. A successful trusted
+publish shows a Provenance panel on the npm package page linking back to the
+workflow run. If the exchange fails, check those four fields first; a
+`RELEASE_TOKEN`-style secret rotation cannot fix it.
 
 ## Binary variants and Homebrew
 
