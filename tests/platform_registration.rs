@@ -84,6 +84,20 @@ impl Fixture {
             .path();
         arai::store::Store::open(&directory.join("arai.db")).unwrap()
     }
+
+    fn config(&self) -> arai::config::Config {
+        arai::config::Config {
+            project_root: self.project.clone(),
+            home_dir: self.home.clone(),
+            arai_base_dir: self.root.join("state"),
+            extra_sources: Vec::new(),
+            guardrails_mode: "advise".into(),
+            llm_command: None,
+            api_url: None,
+            api_key_env: None,
+            api_model: None,
+        }
+    }
 }
 
 impl Drop for Fixture {
@@ -286,6 +300,128 @@ fn explicit_host_ownership_does_not_claim_another_adapter_or_custom_arguments() 
         json!([foreign, customized])
     );
     assert!(!fixture.project.join(".cursor/hooks.json").exists());
+}
+
+#[test]
+fn nested_hosts_pin_each_event_and_offer_supported_startup_status() {
+    let fixture = Fixture::new("pinned_lifecycle");
+    fixture.run(&["init"]);
+    for (platform, path, count) in [
+        ("claude", ".claude/settings.json", 10),
+        ("grok", ".grok/hooks/arai.json", 4),
+        ("codex", ".codex/hooks.json", 5),
+    ] {
+        let settings = fixture.read(path);
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(hooks.len(), count);
+        for (event, groups) in hooks {
+            let handler = &groups[0]["hooks"][0];
+            let command = decoded_command(handler["command"].as_str().unwrap());
+            assert!(
+                command.contains(&format!("--platform {platform} --hook-event {event}")),
+                "{command}"
+            );
+            assert_eq!(handler["timeout"], 3);
+            if ["SessionStart", "SubagentStart"].contains(&event.as_str()) && platform != "grok" {
+                assert_eq!(
+                    handler["statusMessage"],
+                    "Checking Arai policy availability"
+                );
+            } else {
+                assert!(handler.get("statusMessage").is_none());
+            }
+        }
+        assert!(hooks.contains_key("SessionStart") && hooks.contains_key("SubagentStart"));
+    }
+    let claude = fixture.read(".claude/settings.json");
+    let matcher = claude["hooks"]["FileChanged"][0]["matcher"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        matcher.split('|').collect::<Vec<_>>(),
+        [
+            "CLAUDE.md",
+            "CLAUDE.local.md",
+            "AGENTS.md",
+            "Agents.md",
+            "AGENT.md",
+            "agents.md",
+            ".cursorrules",
+            ".windsurfrules"
+        ]
+    );
+    assert!(!claude.to_string().contains("watchPaths"));
+    assert!(!fixture.project.join(".cursor/hooks.json").exists());
+}
+
+#[test]
+fn grok_migration_retires_only_owned_prompt_handlers_and_warns_about_imports() {
+    let fixture = Fixture::new("grok_prompt");
+    let unrelated = json!({"type":"command", "command":"notify submitted"});
+    fixture.write(".grok/hooks/arai.json", &json!({"hooks":{"UserPromptSubmit":[{"hooks":[
+        {"type":"command", "command":"arai guardrails --match-stdin"},
+        {"type":"command", "command":"arai guardrails --match-stdin --platform grok --hook-event UserPromptSubmit"}, unrelated
+    ]}]}}));
+    fixture.write(
+        ".claude/settings.local.json",
+        &json!({"hooks":{"UserPromptSubmit":[]}}),
+    );
+    let output = fixture.run(&["init", "--platform", "grok"]);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Grok imports them by default"));
+    assert_eq!(
+        fixture.read(".grok/hooks/arai.json")["hooks"]["UserPromptSubmit"][0]["hooks"],
+        json!([unrelated])
+    );
+    let initial = fixture.read(".grok/hooks/arai.json");
+    fixture.run(&["init", "--platform", "grok"]);
+    assert_eq!(fixture.read(".grok/hooks/arai.json"), initial);
+    fixture.run(&["deinit", "--platform", "grok"]);
+    assert_eq!(
+        fixture.read(".grok/hooks/arai.json")["hooks"]["UserPromptSubmit"][0]["hooks"],
+        json!([unrelated])
+    );
+}
+
+#[test]
+fn diagnostics_distinguish_owned_paths_from_activation_and_foreign_hooks() {
+    use arai::{init::registration_diagnostics, platforms::Platform};
+    let fixture = Fixture::new("diagnostics");
+    let missing =
+        fixture
+            .root
+            .join("missing install")
+            .join(if cfg!(windows) { "arai.exe" } else { "arai" });
+    let missing = missing.to_string_lossy().replace('\\', "/");
+    fixture.write(
+        ".claude/settings.json",
+        &json!({"hooks":{"PreToolUse":[{"hooks":[
+            {"type":"command", "command":format!("'{missing}' guardrails --match-stdin")},
+            {"type":"command", "command":"arai guardrails --match-stdin"},
+            {"type":"command", "command":"echo arai guardrails --match-stdin"}
+        ]}], "SessionStart":[{"hooks":[{"type":"command", "command":"arai guardrails --match-stdin --platform claude --hook-event PreToolUse"}]}]}}),
+    );
+    let diagnostics = registration_diagnostics(&fixture.config(), Platform::Claude).unwrap();
+    assert_eq!(diagnostics.owned_handlers, 3);
+    assert_eq!(diagnostics.unpinned_handlers, 2);
+    assert_eq!(diagnostics.registered_events, ["PreToolUse"]);
+    assert_eq!(diagnostics.missing_executables, [missing]);
+    assert_eq!(diagnostics.relative_executables, ["arai"]);
+    fixture.run(&["init", "--platform", "claude"]);
+    let diagnostics = registration_diagnostics(&fixture.config(), Platform::Claude).unwrap();
+    assert_eq!(diagnostics.owned_handlers, 10);
+    assert_eq!(diagnostics.unpinned_handlers, 0);
+    assert!(diagnostics
+        .registered_events
+        .contains(&"SessionStart".into()));
+    assert!(diagnostics.missing_executables.is_empty());
+    assert!(diagnostics.relative_executables.is_empty());
+    fixture.run(&["deinit", "--platform", "claude"]);
+    assert_eq!(
+        registration_diagnostics(&fixture.config(), Platform::Claude)
+            .unwrap()
+            .owned_handlers,
+        0
+    );
 }
 
 #[test]

@@ -101,14 +101,13 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   can issue `deny` decisions and actually block tool calls.
 - On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
   host invokes hooks (verified on **1.0.0** headless with `--trust`; project
-  hooks stay inactive until the folder is trusted). Advisory text is still
-  emitted as `additionalContext` on allow responses and recorded in the audit
-  log, but Grok's documented PreToolUse contract only specifies
-  `allow` / `deny`+`reason` — so warn/inform injection into the model is
-  **best-effort** until the host surfaces that field. Treat block as the
-  guarantee; treat advise as optional context. See
+  hooks stay inactive until the folder is trusted). Current public Grok source
+  supports nested allow-side `additionalContext`, delivered **after execution**.
+  Arai records it as deferred advice, without pre-action compliance credit.
+  The prior live block verification is in
   [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
-- Codex registers `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` in
+- Codex registers `PreToolUse`, `PostToolUse`, `UserPromptSubmit`,
+  `SessionStart` and `SubagentStart` in
   `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
   `apply_patch` is checked per file, including additions and move destinations.
   Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
@@ -123,21 +122,29 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   file is still ingested. This describes Arai's adapter coverage, not the
   current hook capabilities of those platforms.
 
-Arai hooks several more events alongside the standard tool-call events
-**when the host emits them** (not registered on Grok Build, Codex or Cursor)
-so the rule set stays accurate to the live working tree:
+Claude, Grok and Codex startup hooks surface Arai's local availability early.
+Claude/Codex also receive brief model context, including on resume/compaction
+when the host emits SessionStart. Startup performs no scan or network/model work.
+Use [startup and activation](docs/host-activation.md) to distinguish registration
+from working tool gates in the CLI/TUI and desktop apps.
+
+Arai also uses these Claude events when the host emits them:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
-  into context, Arai spawns an `arai scan` in the background. The next
-  tool-call hook sees the updated guardrails — no manual rescan.
+  into context, Arai requests an `arai scan` in the background. FileChanged
+  seeds literal instruction basenames; it does not watch every rule directory.
+  Refresh is asynchronous: run `arai scan` explicitly when freshness matters.
 - **`CwdChanged`** — when Claude `cd`s into a different directory
   (monorepo navigation), Arai re-scans rooted at the new directory so
   the next tool call matches against the right project's rules.
-- **`PostToolBatch`** — when Claude does a batch of parallel tool calls,
-  Arai correlates each call individually against any PreToolUse firings
-  in the same session, so per-rule compliance verdicts (Obeyed /
-  Ignored / Unclear) stay accurate on parallel workloads.
+- **`PostToolBatch`** — records the batch size. Individual PostToolUse events
+  handle observations and compliance, avoiding duplicate accounting.
+- **`PermissionDenied`** — records the native reason without requesting a retry.
+
+PowerShell and command-form Monitor use shell policy. Monitor WebSocket calls
+remain a separate tool category. Grok search_replace with an empty old_string
+checks both Write and Edit policies because it can create or overwrite a file.
 
 On hosts without those events, run `arai scan` after editing instruction files.
 

@@ -31,11 +31,16 @@ fn temp_arai_home() -> PathBuf {
 }
 
 fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
+    run_hook_args(payload, env, &[])
+}
+
+fn run_hook_args(payload: &str, env: &[(&str, &str)], args: &[&str]) -> (String, String, i32) {
     let bin = env!("CARGO_BIN_EXE_arai");
     let arai_home = temp_arai_home();
     let mut cmd = Command::new(bin);
     cmd.arg("guardrails")
         .arg("--match-stdin")
+        .args(args)
         .env("ARAI_BASE_DIR", &arai_home)
         .env_remove("GROK_HOOK_EVENT")
         .env_remove("GROK_SESSION_ID")
@@ -58,6 +63,84 @@ fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
         String::from_utf8_lossy(&out.stderr).into_owned(),
         out.status.code().unwrap_or(-1),
     )
+}
+
+#[test]
+fn pinned_pretool_cannot_be_downgraded_by_passive_or_conflicting_aliases() {
+    for platform in ["claude", "grok", "codex"] {
+        for payload in [
+            r#"{"hook_event_name":"SessionStart","tool_name":"Read","tool_input":{}}"#,
+            r#"{"hook_event_name":"PreToolUse","hookEventName":"session_start","tool_name":"Bash","tool_input":{"command":"echo hello"}}"#,
+            r#"{"hook_event_name":"pre_tool_use","tool_name":"PowerShell","tool_input":{"command":null}}"#,
+        ] {
+            let (stdout, _, code) = run_hook_args(
+                payload,
+                &[],
+                &["--platform", platform, "--hook-event", "PreToolUse"],
+            );
+            let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            if platform == "grok" {
+                assert_eq!(code, 2);
+                assert_eq!(value["decision"], "deny");
+            } else {
+                assert_eq!(code, 0);
+                assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+            }
+        }
+    }
+}
+
+#[test]
+fn pinned_lifecycle_parse_failure_never_emits_a_tool_decision() {
+    for platform in ["claude", "grok", "codex"] {
+        let (stdout, stderr, code) = run_hook_args(
+            "{",
+            &[],
+            &["--platform", platform, "--hook-event", "SessionStart"],
+        );
+        assert_eq!(code, 0);
+        let response: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(response["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("failed"));
+        assert!(response["hookSpecificOutput"].is_null());
+        assert!(stderr.contains("Invalid hook JSON"));
+    }
+}
+
+#[test]
+fn legacy_conflicting_event_aliases_cannot_select_passive_error_output() {
+    let payload = r#"{"hook_event_name":"SessionStart","hookEventName":"pre_tool_use","tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
+    let (stdout, _, code) = run_hook(payload, &[("GROK_HOOK_EVENT", "pre_tool_use")]);
+    assert_eq!(code, 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["decision"],
+        "deny"
+    );
+}
+
+#[test]
+fn malformed_monitor_source_cannot_bypass_shell_validation() {
+    for input in [
+        r#"{"command":"git push","ws":{"url":"wss://example.test"}}"#,
+        r#"{"command":null}"#,
+        r#"{"ws":"wss://example.test"}"#,
+        "{}",
+    ] {
+        let payload = format!(
+            r#"{{"hook_event_name":"PreToolUse","tool_name":"Monitor","tool_input":{input}}}"#
+        );
+        let (stdout, _, _) = run_hook_args(
+            &payload,
+            &[],
+            &["--platform", "claude", "--hook-event", "PreToolUse"],
+        );
+        assert!(
+            stdout.contains(r#""permissionDecision":"deny""#),
+            "{input}: {stdout}"
+        );
+    }
 }
 
 /// A PreToolUse payload with malformed inner JSON (missing closing brace)

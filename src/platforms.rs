@@ -47,13 +47,32 @@ impl Platform {
         }
     }
 
-    /// Whether Arai emits allow-side context. Grok delivery is best-effort;
-    /// this flag is not a claim that the host has displayed it to the model.
+    /// Whether the protocol accepts allow-side context. This does not prove
+    /// host activation or delivery; Grok delivers it after the tool completes.
     pub fn pre_advisory_context(self) -> bool {
         self != Self::Cursor
     }
 
     pub fn prompt_context(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex)
+    }
+
+    pub fn pre_context_timing(self) -> &'static str {
+        match self {
+            Self::Claude | Self::Codex => "before-tool",
+            Self::Grok => "after-tool",
+            Self::Cursor => "unsupported",
+        }
+    }
+
+    /// Startup/subagent model context, independent of a visible user notice.
+    pub fn lifecycle_context(self) -> bool {
+        matches!(self, Self::Claude | Self::Codex)
+    }
+
+    /// A user-facing lifecycle notice is supported by the current host contract.
+    /// This is a capability, not evidence that a particular installation ran it.
+    pub fn lifecycle_status(self) -> bool {
         self != Self::Cursor
     }
 }

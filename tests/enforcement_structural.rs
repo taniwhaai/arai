@@ -161,7 +161,13 @@ fn valid_unknown_tools_aliases_and_passive_events_remain_compatible() {
         );
         let output = fixture.stdin_hook(&payload);
         assert!(output.status.success(), "{payload}");
-        assert!(output.stdout.is_empty(), "{payload}: {:?}", output.stdout);
+        if payload["hook_event_name"] == "SessionStart" {
+            let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert!(response["systemMessage"].as_str().unwrap().contains("Arai"));
+            assert!(response["hookSpecificOutput"]["permissionDecision"].is_null());
+        } else {
+            assert!(output.stdout.is_empty(), "{payload}: {:?}", output.stdout);
+        }
     }
 }
 

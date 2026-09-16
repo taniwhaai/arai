@@ -232,7 +232,16 @@ fn shell_denial_and_allow_use_cursor_contract_despite_other_host_environment() {
 fn no_database_skipped_tools_and_explicit_disable_still_emit_valid_allow() {
     let uninitialized = Project::empty();
     assert_allow(&uninitialized.hook("preToolUse", "Shell", json!({"command":"cargo clean"})));
-    assert!(!uninitialized.0.join("state/projects").exists());
+    let mut databases = Vec::new();
+    collect_files(
+        &uninitialized.0.join("state/projects"),
+        "db",
+        &mut databases,
+    );
+    assert!(
+        databases.is_empty(),
+        "invocation receipts must not initialize policy"
+    );
 
     let project = Project::new("- Never run cargo clean\n");
     assert_allow(&project.hook("preToolUse", "Read", json!({"file_path":"AGENTS.md"})));

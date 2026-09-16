@@ -527,29 +527,21 @@ fn main() {
 
 fn cmd_status() -> Result<(), String> {
     let cfg = config::Config::load()?;
+    let col = style::should_colorize(style::Stream::Stdout);
+    println!("{}", style::structural("Arai status", col));
+    print_hook_status(&cfg);
+    if !cfg.db_path().is_file() {
+        println!("  Rules: not initialized (run `arai init --platform <host>`)");
+        return Ok(());
+    }
     let db = store::Store::open(&cfg.db_path())?;
     let files = db.list_files().map_err(|e| e.to_string())?;
     let count = db.guardrail_count().map_err(|e| e.to_string())?;
     let last_scan = db.get_meta("last_scan").map_err(|e| e.to_string())?;
 
-    let col = style::should_colorize(style::Stream::Stdout);
-
-    println!("{}", style::structural("Arai status", col));
     println!("  Rules:      {count}");
     println!("  Sources:    {} file(s)", files.len());
 
-    println!("  {}", style::structural("Integration", col));
-    println!("    Native adapters (configuration is not activation):");
-    for platform in Platform::ALL {
-        let path = platform.config_path();
-        let state = if cfg.project_root.join(path).is_file() {
-            "config present"
-        } else {
-            "config missing"
-        };
-        println!("              • {}: {path} ({state})", platform.id());
-    }
-    println!("    Host trust and hook activation must be checked in the host; Codex: /hooks");
     if cfg
         .project_root
         .join(Platform::Cursor.config_path())
@@ -631,6 +623,74 @@ fn cmd_status() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn print_hook_status(cfg: &config::Config) {
+    println!("  Native adapters (configuration is not activation):");
+    for platform in Platform::ALL {
+        let path = platform.config_path();
+        let state = if cfg.project_root.join(path).is_file() {
+            "config present"
+        } else {
+            "config missing"
+        };
+        println!("    {}: {path} ({state})", platform.id());
+        match init::registration_diagnostics(cfg, platform) {
+            Ok(d) => {
+                println!(
+                    "      {} owned handlers; {} legacy/unpinned",
+                    d.owned_handlers, d.unpinned_handlers
+                );
+                let mut required = vec![platform.pre_event(), platform.post_event()];
+                if platform != Platform::Cursor {
+                    required.push("SessionStart");
+                    required.push("SubagentStart");
+                }
+                let missing: Vec<_> = required
+                    .into_iter()
+                    .filter(|e| !d.registered_events.iter().any(|got| got == e))
+                    .collect();
+                if !missing.is_empty() {
+                    println!(
+                        "      Missing events: {}; run `arai init --platform {}`",
+                        missing.join(", "),
+                        platform.id()
+                    );
+                }
+                for executable in d.missing_executables {
+                    println!("      Missing executable: {executable}; rerun init from the installed binary");
+                }
+                for executable in d.relative_executables {
+                    println!("      Executable requires host PATH resolution: {executable}");
+                }
+            }
+            Err(error) => println!("      Configuration could not be inspected: {error}"),
+        }
+        println!(
+            "      {}",
+            arai::lifecycle::invocation_summary(cfg, platform)
+        );
+    }
+    println!("    Host activation/trust is unverified here; a startup receipt does not prove tool gating.");
+    println!("    Claude Code CLI/Desktop Code: /hooks and /status; Codex CLI/app: review changed hooks in /hooks.");
+    println!(
+        "    Grok Build: /hooks and /hooks-trust; verify native Arai entries and the hook log."
+    );
+    if cfg
+        .project_root
+        .join(Platform::Grok.config_path())
+        .is_file()
+        && (cfg
+            .project_root
+            .join(Platform::Claude.config_path())
+            .is_file()
+            || cfg
+                .project_root
+                .join(Platform::Cursor.config_path())
+                .is_file())
+    {
+        println!("    Grok can import Claude/Cursor hooks too: inspect compatibility imports for duplicate Arai calls.");
+    }
 }
 
 fn cmd_guardrails(json: bool) -> Result<(), String> {

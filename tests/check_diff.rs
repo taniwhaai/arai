@@ -260,7 +260,9 @@ fn status_distinguishes_configuration_from_recorded_firings() {
         "expected last-firing line: {stdout}"
     );
     assert!(stdout.contains(".codex/hooks.json (config present)"));
-    assert!(stdout.contains("Host trust and hook activation must be checked"));
+    assert!(stdout.contains("Host activation/trust is unverified"));
+    assert!(stdout.contains("owned handlers"));
+    assert!(stdout.contains("startup receipt does not prove tool gating"));
 
     let _ = fs::remove_dir_all(&root);
 }

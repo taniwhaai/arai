@@ -6,9 +6,9 @@ format. They do not acquire their own policy engine or network dependency.
 
 `platforms::Platform` is the CLI registry for explicit selection and config
 locations. `guardrails --match-stdin --platform <name>` pins response encoding
-before parsing stdin, including malformed-input failures. Native Cursor
-registration also pins `--hook-event`. Existing unqualified Claude/Grok/Codex
-commands retain their compatibility behavior.
+before parsing stdin, including malformed-input failures. Every newly written
+registration also pins `--hook-event`. Existing unqualified commands remain
+accepted; rerunning init migrates exact Arai-owned handlers to explicit adapters.
 
 An adapter returns one or more validated canonical actions. The CLI passes
 each through `hooks::match_hook`, combines matches by rule ID using the highest
@@ -36,7 +36,9 @@ use an explicit `init --platform ...` to enable hooks again.
 Registration updates preserve other tools' handlers. Trust/approval settings
 belong to the host and are never granted by Arai. A config file, an installed
 adapter, an activated hook and a verified block are four different facts.
-`status` reports configuration presence, not activation or verified blocking.
+`status` reports owned handlers, missing events, executable path existence
+and recent adapter invocations. None certifies activation or verified blocking.
+See [startup and activation](host-activation.md) for TUI/desktop setup.
 
 ## Adding the next adapter
 
@@ -64,6 +66,26 @@ adapter, an activated hook and a verified block are four different facts.
 
 Cursor is the first opt-in adapter using this boundary. Gemini and Copilot
 can follow the same process; they are not implemented by this change.
+
+## Lifecycle and permissions
+
+Claude, Grok and Codex register SessionStart and SubagentStart. Startup reads
+only an existing local store and emits a brief availability diagnostic.
+Claude/Codex also receive model context; Grok receives a user message where
+its host version supports systemMessage. No lifecycle event marks rules seen.
+Other recognized passive events never fall through into tool decisions.
+
+Advisory Claude/Codex output omits permissionDecision so normal host approval
+still applies. Grok's allow also leaves approval unchanged, but its pre-tool
+advice arrives after execution. Such firings are recorded as `defer`, with
+no pre-action compliance or seen-rule credit. Grok compatibility imports get
+the same conservative accounting when its hook environment is present.
+Cursor cannot inject advice on a pre-tool allow.
+
+Invocation receipts contain only adapter, event, outcome, time, binary version
+and path, in four fixed event slots per platform under the project state.
+They are separate from policy provenance and rule evidence. They neither
+authenticate the importing host nor attest that it consumed the response.
 
 ## Atlas and Kete boundary
 
