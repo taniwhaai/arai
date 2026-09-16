@@ -357,11 +357,11 @@
             </div>
             <div class="supported-item">
                 <strong>Grok Build</strong>
-                <span>Native hooks — blocking support (advisory context best-effort)</span>
+                <span>Native hooks — block when hooks run (needs <code>--trust</code>; advise best-effort)</span>
             </div>
             <div class="supported-item">
                 <strong>Cursor, Windsurf, Cline &amp; others</strong>
-                <span>MCP integration — strong advisory enforcement</span>
+                <span>MCP tools — list / add guards / recent decisions (no native block)</span>
             </div>
             <div class="supported-item">
                 <strong>GitHub Copilot</strong>
@@ -397,7 +397,7 @@
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3&nbsp;&nbsp;&nbsp;&nbsp;<span class="warm">57%</span>&nbsp;&nbsp;git must_not: --no-verify&nbsp;&nbsp;<span class="warm">&#x26A0;</span><br><br>
             <span class="dim"># PostToolUse correlation produces obeyed / ignored / unclear verdicts per rule.</span><br>
             <span class="dim"># Tamper-evident JSONL audit log — SHA-256 hash-chained; `arai audit --verify` proves it.</span><br>
-            <span class="dim"># No SIEM. No data egress. grep + jq, done.</span>
+            <span class="dim"># No SIEM. Audit stays local (no audit egress). grep + jq, done.</span>
         </div>
     </div>
 </section>
@@ -411,7 +411,7 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok Build (the two assistants with native hook support today). <code>always</code> and <code>prefers</code> still advise &mdash; injected as context in Claude Code, best-effort under Grok Build. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf and others get advisory enforcement via MCP.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok Build when native PreToolUse hooks run. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf, Cline and similar hosts use MCP tools (list / add / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
             </div>
             <div class="feature">
                 <h3>Intent-aware</h3>
@@ -427,7 +427,7 @@
             </div>
             <div class="feature">
                 <h3>Rule set stays live</h3>
-                <p>Edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules.</p>
+                <p>On hosts that emit the events (Claude Code today): edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules. Elsewhere, run <code>arai scan</code> after instruction-file edits.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
@@ -517,7 +517,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and Ārai enforces them on the next tool call (where supported). <code>arai_recent_decisions</code> lets the agent self-check recent decisions. MCP is the primary integration for Cursor, Windsurf and similar tools (advisory only). Native blocking hooks are currently available in Claude Code and Grok Build.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and self-check recent decisions via <code>arai_recent_decisions</code>. MCP does not inject or deny tool calls by itself &mdash; blocking still requires a native PreToolUse host (Claude Code, Grok Build). On MCP-only hosts, new guards apply when a supporting host next loads them.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>

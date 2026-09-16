@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- Site + README: qualify Grok blocking (folder trust), demote MCP hosts from
+  "strong advisory enforcement" to agent-facing tools (no native block), fix
+  audit "no data egress" wording, and scope live re-scan / monorepo `cd` to
+  hosts that emit those events (Claude Code today)
+- MCP docs: rename Grok TUI → Grok Build; state clearly that MCP does not
+  auto-deny tool calls
+- Homebrew: `brew install taniwhaai/tap/arai` is live via
+  [taniwhaai/homebrew-tap](https://github.com/taniwhaai/homebrew-tap); release
+  workflow bumps the formula when `HOMEBREW_TAP_TOKEN` is set
+
 ### Fixed
 
 - *(grok)* Canonicalise Grok Build 1.0+ snake_case hook events (`pre_tool_use`
@@ -11,8 +23,7 @@ All notable changes to this project will be documented in this file.
   snake_case *value*; Arai only recognised PascalCase, so every rule failed the
   timing gate and the hook returned empty stdout / exit 0 (fail-open) while
   host-only bash deny hooks still worked
-  ([#173](https://github.com/taniwhaai/arai/issues/173))
-- *(init)* Always register Claude Code and Grok Build hooks even when no
+  ([#173](https://github.com/taniwhaai/arai/issues/173))- *(init)* Always register Claude Code and Grok Build hooks even when no
   instruction files are found. Empty projects previously printed
   `No instruction files found` and returned before writing
   `.claude/settings.json` / `.grok/hooks/arai.json`, so `arai add` rules never

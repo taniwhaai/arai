@@ -1,0 +1,136 @@
+# Bump taniwhaai/homebrew-tap Formula/arai.rb after a GitHub Release.
+# Requires a PAT (or fine-grained token) with contents:write on homebrew-tap
+# stored as repository secret HOMEBREW_TAP_TOKEN.
+name: Homebrew tap
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.1.1). Defaults to latest."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require HOMEBREW_TAP_TOKEN
+        id: auth
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not configured — skipping formula bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve tag
+        if: steps.auth.outputs.skip != 'true'
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo taniwhaai/arai --json tagName -q .tagName)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch checksums
+        if: steps.auth.outputs.skip != 'true'
+        id: sums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release download "$TAG" --repo taniwhaai/arai --pattern checksums.txt
+          sha() { awk -v f="$1" '$2 == f { print $1; exit }' checksums.txt; }
+          DARWIN_ARM=$(sha arai-darwin-aarch64)
+          DARWIN_INTEL=$(sha arai-darwin-x86_64)
+          LINUX_ARM=$(sha arai-linux-aarch64)
+          LINUX_INTEL=$(sha arai-linux-x86_64)
+          for v in "$DARWIN_ARM" "$DARWIN_INTEL" "$LINUX_ARM" "$LINUX_INTEL"; do
+            test -n "$v" || { echo "missing checksum"; exit 1; }
+          done
+          {
+            echo "darwin_arm=$DARWIN_ARM"
+            echo "darwin_intel=$DARWIN_INTEL"
+            echo "linux_arm=$LINUX_ARM"
+            echo "linux_intel=$LINUX_INTEL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        if: steps.auth.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: taniwhaai/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Patch Formula/arai.rb
+        if: steps.auth.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          DARWIN_ARM: ${{ steps.sums.outputs.darwin_arm }}
+          DARWIN_INTEL: ${{ steps.sums.outputs.darwin_intel }}
+          LINUX_ARM: ${{ steps.sums.outputs.linux_arm }}
+          LINUX_INTEL: ${{ steps.sums.outputs.linux_intel }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os, re
+          from pathlib import Path
+
+          p = Path("homebrew-tap/Formula/arai.rb")
+          text = p.read_text()
+          ver = os.environ["VERSION"]
+          text = re.sub(r'version\s+"[^"]+"', f'version "{ver}"', text, count=1)
+          shas = [
+              os.environ["DARWIN_ARM"],
+              os.environ["DARWIN_INTEL"],
+              os.environ["LINUX_ARM"],
+              os.environ["LINUX_INTEL"],
+          ]
+          it = iter(shas)
+
+          def repl(_m):
+              return f'sha256 "{next(it)}"'
+
+          new, n = re.subn(r'sha256\s+"[a-f0-9]+"', repl, text)
+          if n != 4:
+              raise SystemExit(f"expected 4 sha256 lines, found {n}")
+          p.write_text(new)
+          print(p.read_text())
+          PY
+
+      - name: Commit and push
+        if: steps.auth.outputs.skip != 'true'
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "arai-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/arai.rb
+          if git diff --cached --quiet; then
+            echo "No formula changes"
+            exit 0
+          fi
+          git commit -m "arai ${VERSION}"
+          git push origin HEAD:main
