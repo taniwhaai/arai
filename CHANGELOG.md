@@ -33,8 +33,7 @@ All notable changes to this project will be documented in this file.
   snake_case *value*; Arai only recognised PascalCase, so every rule failed the
   timing gate and the hook returned empty stdout / exit 0 (fail-open) while
   host-only bash deny hooks still worked
-  ([#173](https://github.com/taniwhaai/arai/issues/173))
-- *(init)* Always register Claude Code and Grok Build hooks even when no
+  ([#173](https://github.com/taniwhaai/arai/issues/173))- *(init)* Always register Claude Code and Grok Build hooks even when no
   instruction files are found. Empty projects previously printed
   `No instruction files found` and returned before writing
   `.claude/settings.json` / `.grok/hooks/arai.json`, so `arai add` rules never

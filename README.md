@@ -89,14 +89,16 @@ enforcement strength depends on what surface the assistant exposes.
   **best-effort** until the host surfaces that field. Treat block as the
   guarantee; treat advise as optional context. See
   [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
-- Cursor and Windsurf are MCP clients today — they get strong advisory
-  enforcement via the MCP server.
+- Cursor, Windsurf, Cline and other MCP clients get **agent-facing tools**
+  (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
+  automatic tool-call inject/deny. Blocking still needs a native PreToolUse
+  host.
 - GitHub Copilot currently has no live enforcement surface; the file is
   still ingested for `arai stats`, `arai diff`, and the audit log.
 
 Arai hooks several more events alongside the standard tool-call events
-(when the assistant supports them) so the rule set stays accurate to the live
-working tree:
+**when the host emits them** (Claude Code today; not registered on Grok Build)
+so the rule set stays accurate to the live working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
@@ -109,6 +111,8 @@ working tree:
   Arai correlates each call individually against any PreToolUse firings
   in the same session, so per-rule compliance verdicts (Obeyed /
   Ignored / Unclear) stay accurate on parallel workloads.
+
+On hosts without those events, run `arai scan` after editing instruction files.
 
 
 ## Smart Matching
