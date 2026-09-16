@@ -6,7 +6,7 @@ repo_dir=$(cd "$script_dir/../.." && pwd)
 test_dir=$(mktemp -d -t arai-installer-test.XXXXXXXX)
 trap 'rm -rf -- "$test_dir"' EXIT
 mkdir -p "$test_dir/tools"
-printf 'fixture executable\n' > "$test_dir/binary"
+printf '#!/bin/sh\nexit 0\n' > "$test_dir/binary"
 export INSTALL_TEST_ROOT="$test_dir"
 export INSTALL_TEST_SHA
 INSTALL_TEST_SHA=$(sha256sum "$test_dir/binary" | awk '{print $1}')
@@ -71,11 +71,18 @@ ARAI_INSTALL_DIR="$test_dir/windows upgrade with spaces"
 mkdir -p "$ARAI_INSTALL_DIR"
 printf 'previous extensionless payload\n' > "$ARAI_INSTALL_DIR/arai"
 sh "$repo_dir/install.sh" > "$test_dir/output" 2>&1
-test ! -e "$ARAI_INSTALL_DIR/arai"
+# Test names returned by globbing: MSYS aliases test -e arai to arai.exe.
+for file in "$ARAI_INSTALL_DIR"/arai*; do
+  test "${file##*/}" != arai
+done
 cmp "$test_dir/binary" "$ARAI_INSTALL_DIR/arai.exe"
 previous_files=("$ARAI_INSTALL_DIR"/.arai-previous.*/arai)
 test "${#previous_files[@]}" = 1
 grep -q '^previous extensionless payload$' "${previous_files[0]}"
+sh "$repo_dir/install.sh" > "$test_dir/output" 2>&1
+previous_files=("$ARAI_INSTALL_DIR"/.arai-previous.*/arai)
+test "${#previous_files[@]}" = 1
+cmp "$test_dir/binary" "$ARAI_INSTALL_DIR/arai.exe"
 
 INSTALL_TEST_OS=MSYS_NT
 INSTALL_TEST_ARCH=arm64
@@ -86,4 +93,4 @@ if sh "$repo_dir/install.sh" > "$test_dir/output" 2>&1; then
 fi
 test ! -e "$test_dir/calls"
 grep -q 'No native Windows ARM64 release' "$test_dir/output"
-echo 'Installer checks passed (10 platform/variant installs and a legacy Windows upgrade).'
+echo 'Installer checks passed (10 platform/variant installs, legacy Windows upgrade and reinstall).'

@@ -58,10 +58,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: bash .github/scripts/test-release-safety.sh
-      - run: bash .github/scripts/test-installer.sh
 
   npm-installer:
-    name: npm installer (${{ matrix.os }})
+    name: Installer checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -72,6 +71,8 @@ jobs:
         with:
           node-version: '20'
       - run: npm test --prefix npm
+      - run: bash .github/scripts/test-installer.sh
+        shell: bash
 
   # Cloudflare Pages serves arai.taniwha.ai/install from site/install, which
   # is a copy of the canonical install.sh at the repo root.  Catch drift

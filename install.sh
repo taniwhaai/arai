@@ -177,13 +177,23 @@ install_binary() {
     # Older Windows installers wrote an extensionless arai. Git Bash resolves
     # that before arai.exe, so retain it outside PATH before installing the new
     # filename. Keep the previous file (including custom wrappers) recoverable.
-    if [ "$PLATFORM_OS" = "windows" ] && { [ -e "${INSTALL_DIR}/arai" ] || [ -L "${INSTALL_DIR}/arai" ]; }; then
-        if [ -d "${INSTALL_DIR}/arai" ]; then
-            echo "Error: ${INSTALL_DIR}/arai is a directory; refusing to move it."
+    LEGACY_ARAI=""
+    if [ "$PLATFORM_OS" = "windows" ]; then
+        # MSYS `test -e arai` also finds arai.exe. Enumerate actual names to
+        # avoid backing up the new executable again on every reinstall.
+        for INSTALLED_FILE in "${INSTALL_DIR}"/arai*; do
+            if [ "${INSTALLED_FILE##*/}" = "arai" ]; then
+                LEGACY_ARAI="$INSTALLED_FILE"
+            fi
+        done
+    fi
+    if [ -n "$LEGACY_ARAI" ]; then
+        if [ -d "$LEGACY_ARAI" ]; then
+            echo "Error: $LEGACY_ARAI is a directory; refusing to move it."
             exit 1
         fi
         PREVIOUS_DIR=$(mktemp -d "${INSTALL_DIR}/.arai-previous.XXXXXX")
-        mv "${INSTALL_DIR}/arai" "${PREVIOUS_DIR}/arai"
+        mv "$LEGACY_ARAI" "${PREVIOUS_DIR}/arai"
         echo "  Previous extensionless arai retained at ${PREVIOUS_DIR}/arai"
     fi
     mv "$TMPFILE" "${INSTALL_DIR}/${BINARY_NAME}"

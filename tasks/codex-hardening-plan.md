@@ -98,7 +98,7 @@ distribution channels independent and do not request that credential again.
 - [x] Keep a stable Node launcher and separate native binary; verify actual npm-created shims on Windows and Unix, argument/exit propagation and missing-binary guidance.
 - [x] Align updater and shell-installer Windows filenames with published .exe assets; reject unshipped Windows ARM64 explicitly.
 - [x] Verify updater downloads against the release checksum before replacing the installed binary; fail HTTP errors and preserve the old binary on verification failures.
-- [ ] Add installer checks to Windows/Linux CI, validate focused regressions and prepare a small follow-up PR without rewriting the published v1.1.2 tag.
+- [x] Add installer checks to Windows/Linux CI, validate focused regressions and prepare a small follow-up PR without rewriting the published v1.1.2 tag.
 - [x] Verify v1.1.2 GitHub assets/checksums, native launches and Homebrew formula; record npm publishing as deferred by the user.
 
 Release validation: all five lean and three full binary digests match the
@@ -110,3 +110,12 @@ asset checksums. GitHub Packages and ghcr publishing succeeded; npm alone
 failed authentication and remains intentionally deferred. Optional full Intel
 macOS lacks upstream ONNX prebuilt binaries; Linux ARM64 lacks cross OpenSSL.
 Those variants are omitted rather than mislabeled.
+
+Follow-up PR #182 contains the installer and updater fixes. Six updater checks
+pass on Windows and Linux; npm's actual generated shims pass six Windows tests
+with two Unix-only skips and eight Linux tests. The shell installer passes ten
+platform/variant fixtures plus Windows legacy migration and reinstall under
+both native Git Bash and Linux. CI gates publishing on both installer jobs.
+The published Windows binary also passes synthetic Codex Bash/apply_patch
+deny/allow checks using the canonical host envelope; this does not claim host
+trust activation or execute any synthetic command.
