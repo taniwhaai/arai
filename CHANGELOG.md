@@ -39,8 +39,9 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
-- *(grok)* Re-verified host PreToolUse deny on Grok Build **1.0.0** headless;
-  evidence in `docs/upstream/grok-hooks-reverification-1.0.0.md`
+- *(grok)* Re-verified host PreToolUse deny on Grok Build **1.0.0** headless
+  and **ACP stdio** (`grok agent stdio`); close-out 2026-08-13. Evidence in
+  `docs/upstream/grok-hooks-reverification-1.0.0.md`
   ([#173](https://github.com/taniwhaai/arai/issues/173))
 - *(grok)* User-facing copy says **Grok Build** (not "Grok TUI" / supergrok);
   README documents that under Grok Build, block is load-bearing and warn/inform
