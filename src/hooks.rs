@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::intent::Severity;
+use crate::platforms::Platform;
 use crate::store::{Guardrail, Store};
 use crate::{audit, compliance, config, guardrails, prompt_collector, session, store, style};
 use serde_json::Value;
@@ -53,7 +54,20 @@ fn is_disabled_via_env() -> bool {
 enum Host {
     Claude,
     Grok,
+    Codex,
+    Cursor,
     Unknown,
+}
+
+impl From<Platform> for Host {
+    fn from(platform: Platform) -> Self {
+        match platform {
+            Platform::Claude => Self::Claude,
+            Platform::Grok => Self::Grok,
+            Platform::Codex => Self::Codex,
+            Platform::Cursor => Self::Cursor,
+        }
+    }
 }
 
 fn detect_host(hook: &Value) -> Host {
@@ -538,14 +552,14 @@ fn observed_terms(raw_tool_name: &str, tool_input: &Value) -> Result<Vec<String>
 }
 
 /// Pure truth table: map (host, event, deny_outcome) → desired process exit
-/// code.  Returns 2 iff all three conditions are met: the invoking host is
-/// Grok TUI, the event is PreToolUse, and the match pipeline produced a
+/// code. Returns 2 iff all three conditions are met: the invoking host is
+/// Grok or Cursor, the event is PreToolUse, and the match pipeline produced a
 /// Block-severity deny.  All other combinations → 0.
 ///
 /// This function has no side effects, performs no I/O, and never calls
 /// `process::exit`.  The sole caller, `handle_stdin`, owns process-exit.
 fn desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32 {
-    if host == Host::Grok && event == "PreToolUse" && deny_outcome {
+    if matches!(host, Host::Grok | Host::Cursor) && event == "PreToolUse" && deny_outcome {
         2
     } else {
         0
@@ -559,71 +573,124 @@ fn desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32 {
 /// code.  This is what `arai guardrails --match-stdin` (the registered hook
 /// command) calls.
 pub fn handle_stdin() -> Result<(), String> {
-    // Default to PreToolUse so a bad payload (oversize / non-UTF8 / non-JSON)
-    // — which we can't parse to know the real event — is treated as a
-    // PreToolUse failure and gets the safe-by-default deny response.
-    let mut event_hint = String::from("PreToolUse");
+    handle_stdin_for_platform(None, None)
+}
 
-    let exit_code = match handle_stdin_impl(&mut event_hint) {
-        Ok(code) => code,
-        Err(e) => {
-            // Diagnostics on stderr.
-            eprintln!("arai hook error: {e}");
-            // Fail-closed on PreToolUse: emit a deny JSON to stdout so the
-            // host blocks the tool call.  Without this, an attacker who can
-            // induce a hook error (oversize input, malformed JSON, DB lock)
-            // would slip past every Block-severity rule.  PostToolUse and
-            // UserPromptSubmit tolerate empty stdout — those events don't have
-            // a permissionDecision surface and the tool already ran (or is
-            // about to be summarized).
-            //
-            // Host detection on the error path: since the payload may be
-            // unparsed, call detect_host with Value::Null (env-var-only
-            // detection, which is all that matters on the error path).
-            if event_hint == "PreToolUse" {
-                let host = detect_host(&Value::Null);
-                match host {
-                    Host::Grok => {
-                        let response = emit_grok_decision(
-                            false,
-                            Some("Arai: an internal error occurred; blocking this action."),
-                            "",
-                        );
-                        println!("{}", serde_json::to_string(&response).unwrap_or_default());
-                    }
-                    _ => {
-                        let response = serde_json::json!({
-                            "hookSpecificOutput": {
-                                "hookEventName": "PreToolUse",
-                                "permissionDecision": "deny",
-                                "permissionDecisionReason":
-                                    "Arai: an internal error occurred; blocking this action.",
-                            }
-                        });
-                        println!("{}", serde_json::to_string(&response).unwrap_or_default());
-                    }
-                }
-                // Grok PreToolUse error: fail-closed with exit 2.
-                // Claude/Unknown: always exit 0 (Claude treats non-zero as
-                // "hook broken", defeating the deny above).
-                desired_exit_code(host, "PreToolUse", true)
+/// CLI transport selection. The supported embedding matcher remains
+/// [`match_hook`]; adapters only normalize input and encode host responses.
+#[doc(hidden)]
+pub fn handle_stdin_for_platform(
+    platform: Option<Platform>,
+    expected_event: Option<&str>,
+) -> Result<(), String> {
+    let mut host = platform
+        .map(Host::from)
+        .unwrap_or_else(|| detect_host(&Value::Null));
+    // A registration pins the event even when input cannot be parsed. Unpinned
+    // failures always start at PreToolUse, preserving the legacy fail-closed gate.
+    let mut event_hint = expected_event
+        .and_then(|event| {
+            if host == Host::Cursor {
+                crate::cursor::event(event)
             } else {
-                0
+                known_hook_event(event)
+            }
+        })
+        .unwrap_or("PreToolUse")
+        .to_string();
+    let output = match handle_stdin_impl(&mut event_hint, &mut host, platform, expected_event) {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("arai hook error: {error}");
+            if event_hint == "PreToolUse" {
+                let reason = "Arai: an internal error occurred; blocking this action.";
+                let response = match host {
+                    Host::Cursor => crate::cursor::response("PreToolUse", true, Some(reason), ""),
+                    Host::Grok => emit_grok_decision(false, Some(reason), ""),
+                    _ => emit_claude_decision(false, Some(reason), ""),
+                };
+                HookOutput::response(response, desired_exit_code(host, "PreToolUse", true))
+            } else {
+                HookOutput::empty(host, &event_hint)
             }
         }
     };
-
-    // Flush stdout so every byte is visible to the host before we exit.
+    if let Some(response) = output.response {
+        println!(
+            "{}",
+            serde_json::to_string(&response).map_err(|e| e.to_string())?
+        );
+    }
     use std::io::Write;
-    let _ = std::io::stdout().flush();
-
-    if exit_code == 2 {
+    std::io::stdout()
+        .flush()
+        .map_err(|e| format!("Could not flush hook response: {e}"))?;
+    if output.exit_code == 2 {
         std::process::exit(2);
     }
     Ok(())
 }
 
-fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
+/// A single stdout response per invocation, including fast paths. Cursor's
+/// failClosed contract rejects empty output even for an ordinary allow.
+struct HookOutput {
+    response: Option<Value>,
+    exit_code: i32,
+}
+
+/// Fold adapter actions through the one supported matcher. Do not truncate
+/// again: a lower-scored block on one file/action must survive another's warn.
+fn match_actions(actions: &[Value], cfg: &Config, db: &Store) -> Result<HookMatch, String> {
+    let mut actions = actions.iter();
+    let first = actions.next().ok_or("Adapter returned no actions")?;
+    let mut result = match_hook(first, cfg, db)?;
+    for action in actions {
+        let next = match_hook(action, cfg, db)?;
+        result.skipped &= next.skipped;
+        result.terms.extend(next.terms);
+        for (guard, score) in next.matched {
+            if let Some((_, previous)) = result
+                .matched
+                .iter_mut()
+                .find(|(old, _)| old.triple_id == guard.triple_id)
+            {
+                *previous = (*previous).max(score);
+            } else {
+                result.matched.push((guard, score));
+            }
+        }
+    }
+    result.terms.sort();
+    result.terms.dedup();
+    result
+        .matched
+        .sort_by_key(|entry| std::cmp::Reverse(entry.1));
+    Ok(result)
+}
+
+impl HookOutput {
+    fn empty(host: Host, event: &str) -> Self {
+        Self {
+            response: (host == Host::Cursor)
+                .then(|| crate::cursor::response(event, false, None, "")),
+            exit_code: 0,
+        }
+    }
+
+    fn response(response: Value, exit_code: i32) -> Self {
+        Self {
+            response: Some(response),
+            exit_code,
+        }
+    }
+}
+
+fn handle_stdin_impl(
+    event_hint: &mut String,
+    host_hint: &mut Host,
+    platform: Option<Platform>,
+    expected_event: Option<&str>,
+) -> Result<HookOutput, String> {
     let start = std::time::Instant::now();
     // Read up to MAX_HOOK_INPUT_BYTES + 1 so we can distinguish "natural EOF"
     // from "hit the cap mid-stream".  Reject overruns rather than silently
@@ -644,13 +711,35 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let input =
         String::from_utf8(buf).map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
 
-    let hook: Value =
+    let raw_hook: Value =
         serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
-    validate_hook_input(&hook)?;
+    let host = platform
+        .map(Host::from)
+        .unwrap_or_else(|| detect_host(&raw_hook));
+    *host_hint = host;
+    let actions = if host == Host::Cursor {
+        crate::cursor::normalize(&raw_hook, expected_event)?
+    } else {
+        if let Some(expected) = expected_event {
+            let pinned = known_hook_event(expected).ok_or("Unknown expected hook event")?;
+            let supplied = hook_field_str(&raw_hook, "hook_event_name", "hookEventName")
+                .and_then(known_hook_event);
+            if supplied != Some(pinned) {
+                return Err("Hook event did not match its registration".into());
+            }
+        }
+        vec![raw_hook]
+    };
+    // Adapters may expand one native operation into several conservative
+    // canonical actions. Validate every action before any side effect.
+    for action in &actions {
+        validate_hook_input(action)?;
+    }
+    let hook = actions.first().ok_or("Adapter returned no actions")?;
 
-    let raw_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
+    let raw_tool_name = hook_field_str(hook, "tool_name", "toolName").unwrap_or("");
     let tool_name = guardrails::normalize_tool_name(raw_tool_name);
-    let raw_event = hook_field(&hook, "hook_event_name", "hookEventName")
+    let raw_event = hook_field(hook, "hook_event_name", "hookEventName")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
     // Tell the outer wrapper what event we're processing so a later error
@@ -672,7 +761,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // Sanitize session_id (see `session::valid_session_id`).  Hostile
     // payloads with `..` or `/` bytes in the id no longer reach the
     // session-file writer.
-    let session_id = hook_field_str(&hook, "session_id", "sessionId")
+    let session_id = hook_field_str(hook, "session_id", "sessionId")
         .filter(|s| session::valid_session_id(s))
         .unwrap_or("");
 
@@ -680,8 +769,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // truthy value we skip rule matching entirely but still log a single
     // `decision="bypassed"` audit entry per invocation so `arai stats`
     // continues to see when Arai was off vs simply quiet.  No telemetry
-    // and no stdout response — the model behaves exactly as if no hook
-    // were installed.
+    // and no advice. Cursor still requires an explicit allow response.
     if is_disabled_via_env() {
         match config::Config::load() {
             Ok(cfg) => audit::record_bypass(&cfg, event, &tool_name, session_id),
@@ -693,12 +781,12 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                 eprintln!("arai: ARAI_DISABLED set but could not load config to record bypass: {e}")
             }
         }
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // Fast exit mirrors match_hook — avoids loading config/db for skipped tools
     if !tool_name.is_empty() && guardrails::should_skip_tool(&tool_name) {
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // FileChanged / InstructionsLoaded: observability events Claude Code
@@ -714,7 +802,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     if event == "FileChanged" || event == "InstructionsLoaded" {
         let file_path = hook.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
         if !is_instruction_file(file_path) {
-            return Ok(0);
+            return Ok(HookOutput::empty(host, event_hint));
         }
         // Load config best-effort — if it fails (uninitialised project)
         // we still want to silently no-op rather than break the hook.
@@ -731,7 +819,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
             );
             spawn_background_scan(None);
         }
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // CwdChanged: Claude Code's working directory moved (e.g. the model
@@ -747,7 +835,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     if event == "CwdChanged" {
         let new_cwd = hook.get("new_cwd").and_then(|v| v.as_str()).unwrap_or("");
         if new_cwd.is_empty() {
-            return Ok(0);
+            return Ok(HookOutput::empty(host, event_hint));
         }
         let old_cwd = hook.get("old_cwd").and_then(|v| v.as_str()).unwrap_or("");
         if let Ok(cfg) = config::Config::load() {
@@ -772,7 +860,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                 spawn_background_scan(Some(new_cwd));
             }
         }
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // PermissionDenied: Claude Code's auto-mode classifier denied a
@@ -790,19 +878,19 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     if event == "PermissionDenied" {
         let cfg = match config::Config::load() {
             Ok(c) => c,
-            Err(_) => return Ok(0),
+            Err(_) => return Ok(HookOutput::empty(host, event_hint)),
         };
         let db_path = cfg.db_path();
         // Synthesize a PreToolUse-shaped payload from the denied call so
         // we run through the exact same match pipeline as a normal
         // pre-call gate.  Lets us reuse extract_terms, code-graph
         // enrichment, severity-from-rule logic without forking.
-        let raw_denied_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
+        let raw_denied_tool_name = hook_field_str(hook, "tool_name", "toolName").unwrap_or("");
         let denied_tool_name = guardrails::normalize_tool_name(raw_denied_tool_name);
         let synthesized = serde_json::json!({
             "hook_event_name": "PreToolUse",
             "tool_name": denied_tool_name,
-            "tool_input": hook_field(&hook, "tool_input", "toolInput")
+            "tool_input": hook_field(hook, "tool_input", "toolInput")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new())),
             "session_id": session_id,
@@ -850,12 +938,9 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                     "retry": true,
                 }
             });
-            println!(
-                "{}",
-                serde_json::to_string(&response).map_err(|e| e.to_string())?
-            );
+            return Ok(HookOutput::response(response, 0));
         }
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // PostToolBatch: fires once per batch of parallel tool calls (e.g.
@@ -928,7 +1013,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                 }),
             );
         }
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // PostToolUse still has a side effect: it records the call into session
@@ -936,11 +1021,16 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // running through the same path don't corrupt real sessions.
     if event == "PostToolUse" && !session_id.is_empty() {
         if let Ok(cfg) = config::Config::load() {
-            let tool_input = hook_field(&hook, "tool_input", "toolInput")
+            let tool_input = hook_field(hook, "tool_input", "toolInput")
                 .cloned()
                 .unwrap_or(Value::Object(serde_json::Map::new()));
-            let mut terms = observed_terms(raw_tool_name, &tool_input)?;
-            sniff_hook_response(&hook, &mut terms);
+            let mut terms = Vec::new();
+            for action in &actions {
+                let raw_tool = hook_field_str(action, "tool_name", "toolName").unwrap_or("");
+                let input = hook_field(action, "tool_input", "toolInput").unwrap_or(&Value::Null);
+                terms.extend(observed_terms(raw_tool, input)?);
+            }
+            sniff_hook_response(hook, &mut terms);
             terms.sort();
             terms.dedup();
             session::record_tool_call(&cfg.arai_base_dir, session_id, &tool_name, &terms);
@@ -950,7 +1040,12 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
             // Compliance audit entry per rule.  Done here (not in match_hook)
             // because scenario replays should not pollute the audit log.
             let preview = summarize_tool_input(&tool_name, &tool_input);
-            compliance::record_post_compliance(&cfg, session_id, &tool_name, &terms, &preview);
+            // Cursor cannot inject pre-allow advice. The legacy correlator is
+            // session/tool based, not call-ID based, so it cannot truthfully
+            // attribute compliance to Cursor's concurrent native invocations.
+            if host != Host::Cursor {
+                compliance::record_post_compliance(&cfg, session_id, &tool_name, &terms, &preview);
+            }
         }
     }
 
@@ -991,13 +1086,13 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
 
     let db_path = cfg.db_path();
     if !db_path.exists() {
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
     let db = store::Store::open(&db_path)?;
 
-    let result = match_hook(&hook, &cfg, &db)?;
+    let result = match_actions(&actions, &cfg, &db)?;
     if result.skipped {
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // UserPromptSubmit summary — domain-rules context injected into the response.
@@ -1005,7 +1100,7 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // no collector work to do here.
     if result.is_prompt_summary {
         if result.domain_rules.is_empty() {
-            return Ok(0);
+            return Ok(HookOutput::empty(host, event_hint));
         }
         let mut subjects: Vec<String> = result
             .domain_rules
@@ -1025,15 +1120,11 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
                 "additionalContext": summary
             }
         });
-        println!(
-            "{}",
-            serde_json::to_string(&response).map_err(|e| e.to_string())?
-        );
-        return Ok(0);
+        return Ok(HookOutput::response(response, 0));
     }
 
     if result.matched.is_empty() {
-        return Ok(0);
+        return Ok(HookOutput::empty(host, event_hint));
     }
 
     // Telemetry — aggregate counters only
@@ -1062,14 +1153,16 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let is_pretooluse = result.event == "PreToolUse";
     let deny_enabled = deny_mode_enabled();
     let blocking = is_pretooluse && top_severity == Severity::Block && deny_enabled;
+    let delivers_context = host != Host::Cursor || !is_pretooluse || blocking;
 
     // Local audit log — records every firing for `arai audit` / `arai stats`
-    let tool_input = hook_field(&hook, "tool_input", "toolInput")
+    let tool_input = hook_field(hook, "tool_input", "toolInput")
         .cloned()
         .unwrap_or(Value::Object(serde_json::Map::new()));
     let prompt_preview = summarize_tool_input(&result.tool_name, &tool_input);
     let decision = match (result.event.as_str(), blocking) {
         ("PreToolUse", true) => "deny",
+        ("PreToolUse", false) if host == Host::Cursor => "allow",
         ("PreToolUse", false) => "inject",
         ("PostToolUse", _) => "review",
         (other, _) => other,
@@ -1080,8 +1173,11 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     // and avoids attention dilution from repeat re-reads.  Empty session_id
     // means we can't track, so all matches behave as first-time injections.
     let triple_ids: Vec<i64> = result.matched.iter().map(|(g, _)| g.triple_id).collect();
-    let (unseen, seen) =
-        session::partition_seen_rules(&cfg.arai_base_dir, &result.session_id, &triple_ids);
+    let (unseen, seen) = if delivers_context {
+        session::partition_seen_rules(&cfg.arai_base_dir, &result.session_id, &triple_ids)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let seen_set: std::collections::HashSet<i64> = seen.iter().copied().collect();
 
     audit::record_firing(
@@ -1104,11 +1200,6 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     if !unseen.is_empty() {
         session::mark_rules_seen(&cfg.arai_base_dir, &result.session_id, &unseen);
     }
-    // Detect the calling host so we can emit the correct response format.
-    // Grok TUI expects a flat {"decision", "reason"} shape; Claude Code expects
-    // the hookSpecificOutput + permissionDecision shape.
-    let host = detect_host(&hook); // `hook` is in scope from handle_stdin_impl
-
     // Gateway glyphs on the hook path: colorize=false ALWAYS (no ANSI colour
     // ever emitted on the hook path — carve-out #1).  unicode derived from
     // locale/env in the usual way; the glyph characters themselves are safe
@@ -1127,37 +1218,46 @@ fn handle_stdin_impl(event_hint: &mut String) -> Result<i32, String> {
     let ctx_glyph = style::outcome_glyph(ctx_outcome, hook_unicode, false);
     let prefixed_context = format!("{ctx_glyph} {context}");
 
-    let response = match (result.event.as_str(), blocking) {
-        ("PreToolUse", true) => {
-            let raw_reason = deny_reason(&result.matched);
-            let block_glyph = style::outcome_glyph(style::Outcome::Block, hook_unicode, false);
-            let reason = format!("{block_glyph} {raw_reason}");
-            match host {
-                Host::Grok => emit_grok_decision(false, Some(&reason), &prefixed_context),
-                _ => emit_claude_decision(false, Some(&reason), &prefixed_context),
+    let response = if host == Host::Cursor {
+        let reason = blocking.then(|| deny_reason(&result.matched));
+        crate::cursor::response(
+            &result.event,
+            blocking,
+            reason.as_deref(),
+            &prefixed_context,
+        )
+    } else {
+        match (result.event.as_str(), blocking) {
+            ("PreToolUse", true) => {
+                let raw_reason = deny_reason(&result.matched);
+                let block_glyph = style::outcome_glyph(style::Outcome::Block, hook_unicode, false);
+                let reason = format!("{block_glyph} {raw_reason}");
+                match host {
+                    Host::Grok => emit_grok_decision(false, Some(&reason), &prefixed_context),
+                    _ => emit_claude_decision(false, Some(&reason), &prefixed_context),
+                }
             }
-        }
-        ("PreToolUse", false) => match host {
-            Host::Grok => emit_grok_decision(true, None, &prefixed_context),
-            _ => emit_claude_decision(true, None, &prefixed_context),
-        },
-        ("PostToolUse", _) => serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": format!("[Post-action] {prefixed_context}")
+            ("PreToolUse", false) => match host {
+                Host::Grok => emit_grok_decision(true, None, &prefixed_context),
+                _ => emit_claude_decision(true, None, &prefixed_context),
+            },
+            ("PostToolUse", _) => serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": format!("[Post-action] {prefixed_context}")
+                }
+            }),
+            _ => {
+                // Default / unknown events fall back to Claude shape for safety
+                emit_claude_decision(true, None, &prefixed_context)
             }
-        }),
-        _ => {
-            // Default / unknown events fall back to Claude shape for safety
-            emit_claude_decision(true, None, &prefixed_context)
         }
     };
 
-    println!(
-        "{}",
-        serde_json::to_string(&response).map_err(|e| e.to_string())?
-    );
-    Ok(desired_exit_code(host, &result.event, blocking))
+    Ok(HookOutput::response(
+        response,
+        desired_exit_code(host, &result.event, blocking),
+    ))
 }
 
 /// Build a short deny reason Claude Code surfaces to the user.  Prefers the

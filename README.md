@@ -16,7 +16,10 @@ arai init
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
 
-Codex support and the hardening described below require **v1.1.2 or newer**. Until those release assets are available, build this revision with `cargo install --path . --locked`, then run `arai init` in your project. The v1.1.1 binary does not include them.
+Codex support and the hardening described below require **v1.1.2 or newer**.
+The opt-in **Cursor native pilot is Unreleased**: build this revision and use
+`arai init --platform cursor`. See [Cursor coverage and verification limits](docs/cursor.md)
+and [platform selection and adapter design](docs/platform-adapters.md).
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
 
@@ -56,7 +59,9 @@ Assistant: "I should use alembic revision --autogenerate instead..."
 
 Rules only fire when relevant. No noise on `ls`. No repeating principles already in your instruction files.
 
-Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
+Firings are written to a local audit log. Existing Claude/Grok/Codex integrations
+also estimate compliance by correlating recent pre/post calls by session and
+tool. Cursor's pilot records observations without claiming that attribution.
 
 
 ## How It Works
@@ -79,7 +84,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | `AGENTS.md` / `Agents.md` | Codex (native) | Hooks (block + advise; requires host trust) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
 | `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
-| `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
+| `.cursorrules` / `.cursor/rules` | Cursor | Opt-in native hook pilot; [coverage limits](docs/cursor.md) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
 
@@ -107,7 +112,10 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
   `apply_patch` is checked per file, including additions and move destinations.
   Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
-- Arai's integrations for Cursor, Windsurf, Cline and other MCP clients provide **agent-facing tools**
+- Cursor's opt-in native pilot checks pre/post tool calls. Its allowed calls
+  and prompt hooks do not inject guidance; actual host verification remains
+  pending. See [setup and limits](docs/cursor.md).
+- Arai's MCP integrations for Cursor, Windsurf, Cline and other clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
@@ -116,7 +124,7 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   current hook capabilities of those platforms.
 
 Arai hooks several more events alongside the standard tool-call events
-**when the host emits them** (not registered on Grok Build or Codex)
+**when the host emits them** (not registered on Grok Build, Codex or Cursor)
 so the rule set stays accurate to the live working tree:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file

@@ -1,9 +1,19 @@
-use crate::{code_scanner, config, discovery, store};
+use crate::{code_scanner, config, discovery, platforms::Platform, store};
 use base64::Engine;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
+    run_for_platforms(pre_commit, force, &[])
+}
+
+/// Register selected hosts. An empty request reuses the saved selection, or
+/// the historical three hosts for projects that have never chosen platforms.
+pub fn run_for_platforms(
+    pre_commit: bool,
+    force: bool,
+    platforms: &[Platform],
+) -> Result<(), String> {
     let cfg = config::Config::load()?;
 
     println!("  Scanning for instruction files...");
@@ -31,6 +41,11 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
 
     println!("\n  Extracting rules...");
     let db = store::Store::open(&cfg.db_path())?;
+    let platforms = if platforms.is_empty() {
+        selected_platforms(&db)?
+    } else {
+        unique_platforms(platforms)
+    };
 
     let total_rules = sync_discovered_rules(&db, &files)?;
     println!("    \u{2713} {total_rules} rules extracted");
@@ -68,23 +83,8 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     );
 
     println!("\n  Setting up hooks...");
-    inject_hooks(&cfg)?;
-    println!("    \u{2713} .claude/settings.json updated");
-    inject_codex_hooks(&cfg)?;
-    println!("    \u{2713} .codex/hooks.json updated (native Codex)");
-    print_codex_trust_guidance();
-
-    // Also register for native Grok Build support (if possible).
-    if let Err(e) = inject_grok_hooks(&cfg) {
-        // Non-fatal for now — many users will still get value via the
-        // .claude/settings.json compatibility layer that Grok loads.
-        eprintln!("    \u{26a0} Grok native hook registration skipped: {e}");
-    } else {
-        println!("    \u{2713} .grok/hooks/arai.json updated (native Grok Build)");
-        println!("      Grok Build gates project hooks behind trust: run /hooks-trust in the");
-        println!("      Grok session (or launch with --trust) the first time, or Arai's hooks");
-        println!("      stay inactive on the native path.");
-    }
+    register_platforms(&cfg, &platforms)?;
+    save_platforms(&db, &platforms)?;
 
     // Track init event + flush queued telemetry
     let enrichment = if model_dir.join("model.onnx").exists() {
@@ -107,7 +107,20 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         println!("    \u{2713} Git pre-commit hook → arai check-diff --cached");
     }
 
-    println!("\n  Arai is registered for Claude Code, Codex, and Grok Build (PreToolUse hooks).");
+    if platforms.is_empty() {
+        println!(
+            "\n  No hook platforms selected. Use `arai init --platform <platform>` to enable one."
+        );
+    } else {
+        println!(
+            "\n  Arai hook registrations refreshed for: {}.",
+            platforms
+                .iter()
+                .map(|platform| platform.id())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     println!("  Re-run init after moving the Arai binary to refresh registered paths.");
     Ok(())
 }
@@ -163,25 +176,46 @@ pub fn sync_discovered_rules_with_adoption(
 
 /// Remove Arai's project registrations, preserving other handlers and settings.
 pub fn deinit() -> Result<(), String> {
+    deinit_for_platforms(&[])
+}
+
+/// Remove selected hosts only. An empty request removes all project hook
+/// registrations and Arai's pre-commit hook, and disables automatic re-adding.
+pub fn deinit_for_platforms(platforms: &[Platform]) -> Result<(), String> {
     let cfg = config::Config::load()?;
+    let db = store::Store::open(&cfg.db_path())?;
+    let remove_all = platforms.is_empty();
+    let platforms = if remove_all {
+        Platform::ALL.to_vec()
+    } else {
+        unique_platforms(platforms)
+    };
+    let mut remaining = if remove_all {
+        Vec::new()
+    } else {
+        selected_platforms(&db)?
+    };
     let mut errors = Vec::new();
-    for (path, delete_empty) in [
-        (cfg.claude_settings_path(), false),
-        (cfg.codex_hooks_path(), false),
-        (cfg.grok_hooks_dir().join("arai.json"), true),
-    ] {
-        match remove_hooks_file(&path, delete_empty) {
-            Ok(removed) if removed > 0 => {
-                println!("  Removed {removed} Arai hook(s) from {}", path.display());
+    for platform in &platforms {
+        let path = hooks_path(&cfg, *platform);
+        match remove_hooks_file(&path, *platform) {
+            Ok(removed) => {
+                remaining.retain(|selected| selected != platform);
+                if removed > 0 {
+                    println!("  Removed {removed} Arai hook(s) from {}", path.display());
+                }
             }
-            Ok(_) => {}
             Err(e) => errors.push(e),
         }
+    }
+    // Persist successful removals even if an unrelated config needs repair.
+    if let Err(error) = save_platforms(&db, &remaining) {
+        errors.push(error);
     }
 
     // A worktree's .git is a file. Ask Git where hooks live instead of
     // appending hooks to it; core.hooksPath can also redirect this path.
-    if cfg.project_root.join(".git").exists() {
+    if remove_all && cfg.project_root.join(".git").exists() {
         match git_pre_commit_path(&cfg) {
             Ok(path) if path.exists() => match std::fs::read_to_string(&path) {
                 Ok(body) if is_arai_pre_commit(&body) => {
@@ -201,20 +235,32 @@ pub fn deinit() -> Result<(), String> {
     if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
-    println!("  Arai's project hook registrations removed. User/global hooks are unchanged.");
+    if remove_all {
+        println!("  Arai's project hook registrations removed. User/global hooks are unchanged.");
+    } else {
+        println!("  Selected Arai project hooks removed: {}. Other platforms and pre-commit are unchanged.",
+            platforms.iter().map(|platform| platform.id()).collect::<Vec<_>>().join(", "));
+    }
     Ok(())
 }
 
-fn remove_hooks_file(path: &Path, delete_empty: bool) -> Result<usize, String> {
+fn remove_hooks_file(path: &Path, platform: Platform) -> Result<usize, String> {
     if !path.exists() {
         return Ok(0);
     }
     let mut settings = read_hooks_file(path)?;
+    validate_hooks_shape(path, &settings, platform)?;
     let mut removed = 0;
     if let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) {
-        for entries in hooks.values_mut() {
+        for (event, entries) in hooks.iter_mut() {
             if let Some(groups) = entries.as_array_mut() {
-                removed += remove_arai_handlers(groups);
+                if platform == Platform::Cursor {
+                    let before = groups.len();
+                    groups.retain(|handler| !is_cursor_handler(handler, event));
+                    removed += before - groups.len();
+                } else {
+                    removed += remove_arai_handlers(groups, platform);
+                }
             }
         }
     }
@@ -225,7 +271,7 @@ fn remove_hooks_file(path: &Path, delete_empty: bool) -> Result<usize, String> {
                     .values()
                     .all(|entries| entries.as_array().is_some_and(Vec::is_empty))
             });
-        if delete_empty && hooks_only {
+        if platform == Platform::Grok && hooks_only {
             std::fs::remove_file(path)
                 .map_err(|e| format!("Could not remove {}: {e}", path.display()))?;
         } else {
@@ -258,10 +304,6 @@ const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
     ("PermissionDenied", ""),
 ];
 
-fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(&cfg.claude_settings_path(), ARAI_HOOK_REGISTRATIONS, false)
-}
-
 // These hosts support the three events Arai handles with a verified contract.
 // Claude-specific file/reload events must not be copied into their configs.
 const NATIVE_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
@@ -270,16 +312,87 @@ const NATIVE_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
     ("UserPromptSubmit", ""),
 ];
 
-fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(
-        &cfg.grok_hooks_dir().join("arai.json"),
-        NATIVE_HOOK_REGISTRATIONS,
-        false,
-    )
+const PLATFORM_SELECTION_META: &str = "hook_platforms";
+
+fn hooks_path(cfg: &config::Config, platform: Platform) -> PathBuf {
+    match platform {
+        Platform::Claude => cfg.claude_settings_path(),
+        Platform::Grok => cfg.grok_hooks_dir().join("arai.json"),
+        Platform::Codex => cfg.codex_hooks_path(),
+        Platform::Cursor => cfg.project_root.join(platform.config_path()),
+    }
 }
 
-fn inject_codex_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(&cfg.codex_hooks_path(), NATIVE_HOOK_REGISTRATIONS, true)
+fn unique_platforms(platforms: &[Platform]) -> Vec<Platform> {
+    Platform::ALL
+        .into_iter()
+        .filter(|platform| platforms.contains(platform))
+        .collect()
+}
+
+fn selected_platforms(db: &store::Store) -> Result<Vec<Platform>, String> {
+    let Some(value) = db
+        .get_meta(PLATFORM_SELECTION_META)
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(Platform::LEGACY_DEFAULTS.to_vec());
+    };
+    let ids: Vec<String> = serde_json::from_str(&value)
+        .map_err(|e| format!("Invalid saved hook platform selection: {e}"))?;
+    let mut platforms = Vec::new();
+    for id in ids {
+        let platform = Platform::ALL
+            .into_iter()
+            .find(|platform| platform.id() == id)
+            .ok_or_else(|| format!("Unknown saved hook platform: {id}"))?;
+        platforms.push(platform);
+    }
+    Ok(unique_platforms(&platforms))
+}
+
+fn save_platforms(db: &store::Store, platforms: &[Platform]) -> Result<(), String> {
+    let ids: Vec<_> = platforms.iter().map(|platform| platform.id()).collect();
+    let value = serde_json::to_string(&ids).map_err(|e| e.to_string())?;
+    db.set_meta(PLATFORM_SELECTION_META, &value)
+        .map_err(|e| e.to_string())
+}
+
+fn register_platforms(cfg: &config::Config, platforms: &[Platform]) -> Result<(), String> {
+    // Prepare every selected document before changing any of them. A malformed
+    // file must not leave another selected host partially registered.
+    let mut prepared = Vec::new();
+    for platform in platforms {
+        let path = hooks_path(cfg, *platform);
+        let settings = if *platform == Platform::Cursor {
+            prepare_cursor_hooks(&path)?
+        } else {
+            prepare_hooks_file(&path, *platform)?
+        };
+        prepared.push((platform, path, settings));
+    }
+    for (platform, path, settings) in prepared {
+        write_hooks_file(&path, &settings)?;
+        println!("    \u{2713} {} updated", platform.config_path());
+        match platform {
+            Platform::Codex => print_codex_trust_guidance(),
+            Platform::Grok => {
+                println!("      Grok Build requires project hook trust: run /hooks-trust in the");
+                println!("      Grok session (or launch with --trust) before using native hooks.");
+            }
+            Platform::Cursor => {
+                println!("      Cursor requires a trusted workspace. Verify both events in its Hooks output.");
+                println!(
+                    "      If third-party Claude hook imports are enabled, those hooks also run."
+                );
+                println!(
+                    "      Choose one Arai integration in Cursor to avoid duplicate enforcement."
+                );
+                println!("      Arai has not changed third-party imports or user/global hooks.");
+            }
+            Platform::Claude => {}
+        }
+    }
+    Ok(())
 }
 
 fn print_codex_trust_guidance() {
@@ -313,19 +426,21 @@ fn write_hooks_file(path: &Path, settings: &Value) -> Result<(), String> {
     std::fs::write(path, output).map_err(|e| format!("Could not write {}: {e}", path.display()))
 }
 
-fn inject_hooks_file(
-    path: &Path,
-    registrations: &[(&str, &str)],
-    codex: bool,
-) -> Result<(), String> {
+fn prepare_hooks_file(path: &Path, platform: Platform) -> Result<Value, String> {
     let mut settings = read_hooks_file(path)?;
+    validate_hooks_shape(path, &settings, platform)?;
+    let registrations = if platform == Platform::Claude {
+        ARAI_HOOK_REGISTRATIONS
+    } else {
+        NATIVE_HOOK_REGISTRATIONS
+    };
     let hooks = settings
         .as_object_mut()
         .ok_or("Hook config is not an object")?
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
     let hooks_obj = hooks.as_object_mut().ok_or("hooks is not an object")?;
-    let handler = arai_hook_handler(codex)?;
+    let handler = arai_hook_handler(platform == Platform::Codex)?;
     for (event, matcher) in registrations {
         let groups = hooks_obj
             .entry(event.to_string())
@@ -334,13 +449,99 @@ fn inject_hooks_file(
             .ok_or(format!("{event} is not an array"))?;
         // Refresh the binary path and matcher on every init. Remove only our
         // handlers, not entire groups: a group may also contain user hooks.
-        remove_arai_handlers(groups);
+        remove_arai_handlers(groups, platform);
         groups.push(serde_json::json!({
             "matcher": matcher,
             "hooks": [handler.clone()]
         }));
     }
-    write_hooks_file(path, &settings)
+    Ok(settings)
+}
+
+fn validate_hooks_shape(path: &Path, settings: &Value, platform: Platform) -> Result<(), String> {
+    if platform == Platform::Cursor
+        && path.exists()
+        && settings.get("version").and_then(Value::as_u64) != Some(1)
+    {
+        return Err(format!(
+            "{} must declare Cursor hooks version 1",
+            path.display()
+        ));
+    }
+    if let Some(hooks) = settings.get("hooks") {
+        let hooks = hooks
+            .as_object()
+            .ok_or_else(|| format!("{}: hooks is not an object", path.display()))?;
+        for (event, entries) in hooks {
+            let entries = entries
+                .as_array()
+                .ok_or_else(|| format!("{}: {event} is not an array", path.display()))?;
+            for entry in entries {
+                if !entry.is_object() {
+                    return Err(format!(
+                        "{}: {event} contains a non-object hook",
+                        path.display()
+                    ));
+                }
+                if platform == Platform::Cursor {
+                    if entry.get("hooks").is_some() {
+                        return Err(format!(
+                            "{}: {event} requires flat Cursor hook definitions",
+                            path.display()
+                        ));
+                    }
+                } else if entry.get("hooks").is_some_and(|hooks| !hooks.is_array()) {
+                    return Err(format!(
+                        "{}: {event} hook group is not an array",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cursor_arguments(event: &str) -> String {
+    format!("guardrails --match-stdin --platform cursor --hook-event {event}")
+}
+
+fn prepare_cursor_hooks(path: &Path) -> Result<Value, String> {
+    let mut settings = read_hooks_file(path)?;
+    validate_hooks_shape(path, &settings, Platform::Cursor)?;
+    settings["version"] = Value::from(1);
+    let hooks = settings
+        .as_object_mut()
+        .unwrap()
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .unwrap();
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Could not resolve current executable: {e}"))?;
+    for event in [Platform::Cursor.pre_event(), Platform::Cursor.post_event()] {
+        let arguments = cursor_arguments(event);
+        let command = if cfg!(windows) {
+            windows_command(&exe.to_string_lossy(), &arguments)
+        } else {
+            format!(
+                "'{}' {arguments}",
+                exe.to_string_lossy().replace('\'', "'\\''")
+            )
+        };
+        let handlers = hooks
+            .entry(event)
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .unwrap();
+        handlers.retain(|handler| !is_cursor_handler(handler, event));
+        let mut handler = serde_json::json!({"type":"command", "command":command, "timeout":3});
+        if event == Platform::Cursor.pre_event() {
+            handler["failClosed"] = Value::Bool(true);
+        }
+        handlers.push(handler);
+    }
+    Ok(settings)
 }
 
 fn arai_hook_handler(codex: bool) -> Result<Value, String> {
@@ -367,10 +568,14 @@ const POWERSHELL_PREFIX: &str =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ";
 
 fn codex_windows_command(path: &str) -> String {
+    windows_command(path, "guardrails --match-stdin")
+}
+
+fn windows_command(path: &str, arguments: &str) -> String {
     // Explicit interpreter and encoded literal path avoid relying on the
     // host's Windows shell or letting metacharacters become shell code.
     let script = format!(
-        "& '{}' guardrails --match-stdin; exit $LASTEXITCODE",
+        "& '{}' {arguments}; exit $LASTEXITCODE",
         path.replace('\'', "''")
     );
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -380,7 +585,12 @@ fn codex_windows_command(path: &str) -> String {
     )
 }
 
+#[cfg(test)]
 fn is_arai_windows_command(command: &str) -> bool {
+    is_windows_command(command, "guardrails --match-stdin")
+}
+
+fn is_windows_command(command: &str, arguments: &str) -> bool {
     let Some(encoded) = command.strip_prefix(POWERSHELL_PREFIX) else {
         return false;
     };
@@ -401,7 +611,7 @@ fn is_arai_windows_command(command: &str) -> bool {
     };
     let Some(path) = script
         .strip_prefix("& '")
-        .and_then(|body| body.strip_suffix("' guardrails --match-stdin; exit $LASTEXITCODE"))
+        .and_then(|body| body.strip_suffix(&format!("' {arguments}; exit $LASTEXITCODE")))
     else {
         return false;
     };
@@ -448,25 +658,61 @@ fn is_arai_command(command: &str, arguments: &str) -> bool {
     matches!(path.rsplit(['/', '\\']).next(), Some("arai" | "arai.exe"))
 }
 
-fn is_arai_handler(handler: &Value) -> bool {
-    handler.get("type").and_then(Value::as_str) == Some("command")
-        && handler
+fn is_arai_handler(handler: &Value, platform: Platform) -> bool {
+    if handler.get("type").and_then(Value::as_str) != Some("command") {
+        return false;
+    }
+    let explicit = format!("guardrails --match-stdin --platform {}", platform.id());
+    let mut arguments = vec!["guardrails --match-stdin".to_string(), explicit.clone()];
+    let registrations = if platform == Platform::Claude {
+        ARAI_HOOK_REGISTRATIONS
+    } else {
+        NATIVE_HOOK_REGISTRATIONS
+    };
+    arguments.extend(
+        registrations
+            .iter()
+            .map(|(event, _)| format!("{explicit} --hook-event {event}")),
+    );
+    arguments.iter().any(|arguments| {
+        handler
             .get("command")
             .and_then(Value::as_str)
-            .is_some_and(|command| is_arai_command(command, "guardrails --match-stdin"))
-        && handler
-            .get("commandWindows")
-            .is_none_or(|command| command.as_str().is_some_and(is_arai_windows_command))
+            .is_some_and(|command| is_arai_command(command, arguments))
+            && handler.get("commandWindows").is_none_or(|command| {
+                command
+                    .as_str()
+                    .is_some_and(|command| is_windows_command(command, arguments))
+            })
+    })
 }
 
-fn remove_arai_handlers(groups: &mut Vec<Value>) -> usize {
+fn is_cursor_handler(handler: &Value, event: &str) -> bool {
+    if ![Platform::Cursor.pre_event(), Platform::Cursor.post_event()].contains(&event)
+        || handler
+            .get("type")
+            .is_some_and(|kind| kind.as_str() != Some("command"))
+        || handler.get("commandWindows").is_some()
+    {
+        return false;
+    }
+    let arguments = cursor_arguments(event);
+    handler
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| {
+            is_arai_command(command, &arguments) || is_windows_command(command, &arguments)
+        })
+}
+
+fn remove_arai_handlers(groups: &mut Vec<Value>, platform: Platform) -> usize {
     let mut removed = 0;
     groups.retain_mut(|group| {
         let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
             return true;
         };
         let before = handlers.len();
-        handlers.retain(|handler| !is_arai_handler(handler));
+        handlers.retain(|handler| !is_arai_handler(handler, platform));
         let count = before - handlers.len();
         removed += count;
         // Preserve existing empty groups, but discard groups emptied by us.
@@ -561,13 +807,14 @@ pub fn install_pre_commit(cfg: &config::Config, force: bool) -> Result<(), Strin
     Ok(())
 }
 
-/// Ensure all supported host registrations exist for manual-only projects.
+/// Refresh only selected hosts for manual-only projects. Without a saved
+/// selection, preserve the historical Claude/Grok/Codex registration behavior.
 pub fn ensure_hooks() -> Result<(), String> {
     let cfg = config::Config::load()?;
-    inject_hooks(&cfg)?;
-    inject_grok_hooks(&cfg)?;
-    inject_codex_hooks(&cfg)?;
-    print_codex_trust_guidance();
+    let db = store::Store::open(&cfg.db_path())?;
+    let platforms = selected_platforms(&db)?;
+    register_platforms(&cfg, &platforms)?;
+    save_platforms(&db, &platforms)?;
     Ok(())
 }
 /// Display a path relative to project root when possible.

@@ -159,3 +159,50 @@ fn grok_tui_payload_does_not_crash() {
         "unexpected Grok payload output: {stdout:?}"
     );
 }
+
+/// The registered Cursor pre event remains the failure boundary even when the
+/// payload claims a post event and inherited environment identifies another host.
+#[test]
+fn cursor_registered_pre_event_cannot_be_spoofed_into_a_post_allow() {
+    let root = temp_arai_home();
+    std::fs::create_dir_all(root.join("project/.git")).unwrap();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arai"))
+        .args([
+            "guardrails",
+            "--match-stdin",
+            "--platform",
+            "cursor",
+            "--hook-event",
+            "preToolUse",
+        ])
+        .current_dir(root.join("project"))
+        .env("HOME", root.join("home"))
+        .env("USERPROFILE", root.join("home"))
+        .env("ARAI_BASE_DIR", root.join("state"))
+        .env("ARAI_TELEMETRY", "off")
+        .env("DO_NOT_TRACK", "1")
+        .env("GROK_HOOK_EVENT", "post_tool_use")
+        .env_remove("ARAI_DISABLED")
+        .env_remove("ARAI_DENY_MODE")
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"hook_event_name":"postToolUse","tool_name":"Shell","tool_input":{"command":"cargo clean"},"tool_output":"{}","conversation_id":"safety-1"}"#).unwrap();
+    let output = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["permission"], "deny");
+    assert!(response.get("hookSpecificOutput").is_none());
+    assert!(response.get("decision").is_none());
+}

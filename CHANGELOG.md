@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Opt-in native Cursor hook pilot with explicit platform/event dispatch, conservative mutation normalization, native fail-closed responses and persistent platform selection for init/add/deinit.
+- Adapter onboarding and capability documentation preserving the existing local matcher and Kete embedding APIs. Cursor live-host verification remains pending; the pilot does not claim prompt/pre-allow context injection or compliance attribution.
+
 ## [1.1.2] - 2026-09-16
 
 ### Added

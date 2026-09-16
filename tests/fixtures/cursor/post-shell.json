@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "postToolUse",
+  "conversation_id": "conversation-1",
+  "generation_id": "generation-1",
+  "tool_use_id": "tool-1",
+  "cursor_version": "fixture",
+  "workspace_roots": ["/project"],
+  "cwd": "/project",
+  "duration": 12,
+  "tool_name": "Shell",
+  "tool_input": {"command": "cargo check"},
+  "tool_output": "{\"exitCode\":0,\"stdout\":\"cargo finished\"}"
+}

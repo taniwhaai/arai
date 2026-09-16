@@ -82,6 +82,7 @@ pub mod store;
 
 // Native host payload normalization is an internal implementation detail.
 mod codex;
+mod cursor;
 mod source_scope;
 
 // CLI-support modules: exported so the `arai` binary (and integration
@@ -99,6 +100,8 @@ pub mod init;
 pub mod mcp;
 #[doc(hidden)]
 pub mod migrate;
+#[doc(hidden)]
+pub mod platforms;
 #[doc(hidden)]
 pub mod scenarios;
 #[doc(hidden)]

@@ -1,11 +1,10 @@
 # Codex integration
 
-This integration requires a source build containing the Unreleased changes.
-The public v1.1.1 release does not contain it.
+This integration is available in v1.1.2 and newer.
 
 ## Setup
 
-Build and install with `cargo install --path . --locked` from this repository.
+Install v1.1.2 or newer, or build with `cargo install --path . --locked`.
 In the project you want to protect, run `arai init`. This scans instruction
 files and merges Arai's handlers into `.codex/hooks.json`, preserving unrelated
 handlers. Re-running init refreshes old Arai executable paths. `arai deinit`
