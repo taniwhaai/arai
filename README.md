@@ -16,7 +16,7 @@ arai init
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
 
-Codex support and the hardening described below require **v1.1.2 or newer**. Until those release assets are available, build this revision with `cargo install --path . --locked`, then run `arai init` in your project. The v1.1.1 binary does not include them.
+Codex support and the hardening described below require **v1.1.2 or newer**. Upgrade Arai, then run `arai init` in your project. The v1.1.1 binary does not include these changes.
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
 

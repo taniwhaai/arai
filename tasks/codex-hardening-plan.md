@@ -66,7 +66,7 @@ run rechecks the complete suites after this bounded follow-up.
 - [x] Inspect merged main and the skipped release job; identify the exact failing check.
 - [x] Reproduce and remove the audit test's nondeterministic lock-release assumption without weakening its busy-bucket assertion.
 - [x] Validate the focused change and prepare a small repair PR from the squash merge.
-- [ ] Retry the failed main pipeline once the failure is understood, then verify version/tag/release outcomes and report remaining blockers.
+- [x] Retry the failed main pipeline once the failure is understood, then verify version/tag/release outcomes and report remaining blockers.
 
 Main a1cbb87 still declares 1.1.2; published GitHub release remains 1.1.1.
 Run 35051633349 failed at audit_concurrency.rs:208 after the fixture dropped
@@ -86,3 +86,27 @@ publish directly after gates pass. Its notes parser skips Unreleased, so move
 the shipped Codex/hardening notes into the existing1.1.2 entry before release,
 and state the concrete required version in README. No extra version bump is
 needed while1.1.2 remains unpublished.
+
+Main cb26bb3 passed run 35052847064 and published v1.1.2 to GitHub and
+crates.io. Tag run 35053076913 builds the distribution assets. NPM_TOKEN fails
+authentication; the user explicitly deferred npm publishing. Keep other
+distribution channels independent and do not request that credential again.
+
+## Distribution launch follow-up
+
+- [x] Reproduce the Windows npm shim failure: npm points at bin/arai's shell placeholder while postinstall writes only bin/arai.exe.
+- [x] Keep a stable Node launcher and separate native binary; verify actual npm-created shims on Windows and Unix, argument/exit propagation and missing-binary guidance.
+- [x] Align updater and shell-installer Windows filenames with published .exe assets; reject unshipped Windows ARM64 explicitly.
+- [x] Verify updater downloads against the release checksum before replacing the installed binary; fail HTTP errors and preserve the old binary on verification failures.
+- [ ] Add installer checks to Windows/Linux CI, validate focused regressions and prepare a small follow-up PR without rewriting the published v1.1.2 tag.
+- [x] Verify v1.1.2 GitHub assets/checksums, native launches and Homebrew formula; record npm publishing as deferred by the user.
+
+Release validation: all five lean and three full binary digests match the
+published manifest; signature bundles and multiple.intoto.jsonl are attached.
+Windows and Linux x86_64 lean/full binaries start from empty directories and
+report 1.1.2. The tag's Linux shell installer verifies checksums and installs
+successfully into an isolated directory. Homebrew 1.1.2 has the correct four
+asset checksums. GitHub Packages and ghcr publishing succeeded; npm alone
+failed authentication and remains intentionally deferred. Optional full Intel
+macOS lacks upstream ONNX prebuilt binaries; Linux ARM64 lacks cross OpenSSL.
+Those variants are omitted rather than mislabeled.

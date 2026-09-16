@@ -31,6 +31,7 @@ detect_platform() {
         Darwin) PLATFORM_OS="darwin" ;;
         MINGW*|MSYS*|CYGWIN*)
             PLATFORM_OS="windows"
+            BINARY_NAME="arai.exe"
             ;;
         *)
             echo "Error: Unsupported operating system: $OS"
@@ -48,6 +49,11 @@ detect_platform() {
     esac
 
     PLATFORM="${PLATFORM_OS}-${PLATFORM_ARCH}"
+    if [ "$PLATFORM" = "windows-aarch64" ]; then
+        echo "Error: No native Windows ARM64 release is available."
+        echo "Use the Windows x86_64 binary under emulation or build from source."
+        exit 1
+    fi
     echo "  Detected platform: ${PLATFORM}"
 }
 
@@ -168,6 +174,18 @@ install_binary() {
     fi
 
     mkdir -p "$INSTALL_DIR"
+    # Older Windows installers wrote an extensionless arai. Git Bash resolves
+    # that before arai.exe, so retain it outside PATH before installing the new
+    # filename. Keep the previous file (including custom wrappers) recoverable.
+    if [ "$PLATFORM_OS" = "windows" ] && { [ -e "${INSTALL_DIR}/arai" ] || [ -L "${INSTALL_DIR}/arai" ]; }; then
+        if [ -d "${INSTALL_DIR}/arai" ]; then
+            echo "Error: ${INSTALL_DIR}/arai is a directory; refusing to move it."
+            exit 1
+        fi
+        PREVIOUS_DIR=$(mktemp -d "${INSTALL_DIR}/.arai-previous.XXXXXX")
+        mv "${INSTALL_DIR}/arai" "${PREVIOUS_DIR}/arai"
+        echo "  Previous extensionless arai retained at ${PREVIOUS_DIR}/arai"
+    fi
     mv "$TMPFILE" "${INSTALL_DIR}/${BINARY_NAME}"
     rm -rf "$TMPDIR"
 
