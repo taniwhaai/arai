@@ -4,58 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Added
+## [1.1.2] - 2026-07-10
 
-- *(lib)* Export `hooks::highest_severity` so embedders (kete-agent) derive
-  deny/inject from the same calculus as the CLI
-  ([#170](https://github.com/taniwhaai/arai/issues/170))
-- *(lib)* `Config::load_from(project_dir)` — path-parameterised constructor
-  so an embedding process can target a project without mutating CWD
-  ([#171](https://github.com/taniwhaai/arai/issues/171))
-- *(lib)* `audit::list_buckets` + `AuditBucket::jsonl_bytes` — read-only
-  enumeration of day-buckets and chain-head sidecars. Embedders ship the
-  canonical bytes themselves; the HTTP POST stays a CLI concern
-- *(check-diff)* `arai check-diff` runs the live matcher on a git diff
-  (stdin, `--cached`, or `--from-rev`/`--to-rev`). Added files synthesise
-  Write; modified/renamed files synthesise Edit. Block-severity matches
-  exit 1. `arai init --pre-commit` installs a local git hook; the repo
-  ships `.pre-commit-hooks.yaml` for the pre-commit framework
-  ([#82](https://github.com/taniwhaai/arai/issues/82))
-- *(add/mcp)* `arai_add_guard` refuses inert rules (same as `arai add`).
-  `arai scan` / `arai lint` warn on instruction-file rules that will never
-  fire. `arai status` reports last firing so "hooks registered but never
-  invoked" is visible without reading JSONL
+### Atlas
 
-### Fixed
+- Correct taniwha.yaml (arai/kete dep direction; codeworld lineage) ([#169](https://github.com/taniwhaai/arai/pull/169))
 
-- *(grok)* Canonicalise Grok Build 1.0+ snake_case hook events (`pre_tool_use`
-  → `PreToolUse`). Live host payloads used camelCase field names with a
-  snake_case *value*; Arai only recognised PascalCase, so every rule failed the
-  timing gate and the hook returned empty stdout / exit 0 (fail-open) while
-  host-only bash deny hooks still worked
-  ([#173](https://github.com/taniwhaai/arai/issues/173))- *(init)* Always register Claude Code and Grok Build hooks even when no
-  instruction files are found. Empty projects previously printed
-  `No instruction files found` and returned before writing
-  `.claude/settings.json` / `.grok/hooks/arai.json`, so `arai add` rules never
-  reached a live host path ([#173](https://github.com/taniwhaai/arai/issues/173))
-- *(init)* Register hook commands with the absolute path of the running binary
-  (`current_exe`) so a stale `arai` earlier on `PATH` cannot fail-open
-- *(add)* Refuse rules that cannot map to an enforceable tool domain
-  (timing would be non-tool / inert). Pass `--allow-inert` for documentary
-  rules; `arai guardrails` marks inert rules in the list
-- *(grok)* Map live Grok Build tool name `run_terminal_command` → `Bash` (the
-  older `run_terminal_cmd` alias is kept). Without this, PreToolUse rules that
-  scope to Bash silently fail-open on native Grok Build hooks ([#161](https://github.com/taniwhaai/arai/issues/161))
-
-### Documentation
-
-- *(grok)* Re-verified host PreToolUse deny on Grok Build **1.0.0** headless
-  and **ACP stdio** (`grok agent stdio`); close-out 2026-08-13. Evidence in
-  `docs/upstream/grok-hooks-reverification-1.0.0.md`
-  ([#173](https://github.com/taniwhaai/arai/issues/173))
-- *(grok)* User-facing copy says **Grok Build** (not "Grok TUI" / supergrok);
-  README documents that under Grok Build, block is load-bearing and warn/inform
-  `additionalContext` is best-effort ([#161](https://github.com/taniwhaai/arai/issues/161))
 
 ## [1.1.1] - 2026-07-06
 
