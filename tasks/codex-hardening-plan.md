@@ -60,3 +60,22 @@ enrichment builds. A final reproduced retention race is also fixed: purge
 respects the writer's bucket lock and reports failed removals accurately.
 Focused audit checks pass on Windows (24 tests) and Linux (26); the final PR
 run rechecks the complete suites after this bounded follow-up.
+
+## Post-merge release recovery
+
+- [x] Inspect merged main and the skipped release job; identify the exact failing check.
+- [x] Reproduce and remove the audit test's nondeterministic lock-release assumption without weakening its busy-bucket assertion.
+- [ ] Validate the focused change and prepare a small repair PR from the squash merge.
+- [ ] Retry the failed main pipeline once the failure is understood, then verify version/tag/release outcomes and report remaining blockers.
+
+Main a1cbb87 still declares 1.1.2; published GitHub release remains 1.1.1.
+Run 35051633349 failed at audit_concurrency.rs:208 after the fixture dropped
+its lock while another test spawned child processes. Enrichment and Windows
+passed. Release-plz was skipped by the test gate; credentials were not reached.
+
+Independent Linux probe confirmed a close-on-exec descriptor inherited by a
+paused fork child retains flock after the parent closes it; explicit unlock
+releases it immediately. The fixture now unlocks before its immediate purge
+assertion. All nine audit tests passed 100 consecutive parallel Linux suite
+runs (900 executions) and on Windows. One retry of main reproduced the same
+failure, so further retries are replaced by landing this permanent test fix.

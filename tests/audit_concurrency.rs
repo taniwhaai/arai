@@ -204,6 +204,10 @@ fn purge_respects_a_writer_still_holding_yesterdays_bucket_lock() {
     let preview = audit::purge(&cfg.arai_base_dir, &cfg.project_slug(), Some(0), true).unwrap();
     assert_eq!(preview.removed_files.len(), 2);
     assert!(log.exists() && head.exists());
+    // Another test can fork while this FD is open. On Unix, a child retains
+    // the shared flock until exec even with CLOEXEC, so closing only our FD
+    // does not guarantee immediate release. End the fixture's lock explicitly.
+    fs2::FileExt::unlock(&lock).unwrap();
     drop(lock);
     let report = audit::purge(&cfg.arai_base_dir, &cfg.project_slug(), Some(0), false).unwrap();
     assert_eq!(report.removed_files.len(), 2);
