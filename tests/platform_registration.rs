@@ -109,7 +109,9 @@ fn decoded_command(command: &str) -> String {
             .decode(encoded)
             .unwrap();
         let words: Vec<_> = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         String::from_utf16(&words).unwrap()
