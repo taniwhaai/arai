@@ -36,7 +36,7 @@ fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
     let mut cmd = Command::new(bin);
     cmd.arg("guardrails")
         .arg("--match-stdin")
-        .env("ARAI_HOME", &arai_home)
+        .env("ARAI_BASE_DIR", &arai_home)
         .env_remove("GROK_HOOK_EVENT")
         .env_remove("GROK_SESSION_ID")
         .env_remove("CLAUDE_PROJECT_DIR")
@@ -110,7 +110,7 @@ fn spoofed_event_name_does_not_defeat_fail_closed() {
 /// is empty (model proceeds as if no hook were installed); the bypass
 /// audit entry is written so post-hoc inspection can tell "Arai was off"
 /// from "no rules fired".  Here we just assert the stdout contract
-/// because the audit dir lives under ARAI_HOME which we delete.
+/// because the audit dir lives under ARAI_BASE_DIR which we delete.
 #[test]
 fn arai_disabled_short_circuits_with_empty_stdout() {
     let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push --force"},"session_id":"s1"}"#;

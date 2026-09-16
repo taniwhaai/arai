@@ -20,150 +20,288 @@ pub struct DiscoveredFile {
     pub frontmatter: HashMap<String, String>,
 }
 
-/// Discover all instruction files for the current project.
+/// Discover instruction sources without flattening their activation scope.
+/// Read/walk failures are surfaced: a partial snapshot must not prune policy.
 pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
     let mut files = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    // Modern Cursor uses `.cursor/rules/` as a directory of `.md` / `.mdc`
-    // rule files (per-feature splits like `auth.mdc`, `api.mdc`).  Walk it
-    // first; the per-file loop below would otherwise see a directory and
-    // skip it via `try_read_file`'s read-as-string failure.
-    let cursor_rules_dir = cfg.project_root.join(".cursor").join("rules");
-    if cursor_rules_dir.is_dir() {
-        for mut file in read_cursor_rules_dir(&cursor_rules_dir) {
-            file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
-            files.push(file);
-        }
-    }
-
-    // Project-level instruction files.  `.cursor/rules` stays in the list as
-    // a fallback for older Cursor installs that wrote it as a single file —
-    // when it's a directory the entry above already covered it and
-    // `try_read_file` here returns None.
-    let project_files: Vec<(PathBuf, &str, f64)> = vec![
+    // Read known root files first for stable precedence and compatibility with
+    // ignored local configuration. The recursive walk below adds scoped files.
+    for (name, source_type, confidence) in [
+        ("CLAUDE.md", "claude_md_project", 0.92),
+        ("CLAUDE.local.md", "claude_md_project", 0.92),
+        (".claude/CLAUDE.md", "claude_md_project", 0.92),
+        ("AGENTS.md", "agents_md", 0.91),
+        ("Agents.md", "agents_md", 0.91),
+        ("AGENT.md", "agents_md", 0.91),
+        ("agents.md", "agents_md", 0.90),
+        (".cursor/rules", "cursor_rules", 0.90),
+        (".cursorrules", "cursor_rules", 0.90),
         (
-            cfg.project_root.join("CLAUDE.md"),
-            "claude_md_project",
-            0.92,
-        ),
-        // Grok Build native project rules (AGENTS.md family). These are high
-        // value for Grok users and are checked by Grok in this approximate
-        // priority order.
-        (cfg.project_root.join("AGENTS.md"), "agents_md", 0.91),
-        (cfg.project_root.join("Agents.md"), "agents_md", 0.91),
-        (cfg.project_root.join("AGENT.md"), "agents_md", 0.91),
-        (cfg.project_root.join("agents.md"), "agents_md", 0.90),
-        (
-            cfg.project_root.join(".cursor").join("rules"),
-            "cursor_rules",
-            0.90,
-        ),
-        (cfg.project_root.join(".cursorrules"), "cursor_rules", 0.90),
-        (
-            cfg.project_root
-                .join(".github")
-                .join("copilot-instructions.md"),
+            ".github/copilot-instructions.md",
             "copilot_instructions",
             0.90,
         ),
-        (
-            cfg.project_root.join(".windsurfrules"),
-            "windsurf_rules",
-            0.90,
-        ),
-    ];
-
-    for (path, source_type, confidence) in project_files {
-        if let Some(mut file) = try_read_file(&path, source_type, confidence) {
-            file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
-            files.push(file);
+        (".windsurfrules", "windsurf_rules", 0.90),
+    ] {
+        if let Some(file) = try_read_file(&cfg.project_root.join(name), source_type, confidence)? {
+            add_discovered(file, cfg, true, &mut files, &mut seen)?;
+        }
+    }
+    for path in walk_instruction_tree(&cfg.project_root, true)? {
+        let relative = native_path_string(path.strip_prefix(&cfg.project_root).unwrap_or(&path));
+        let Some((source_type, confidence)) = project_source_type(&relative) else {
+            continue;
+        };
+        if let Some(file) = try_read_file(&path, source_type, confidence)? {
+            add_discovered(file, cfg, true, &mut files, &mut seen)?;
         }
     }
 
-    // Global Claude.md
-    let global_claude = cfg.home_dir.join(".claude").join("CLAUDE.md");
-    if let Some(mut file) = try_read_file(&global_claude, "claude_md_global", 0.88) {
-        file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
-        files.push(file);
+    if let Some(file) = try_read_file(
+        &cfg.home_dir.join(".claude/CLAUDE.md"),
+        "claude_md_global",
+        0.88,
+    )? {
+        add_discovered(file, cfg, true, &mut files, &mut seen)?;
     }
-
-    // Global Grok AGENTS.md family (in ~/.grok/)
+    for path in walk_instruction_tree(&cfg.home_dir.join(".claude/rules"), false)? {
+        if path.extension().is_some_and(|extension| extension == "md") {
+            if let Some(file) = try_read_file(&path, "claude_rules_global", 0.88)? {
+                add_discovered(file, cfg, true, &mut files, &mut seen)?;
+            }
+        }
+    }
     for name in ["AGENTS.md", "Agents.md", "AGENT.md", "agents.md"] {
-        let path = cfg.home_dir.join(".grok").join(name);
-        if let Some(mut file) = try_read_file(&path, "agents_md_global", 0.87) {
-            file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
-            files.push(file);
+        if let Some(file) = try_read_file(
+            &cfg.home_dir.join(".grok").join(name),
+            "agents_md_global",
+            0.87,
+        )? {
+            add_discovered(file, cfg, true, &mut files, &mut seen)?;
         }
     }
-
-    // Claude Code memory files
     let memory_dir = cfg.claude_memory_dir();
-    if memory_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&memory_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "md").unwrap_or(false) {
-                    if let Some(file) = read_memory_file(&path) {
-                        files.push(file);
-                    }
+    if directory_exists(&memory_dir)? {
+        let mut entries = std::fs::read_dir(&memory_dir)
+            .map_err(|error| format!("Could not read {}: {error}", memory_dir.display()))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Could not enumerate {}: {error}", memory_dir.display()))?;
+        entries.sort();
+        for path in entries {
+            if path.extension().is_some_and(|extension| extension == "md") {
+                if let Some(file) = read_memory_file(&path)? {
+                    add_discovered(file, cfg, false, &mut files, &mut seen)?;
                 }
             }
         }
     }
-
-    // Extra sources from config
     for extra in &cfg.extra_sources {
-        let path = cfg.project_root.join(extra);
-        if let Some(file) = try_read_file(&path, "extra", 0.85) {
-            files.push(file);
+        if let Some(file) = try_read_file(&cfg.project_root.join(extra), "extra", 0.85)? {
+            add_discovered(file, cfg, false, &mut files, &mut seen)?;
         }
     }
-
     Ok(files)
 }
 
-fn try_read_file(path: &PathBuf, source_type: &str, confidence: f64) -> Option<DiscoveredFile> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let (frontmatter, _body) = parse_frontmatter(&content);
+fn add_discovered(
+    mut file: DiscoveredFile,
+    cfg: &Config,
+    resolve_extends: bool,
+    files: &mut Vec<DiscoveredFile>,
+    seen: &mut std::collections::HashSet<(String, String)>,
+) -> Result<(), String> {
+    let path = std::path::Path::new(&file.path);
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        format!(
+            "Could not resolve instruction file {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut identity = native_path_string(&canonical);
+    // Preserve distinct logical aliases under different scoped directories.
+    let mut parent = native_path_string(path.parent().unwrap_or(path));
+    if cfg!(windows) {
+        identity = identity.to_lowercase();
+        parent = parent.to_lowercase();
+    }
+    if !seen.insert((identity, parent)) {
+        return Ok(());
+    }
+    if resolve_extends {
+        file.content = extends::resolve(&file.content, &cfg.arai_base_dir);
+    }
+    let scope = crate::source_scope::SourceScope::from_source(
+        &file.path,
+        &file.source_type,
+        &file.content,
+    )?;
+    if let Some(reason) = scope.inactive_reason() {
+        eprintln!("  [notice] {}: {reason}", file.path);
+    }
+    files.push(file);
+    Ok(())
+}
 
-    Some(DiscoveredFile {
+fn project_source_type(path: &str) -> Option<(&'static str, f64)> {
+    let basename = path.rsplit('/').next().unwrap_or("");
+    let rooted = format!("/{path}");
+    #[cfg(windows)]
+    let rooted = rooted.to_ascii_lowercase();
+    if rooted.contains("/.claude/rules/") && rooted.ends_with(".md") {
+        Some(("claude_rules", 0.92))
+    } else if rooted.contains("/.cursor/rules/")
+        && (rooted.ends_with(".md") || rooted.ends_with(".mdc"))
+    {
+        Some(("cursor_rules", 0.90))
+    } else {
+        match basename {
+            "CLAUDE.md" | "CLAUDE.local.md" => Some(("claude_md_project", 0.92)),
+            "AGENTS.md" | "Agents.md" | "AGENT.md" => Some(("agents_md", 0.91)),
+            "agents.md" => Some(("agents_md", 0.90)),
+            ".cursorrules" => Some(("cursor_rules", 0.90)),
+            ".windsurfrules" => Some(("windsurf_rules", 0.90)),
+            "copilot-instructions.md" if rooted.ends_with("/.github/copilot-instructions.md") => {
+                Some(("copilot_instructions", 0.90))
+            }
+            "rules" if rooted.ends_with("/.cursor/rules") => Some(("cursor_rules", 0.90)),
+            _ => None,
+        }
+    }
+}
+
+fn native_path_string(path: &std::path::Path) -> String {
+    let path = path.to_string_lossy();
+    if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.into_owned()
+    }
+}
+
+fn directory_exists(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Could not inspect {}: {error}", path.display())),
+    }
+}
+
+/// Host instruction files can be intentionally gitignored, so don't apply
+/// ignore patterns to policy discovery. Explicit generated/VCS directories and
+/// nested repositories are pruned; symlinked directories are not traversed.
+fn walk_instruction_tree(
+    root: &std::path::Path,
+    skip_nested_repos: bool,
+) -> Result<Vec<PathBuf>, String> {
+    if !directory_exists(root)? {
+        return Ok(Vec::new());
+    }
+    let walker = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .follow_links(false)
+        .filter_entry(move |entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            !(matches!(
+                name.as_ref(),
+                ".git"
+                    | ".hg"
+                    | ".svn"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | ".next"
+                    | ".svelte-kit"
+            ) || skip_nested_repos && entry.path().join(".git").exists())
+        })
+        .build();
+    let mut paths = Vec::new();
+    for entry in walker {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Could not enumerate instruction files under {}: {error}",
+                root.display()
+            )
+        })?;
+        if entry
+            .file_type()
+            .is_some_and(|kind| kind.is_file() || kind.is_symlink())
+        {
+            paths.push(entry.into_path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn try_read_file(
+    path: &std::path::Path,
+    source_type: &str,
+    confidence: f64,
+) -> Result<Option<DiscoveredFile>, String> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if !metadata.is_file() => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect instruction file {}: {error}",
+                path.display()
+            ))
+        }
+    }
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        format!(
+            "Could not read instruction file {}: {error}",
+            path.display()
+        )
+    })?;
+    let (frontmatter, _body) = parse_frontmatter(&content);
+    Ok(Some(DiscoveredFile {
         path: path.to_string_lossy().to_string(),
         source_type: source_type.to_string(),
         confidence,
         content,
         frontmatter,
-    })
+    }))
 }
 
-/// Walk `.cursor/rules/` and return one `DiscoveredFile` per `.md` / `.mdc`
-/// file inside (recursively).  Modern Cursor splits rules into per-feature
-/// files — we treat each as its own source so `arai status` and `arai diff`
-/// can attribute rules to the right file.  Uses `ignore::WalkBuilder` so
-/// `.gitignore` and friends are respected (a top-level CHANGELOG.md inside
-/// `.cursor/rules/` won't accidentally bleed in if it's ignored).
-fn read_cursor_rules_dir(dir: &std::path::Path) -> Vec<DiscoveredFile> {
+#[cfg(test)]
+fn read_cursor_rules_dir(dir: &std::path::Path) -> Result<Vec<DiscoveredFile>, String> {
     let mut out = Vec::new();
-    let walker = ignore::WalkBuilder::new(dir).build();
-    for entry in walker.flatten() {
-        let path = entry.path();
-        let is_rule_file = path
+    for path in walk_instruction_tree(dir, false)? {
+        if path
             .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| matches!(e, "md" | "mdc"))
-            .unwrap_or(false);
-        if !is_rule_file || !path.is_file() {
-            continue;
-        }
-        if let Some(file) = try_read_file(&path.to_path_buf(), "cursor_rules", 0.90) {
-            out.push(file);
+            .is_some_and(|extension| extension == "md" || extension == "mdc")
+        {
+            if let Some(file) = try_read_file(&path, "cursor_rules", 0.90)? {
+                out.push(file);
+            }
         }
     }
-    out
+    Ok(out)
 }
-
-fn read_memory_file(path: &PathBuf) -> Option<DiscoveredFile> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let (frontmatter, _body) = parse_frontmatter(&content);
+fn read_memory_file(path: &std::path::Path) -> Result<Option<DiscoveredFile>, String> {
+    let Some(mut file) = try_read_file(path, "project", 0.82)? else {
+        return Ok(None);
+    };
+    let frontmatter = &file.frontmatter;
 
     // Classify by frontmatter type, then filename prefix, then default
     let file_stem = path
@@ -191,13 +329,9 @@ fn read_memory_file(path: &PathBuf) -> Option<DiscoveredFile> {
         ("project", 0.82)
     };
 
-    Some(DiscoveredFile {
-        path: path.to_string_lossy().to_string(),
-        source_type: source_type.to_string(),
-        confidence,
-        content,
-        frontmatter,
-    })
+    file.source_type = source_type.to_string();
+    file.confidence = confidence;
+    Ok(Some(file))
 }
 
 /// Parse YAML-like frontmatter from markdown.
@@ -272,7 +406,7 @@ mod tests {
         let path = dir.join("feedback_testing.md");
         std::fs::write(&path, "- Don't mock the database").unwrap();
 
-        let file = read_memory_file(&path).unwrap();
+        let file = read_memory_file(&path).unwrap().unwrap();
         assert_eq!(file.source_type, "feedback");
         assert_eq!(file.confidence, 0.95);
 
@@ -298,7 +432,7 @@ mod tests {
         std::fs::write(sub.join("c.md"), "- Never commit secrets").unwrap();
         std::fs::write(rules.join("ignored.txt"), "not a rule file").unwrap();
 
-        let out = read_cursor_rules_dir(&rules);
+        let out = read_cursor_rules_dir(&rules).unwrap();
         let names: Vec<String> = out.iter().map(|f| f.path.clone()).collect();
         assert_eq!(
             out.len(),

@@ -69,6 +69,43 @@ const GENERAL_ARCHETYPES: &[&str] = &[
 /// Run enrichment on all guardrails using the sentence transformer model.
 #[cfg(feature = "enrich")]
 pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, String> {
+    enrich_sources(store, arai_base_dir, None)
+}
+
+/// Enrich only sources selected by a local operation. Automatic scans and
+/// additions must not rewrite intent installed by an embedding application.
+pub fn enrich_guardrails_for_sources(
+    store: &Store,
+    arai_base_dir: &Path,
+    sources: &[String],
+) -> Result<usize, String> {
+    #[cfg(feature = "enrich")]
+    {
+        enrich_sources(store, arai_base_dir, Some(sources))
+    }
+    #[cfg(not(feature = "enrich"))]
+    {
+        if sources.is_empty() {
+            return Ok(0);
+        }
+        enrich_guardrails(store, arai_base_dir)
+    }
+}
+
+#[cfg(feature = "enrich")]
+fn enrich_sources(
+    store: &Store,
+    arai_base_dir: &Path,
+    sources: Option<&[String]>,
+) -> Result<usize, String> {
+    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
+    let guardrails: Vec<_> = guardrails
+        .into_iter()
+        .filter(|guard| sources.is_none_or(|paths| paths.contains(&guard.file_path)))
+        .collect();
+    if guardrails.is_empty() {
+        return Ok(0);
+    }
     let model_dir = ensure_model_downloaded(arai_base_dir)?;
     let model_path = model_dir.join("model.onnx");
     let tokenizer_path = model_dir.join("tokenizer.json");
@@ -102,7 +139,6 @@ pub fn enrich_guardrails(store: &Store, arai_base_dir: &Path) -> Result<usize, S
     ];
 
     // Classify each guardrail
-    let guardrails = store.load_guardrails().map_err(|e| e.to_string())?;
     let mut count = 0;
 
     for g in &guardrails {

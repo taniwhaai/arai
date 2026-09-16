@@ -1,5 +1,5 @@
 use crate::parser::Triple;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -18,7 +18,7 @@ pub struct Store {
 /// migrations may run on a fresh DB or on an upgrading DB that already
 /// happens to have some columns from a previous schema-on-every-open era.
 type Migration = fn(&Connection) -> rusqlite::Result<()>;
-const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3, migrate_v4];
+const MIGRATIONS: &[Migration] = &[migrate_v1, migrate_v2, migrate_v3, migrate_v4, migrate_v5];
 
 impl Store {
     /// Open (or create) the store at `db_path`, creating parent directories,
@@ -89,7 +89,9 @@ impl Store {
         Ok(())
     }
 
-    /// Upsert a file and its triples. Skips if checksum unchanged.
+    /// Upsert a file and its triples. Unchanged content keeps its existing rows.
+    /// The source is externally managed after this call, even when unchanged:
+    /// local instruction discovery will neither replace nor prune it.
     pub fn upsert_file(
         &self,
         path: &str,
@@ -97,23 +99,48 @@ impl Store {
         triples: &[Triple],
         source_type: &str,
     ) -> rusqlite::Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let changed = Self::upsert_file_rows(&tx, path, content, triples, source_type, "external")?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    fn upsert_file_rows(
+        tx: &Connection,
+        path: &str,
+        content: &str,
+        triples: &[Triple],
+        source_type: &str,
+        owner: &str,
+    ) -> rusqlite::Result<bool> {
+        let scope = crate::source_scope::SourceScope::from_source(path, source_type, content)
+            .map_err(|e| {
+                rusqlite::Error::ToSqlConversionFailure(
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e).into(),
+                )
+            })?;
+        let scope_json = serde_json::to_string(&scope)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
         let checksum = compute_checksum(content);
 
         // Check if file exists with same checksum
-        let existing_checksum: Option<String> = self
-            .conn
+        let existing_checksum: Option<String> = tx
             .query_row(
                 "SELECT checksum FROM files WHERE path = ?1",
                 params![path],
                 |row| row.get(0),
             )
-            .ok();
+            .optional()?;
 
         if existing_checksum.as_deref() == Some(&checksum) {
+            tx.execute(
+                "INSERT INTO source_metadata (file_id, scope_json, owner)
+                 SELECT id, ?2, ?3 FROM files WHERE path = ?1
+                 ON CONFLICT(file_id) DO UPDATE SET scope_json = ?2, owner = ?3",
+                params![path, scope_json, owner],
+            )?;
             return Ok(false); // No change
         }
-
-        let tx = self.conn.unchecked_transaction()?;
 
         // Get or create file_id
         tx.execute(
@@ -128,6 +155,25 @@ impl Store {
             params![path],
             |row| row.get(0),
         )?;
+
+        tx.execute(
+            "INSERT INTO source_metadata (file_id, scope_json, owner) VALUES (?1, ?2, ?3)
+             ON CONFLICT(file_id) DO UPDATE SET scope_json = ?2, owner = ?3",
+            params![file_id, scope_json, owner],
+        )?;
+
+        // Keep explicit severity choices when an unrelated edit re-extracts
+        // the same rule. New triple ids alone must not erase an operator pin.
+        let overrides: Vec<(String, String, String, String)> = tx
+            .prepare(
+                "SELECT t.s, t.p, t.o, i.severity_override FROM triples t
+             JOIN rule_intent i ON i.triple_id = t.id
+             WHERE t.file_id = ?1 AND i.severity_override IS NOT NULL",
+            )?
+            .query_map([file_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
 
         // Delete old triples for this file (triggers handle FTS cleanup)
         tx.execute("DELETE FROM triples WHERE file_id = ?1", params![file_id])?;
@@ -161,10 +207,139 @@ impl Store {
                     triple.source_label,
                 ],
             )?;
+            if let Some((_, _, _, severity)) = overrides.iter().find(|(s, p, o, _)| {
+                s == &triple.subject && p == &triple.predicate && o == &triple.object
+            }) {
+                let intent = crate::intent::classify_rule_with_subject(
+                    &triple.predicate,
+                    &triple.object,
+                    Some(&triple.subject),
+                );
+                tx.execute(
+                    "INSERT INTO rule_intent (triple_id, action, timing, tools, allow_inverse, enriched_by, severity, severity_override)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![tx.last_insert_rowid(), intent.action.as_str(), intent.timing.as_str(),
+                        serde_json::to_string(&intent.tools).unwrap_or_else(|_| "[]".into()),
+                        intent.allow_inverse as i32, intent.enriched_by, intent.severity.as_str(), severity],
+                )?;
+            }
         }
-
-        tx.commit()?;
         Ok(true)
+    }
+
+    /// CLI-owned discovery snapshot. External/library sources are never
+    /// adopted, replaced or pruned; calling public upsert_file transfers a
+    /// source to external custody, including when its checksum is unchanged.
+    pub(crate) fn sync_discovered_files(
+        &self,
+        files: &[crate::discovery::DiscoveredFile],
+        adopt_legacy: bool,
+    ) -> rusqlite::Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let present: std::collections::HashSet<&str> =
+            files.iter().map(|f| f.path.as_str()).collect();
+        let owned: Vec<(i64, String)> = tx.prepare(
+            "SELECT f.id, f.path FROM files f JOIN source_metadata m ON m.file_id = f.id WHERE m.owner = 'discovery'"
+        )?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        for (id, path) in owned {
+            if !present.contains(path.as_str()) {
+                tx.execute("DELETE FROM files WHERE id = ?1", [id])?;
+            }
+        }
+        let mut total = 0;
+        for file in files {
+            let retained: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM files f JOIN source_metadata m ON m.file_id = f.id
+                 WHERE f.path = ?1 AND (m.owner = 'external' OR (m.owner = 'legacy' AND NOT ?2)))",
+                params![file.path, adopt_legacy],
+                |r| r.get(0),
+            )?;
+            if retained {
+                eprintln!("  Retaining external/legacy policy source: {}", file.path);
+                continue;
+            }
+            let triples = crate::parser::extract_rules_from_resolved(
+                &file.content,
+                &file.source_type,
+                file.confidence,
+            );
+            total += triples.len();
+            Self::upsert_file_rows(
+                &tx,
+                &file.path,
+                &file.content,
+                &triples,
+                &file.source_type,
+                "discovery",
+            )?;
+        }
+        // Classification stays in the same transaction as snapshot replacement.
+        // Do not reset policies or enriched intent installed by an embedder.
+        let local: Vec<Guardrail> = self
+            .load_guardrails()?
+            .into_iter()
+            .filter(|g| present.contains(g.file_path.as_str()))
+            .collect();
+        for guard in local {
+            let owned: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM files f JOIN source_metadata m ON m.file_id=f.id
+                 WHERE f.path=?1 AND m.owner='discovery')",
+                [&guard.file_path],
+                |r| r.get(0),
+            )?;
+            if owned && guard.intent.is_none() {
+                let intent = crate::intent::classify_rule_with_subject(
+                    &guard.predicate,
+                    &guard.object,
+                    Some(&guard.subject),
+                );
+                self.upsert_rule_intent(guard.triple_id, &intent)?;
+            }
+        }
+        tx.commit()?;
+        Ok(total)
+    }
+
+    pub(crate) fn legacy_source_count(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM source_metadata WHERE owner='legacy'",
+            [],
+            |row| row.get(0),
+        )
+    }
+
+    pub(crate) fn discovered_sources(&self) -> rusqlite::Result<Vec<String>> {
+        self.conn.prepare("SELECT f.path FROM files f JOIN source_metadata m ON m.file_id=f.id WHERE m.owner='discovery'")?
+            .query_map([], |row| row.get(0))?.collect()
+    }
+
+    pub(crate) fn source_scopes(
+        &self,
+    ) -> rusqlite::Result<std::collections::HashMap<String, crate::source_scope::SourceScope>> {
+        self.conn
+            .prepare(
+                "SELECT f.path, m.scope_json FROM files f JOIN source_metadata m ON m.file_id=f.id",
+            )?
+            .query_map([], |r| {
+                let json: String = r.get(1)?;
+                let scope: crate::source_scope::SourceScope =
+                    serde_json::from_str(&json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            e.into(),
+                        )
+                    })?;
+                scope.validate().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e).into(),
+                    )
+                })?;
+                Ok((r.get(0)?, scope))
+            })?
+            .collect()
     }
 
     /// Load all actionable guardrails, ordered by confidence.  Rules with an
@@ -1131,6 +1306,18 @@ fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
 fn migrate_v4(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "triples", "tier", "TEXT")?;
     add_column_if_missing(conn, "triples", "source_label", "TEXT")
+}
+
+fn migrate_v5(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS source_metadata (
+            file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            scope_json TEXT NOT NULL,
+            owner TEXT NOT NULL CHECK(owner IN ('discovery', 'external', 'legacy'))
+        );
+        INSERT OR IGNORE INTO source_metadata (file_id, scope_json, owner)
+        SELECT id, '{\"directory\":null,\"patterns\":[],\"inactive\":null}', 'legacy' FROM files;",
+    )
 }
 
 #[cfg(test)]

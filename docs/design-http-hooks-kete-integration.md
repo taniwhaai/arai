@@ -1,6 +1,14 @@
 # Design — HTTP hooks as the Arai ↔ Kete policy transport
 
 **Status:** Draft. Not implemented. Soliciting review on the contract before any code.
+
+**Architecture notice (2026-09-16):** This historical proposal is not the current
+implementation direction. Atlas 0005/0007/0009 require local, synchronous,
+offline-capable enforcement; kete-agent composes the Arai library and owns
+signed policy acceptance and transport. A remote per-call decision endpoint
+must not become necessary for Arai decisions. Do not implement the parallel
+HTTP gate, timeout table or automatic trust settings below as an approved
+contract. See [current stack integration boundaries](stack-integration.md).
 **Tracking:** [arai#110](https://github.com/taniwhaai/arai/issues/110) Tier-3 deliverable; pairs with the Kete roadmap re-scope at [kete#1](https://github.com/taniwhaai/kete/issues/1).
 **Authors:** [@Tim-Marsden](https://github.com/Tim-Marsden) + Claude (initial draft)
 

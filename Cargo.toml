@@ -8,6 +8,9 @@ repository = "https://github.com/taniwhaai/arai"
 exclude = [".github/", "site/", "npm/", "install.sh", "cliff.toml", "release-plz.toml", "CLAUDE.md", "tasks/", "scenarios/"]
 
 [dependencies]
+base64 = "0.22"
+fs2 = "0.4.3"
+globset = "0.4"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

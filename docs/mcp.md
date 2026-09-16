@@ -5,13 +5,14 @@ The stdio MCP server: agent-authored guards, decision self-checks, and authentic
 ## MCP: agent-authored guardrails
 
 `arai mcp` is also the integration path for assistants that don't have a
-native PreToolUse hook surface. Cursor, Windsurf, and Cline are MCP clients —
+native Arai hook adapter. Cursor, Windsurf, and Cline are MCP clients —
 point them at `arai mcp` and the agent can read the same rule set, register new
 guards mid-session, and self-check recent decisions.
 
 **MCP does not block or inject on tool calls by itself.** The strongest
-enforcement is available on hosts with native PreToolUse hooks (currently
-**Claude Code** and **Grok Build**). On MCP-only hosts, Arai exposes rule
+enforcement uses native PreToolUse adapters for **Claude Code**, **Grok Build**,
+and **Codex** (Codex support requires the Unreleased source build; see
+[setup](codex.md)). On MCP-only integrations, Arai exposes rule
 lookup, agent-authored guards, and decision history — the agent must call those
 tools; there is no automatic PreToolUse deny path.
 

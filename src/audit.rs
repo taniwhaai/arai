@@ -21,7 +21,7 @@ use crate::store::{Guardrail, Store};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Genesis-line `prev_hash` sentinel: 64 hex zeros, i.e. SHA-256 length of an
@@ -231,9 +231,11 @@ pub fn list_buckets(arai_base: &Path, project_slug: &str) -> Result<Vec<AuditBuc
     let mut buckets = Vec::new();
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
-        Err(_) => return Ok(buckets),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(buckets),
+        Err(e) => return Err(format!("read audit dir {}: {e}", dir.display())),
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read audit dir entry: {e}"))?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
@@ -244,10 +246,15 @@ pub fn list_buckets(arai_base: &Path, project_slug: &str) -> Result<Vec<AuditBuc
         if day.len() != 8 || !day.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let head = fs::read_to_string(dir.join(format!(".head.{day}")))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
+        let bytes = entry
+            .metadata()
+            .map_err(|e| format!("stat audit bucket {}: {e}", path.display()))?
+            .len();
+        let head = match fs::read_to_string(dir.join(format!(".head.{day}"))) {
+            Ok(s) => s.trim().to_string(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("read audit head {day}: {e}")),
+        };
         buckets.push(AuditBucket {
             day: day.to_string(),
             jsonl_path: path,
@@ -365,8 +372,9 @@ pub fn record_event(cfg: &Config, event: &str, tool_name: &str, session_id: &str
 ///
 /// Head storage: per-day sidecar at
 /// `{arai_base}/audit/{slug}/.head.{YYYYMMDD}` containing the last hash.
-/// Acts as a cache; if the sidecar is missing or stale, `seal_and_append`
-/// recovers by reading the actual last line of the day-bucket.
+/// Acts as a cache for readers. Writers always recover from the actual last
+/// complete record while holding a per-bucket OS lock, so stale sidecars and
+/// concurrent hook processes cannot branch the chain.
 fn seal_and_append(cfg: &Config, mut entry: Value) {
     let arai_base = &cfg.arai_base_dir;
     let slug = cfg.project_slug();
@@ -374,15 +382,21 @@ fn seal_and_append(cfg: &Config, mut entry: Value) {
         Ok(p) => p,
         Err(_) => return,
     };
-    let day = today_yyyymmdd();
-
-    // Recover previous hash from the per-day sidecar; fall back to scanning
-    // the last line of the day-bucket if the sidecar is missing (process
-    // killed between line-write and head-write).  GENESIS_HASH starts the
-    // chain on a fresh day-bucket.
-    let prev_hash = read_head(arai_base, &slug, &day)
-        .or_else(|| last_line_hash(&log_path))
-        .unwrap_or_else(|| GENESIS_HASH.to_string());
+    // Derive the day once from the selected path, even across UTC midnight.
+    let Some(day) = log_path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let Ok(_lock) = lock_bucket(&log_path) else {
+        return;
+    };
+    // Never trust .head: a crash may occur between append and head update.
+    // An incomplete or corrupt tail is retained for diagnosis; do not append
+    // onto it, truncate evidence, or silently restart from genesis.
+    let prev_hash = match last_line_hash(&log_path) {
+        Ok(Some(hash)) => hash,
+        Ok(None) => GENESIS_HASH.to_string(),
+        Err(_) => return,
+    };
 
     if let Some(obj) = entry.as_object_mut() {
         obj.insert("prev_hash".to_string(), Value::String(prev_hash.clone()));
@@ -398,10 +412,36 @@ fn seal_and_append(cfg: &Config, mut entry: Value) {
     }
 
     if let Ok(mut f) = open_audit_file(&log_path) {
-        if writeln!(f, "{}", entry).is_ok() {
-            let _ = write_head(arai_base, &slug, &day, &new_hash);
+        // Prepare a whole line before writing. A failed/partial append leaves
+        // the old head untouched and the tail visibly invalid on verification.
+        let line = format!("{entry}\n");
+        if f.write_all(line.as_bytes()).is_ok() {
+            let _ = write_head(arai_base, &slug, day, &new_hash);
         }
     }
+}
+
+/// Use a separate, stable lock inode so replacing a cache sidecar cannot
+/// invalidate mutual exclusion. Keep lock markers during purge: unlinking one
+/// while another process waits on it would allow two independent locks.
+/// Dropping the returned File releases the OS lock, including process exit.
+fn lock_bucket(log_path: &Path) -> std::io::Result<fs::File> {
+    let file = open_bucket_lock(log_path)?;
+    fs2::FileExt::lock_exclusive(&file)?;
+    Ok(file)
+}
+
+fn open_bucket_lock(log_path: &Path) -> std::io::Result<fs::File> {
+    let day = log_path.file_stem().unwrap_or_default().to_string_lossy();
+    let path = log_path.with_file_name(format!(".lock.{day}"));
+    let mut opts = OpenOptions::new();
+    opts.create(true).truncate(false).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
 }
 
 /// SHA-256(prev_hash || "|" || canonical_bytes).  Hex-encoded so the hash
@@ -424,17 +464,6 @@ fn head_path(arai_base: &Path, project_slug: &str, day: &str) -> PathBuf {
         .join(format!(".head.{day}"))
 }
 
-fn read_head(arai_base: &Path, project_slug: &str, day: &str) -> Option<String> {
-    let path = head_path(arai_base, project_slug, day);
-    let raw = fs::read_to_string(&path).ok()?;
-    let trimmed = raw.trim();
-    if is_sha256_hex(trimmed) {
-        Some(trimmed.to_string())
-    } else {
-        None
-    }
-}
-
 fn write_head(
     arai_base: &Path,
     project_slug: &str,
@@ -453,20 +482,60 @@ fn write_head(
     writeln!(f, "{}", new_hash)
 }
 
-fn last_line_hash(log_path: &Path) -> Option<String> {
-    let file = fs::File::open(log_path).ok()?;
-    let mut last = None;
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        if !line.trim().is_empty() {
-            last = Some(line);
-        }
+fn last_line_hash(log_path: &Path) -> std::io::Result<Option<String>> {
+    let mut file = match fs::File::open(log_path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(None);
     }
-    let line = last?;
-    let v: Value = serde_json::from_str(&line).ok()?;
-    v.get("hash")
-        .and_then(|h| h.as_str())
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid audit tail");
+    file.seek(SeekFrom::End(-1))?;
+    let mut terminator = [0];
+    file.read_exact(&mut terminator)?;
+    if terminator[0] != b'\n' {
+        return Err(invalid());
+    }
+
+    // Read backwards by chunks: recovering one head is proportional to the
+    // last record's size, not the entire day's event history on every hook.
+    let mut position = len - 1;
+    let mut chunks = Vec::new();
+    while position > 0 {
+        let count = position.min(8192) as usize;
+        position -= count as u64;
+        file.seek(SeekFrom::Start(position))?;
+        let mut chunk = vec![0; count];
+        file.read_exact(&mut chunk)?;
+        if let Some(newline) = chunk.iter().rposition(|b| *b == b'\n') {
+            chunks.push(chunk[newline + 1..].to_vec());
+            break;
+        }
+        chunks.push(chunk);
+    }
+    let line: Vec<u8> = chunks.into_iter().rev().flatten().collect();
+    let mut value: Value = serde_json::from_slice(&line).map_err(|_| invalid())?;
+    let hash = value
+        .get("hash")
+        .and_then(Value::as_str)
         .filter(|s| is_sha256_hex(s))
-        .map(|s| s.to_string())
+        .ok_or_else(invalid)?
+        .to_string();
+    let prev_hash = value
+        .get("prev_hash")
+        .and_then(Value::as_str)
+        .filter(|s| is_sha256_hex(s))
+        .ok_or_else(invalid)?
+        .to_string();
+    value.as_object_mut().ok_or_else(invalid)?.remove("hash");
+    let canonical = serde_json::to_string(&value).map_err(|_| invalid())?;
+    if chain_hash(&prev_hash, &canonical) != hash {
+        return Err(invalid());
+    }
+    Ok(Some(hash))
 }
 
 fn is_sha256_hex(s: &str) -> bool {
@@ -493,15 +562,20 @@ pub struct VerifyIssue {
 /// Returns the list of issues; an empty list means the chain verifies clean.
 pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIssue>, String> {
     let dir = arai_base.join("audit").join(project_slug);
-    if !dir.exists() {
-        return Ok(Vec::new());
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("read audit dir {}: {e}", dir.display())),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("read audit dir entry: {e}"))?
+            .path();
+        if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
     }
-    let mut files: Vec<PathBuf> = fs::read_dir(&dir)
-        .map_err(|e| format!("read audit dir: {e}"))?
-        .filter_map(|r| r.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("jsonl"))
-        .collect();
     files.sort();
 
     let mut issues = Vec::new();
@@ -524,21 +598,37 @@ pub fn verify_chain(arai_base: &Path, project_slug: &str) -> Result<Vec<VerifyIs
             }
         };
         let mut expected_prev = GENESIS_HASH.to_string();
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line_no = idx + 1;
-            let line = match line {
-                Ok(l) if l.trim().is_empty() => continue,
-                Ok(l) => l,
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let mut line_no = 0;
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    line_no += 1;
+                    if !line.ends_with('\n') {
+                        issues.push(VerifyIssue {
+                            day: day.clone(),
+                            line_no,
+                            kind: "incomplete_record".to_string(),
+                            detail: "audit record has no terminating newline".to_string(),
+                        });
+                    }
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                }
                 Err(e) => {
                     issues.push(VerifyIssue {
                         day: day.clone(),
-                        line_no,
+                        line_no: line_no + 1,
                         kind: "read_failed".to_string(),
                         detail: e.to_string(),
                     });
                     break;
                 }
-            };
+            }
             let mut v: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(e) => {
@@ -661,6 +751,9 @@ pub struct PurgeReport {
 /// Returns a `PurgeReport` regardless of whether the project's audit
 /// directory existed (an absent directory yields an empty report — not
 /// an error, because a nothing-to-do purge should succeed quietly).
+/// A busy bucket or failed removal returns an error; earlier removals may
+/// already have succeeded and retrying is safe. Each bucket's log and head
+/// share the writer lock. Persistent lock markers are never deleted.
 pub fn purge(
     arai_base: &Path,
     target_slug: &str,
@@ -668,15 +761,19 @@ pub fn purge(
     dry_run: bool,
 ) -> Result<PurgeReport, String> {
     let dir = arai_base.join("audit").join(target_slug);
-    if !dir.exists() {
-        return Ok(PurgeReport {
-            project_slug: target_slug.to_string(),
-            removed_files: Vec::new(),
-            removed_bytes: 0,
-            kept_today: false,
-            dry_run,
-        });
-    }
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PurgeReport {
+                project_slug: target_slug.to_string(),
+                removed_files: Vec::new(),
+                removed_bytes: 0,
+                kept_today: false,
+                dry_run,
+            });
+        }
+        Err(error) => return Err(format!("read audit dir {}: {error}", dir.display())),
+    };
 
     let today = today_yyyymmdd();
     let cutoff: Option<String> = older_than_days.map(yyyymmdd_n_days_ago);
@@ -684,12 +781,10 @@ pub fn purge(
     let mut removed_files: Vec<PathBuf> = Vec::new();
     let mut removed_bytes: u64 = 0;
     let mut kept_today = false;
+    let mut buckets = std::collections::BTreeMap::<String, Vec<PathBuf>>::new();
 
-    for entry in fs::read_dir(&dir).map_err(|e| format!("read audit dir: {e}"))? {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("read audit dir entry: {error}"))?;
         let path = entry.path();
         let name = match path.file_name().and_then(|s| s.to_str()) {
             Some(n) => n,
@@ -698,7 +793,7 @@ pub fn purge(
 
         // Two filename shapes carry the YYYYMMDD date: `YYYYMMDD.jsonl`
         // (log) and `.head.YYYYMMDD` (sidecar).  Anything else
-        // (`.arai_acl_set` on Windows, future markers, stray garbage) is
+        // (`.lock.YYYYMMDD`, `.arai_acl_set`, stray garbage) is
         // left alone — `purge` is not a recursive `rm`.
         let day = if let Some(stem) = name.strip_suffix(".jsonl") {
             stem.to_string()
@@ -731,17 +826,42 @@ pub fn purge(
             }
         }
 
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        removed_bytes += size;
-        removed_files.push(path.clone());
+        buckets.entry(day).or_default().push(path);
+    }
 
-        if !dry_run {
-            // Best-effort: a removal that fails (read-only mount, race
-            // with another process) is surfaced in the report only as a
-            // path that's still on disk afterwards.  We don't unwind on
-            // partial failure — purging is idempotent and the next run
-            // will retry.
-            let _ = fs::remove_file(&path);
+    for (day, mut paths) in buckets {
+        // Hold one lock across both files. A writer can still own an old day
+        // after UTC midnight; fail explicitly rather than hang behind it.
+        // Dry-run remains read-only, including not creating lock markers.
+        let _lock = if dry_run {
+            None
+        } else {
+            let lock = open_bucket_lock(&dir.join(format!("{day}.jsonl"))).map_err(|error| {
+                format!("Could not open lock for audit bucket {day}: {error}. Earlier buckets may already have been removed; retry purge.")
+            })?;
+            fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| {
+                format!("Audit bucket {day} is busy or could not be locked: {error}. No files from this bucket were removed; earlier buckets may already have been removed. Retry purge.")
+            })?;
+            Some(lock)
+        };
+        // Remove the log before its cache so a log-removal failure preserves
+        // the existing pair. Either failure is reported, never counted as done.
+        paths.sort_by_key(|path| path.extension().and_then(|ext| ext.to_str()) != Some("jsonl"));
+        for path in paths {
+            let size = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("Could not inspect audit path {}: {error}. Earlier paths may already have been removed; retry purge.", path.display())),
+            };
+            if !dry_run {
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(format!("Could not remove audit path {}: {error}. Earlier paths may already have been removed; retry purge.", path.display())),
+                }
+            }
+            removed_bytes += size;
+            removed_files.push(path);
         }
     }
 
@@ -1140,6 +1260,11 @@ mod tests {
         assert!(dir.join(format!("{yesterday}.jsonl")).exists());
         assert!(!dir.join(format!("{ancient}.jsonl")).exists());
         assert!(!dir.join(format!(".head.{ancient}")).exists());
+        assert_eq!(
+            report.removed_bytes,
+            b"{}\n".len() as u64 + b"deadbeef\n".len() as u64
+        );
+        assert!(dir.join(format!(".lock.{ancient}")).exists());
 
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1170,6 +1295,10 @@ mod tests {
         assert!(
             dir.join(format!(".head.{ancient}")).exists(),
             "dry-run must not delete the sidecar"
+        );
+        assert!(
+            !dir.join(format!(".lock.{ancient}")).exists(),
+            "dry-run must not create lock markers"
         );
 
         std::fs::remove_dir_all(&base).ok();
@@ -1251,6 +1380,29 @@ mod tests {
         assert!(report.removed_files.is_empty());
         assert!(!report.kept_today);
         assert_eq!(report.removed_bytes, 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_purge_reports_failed_removal_and_possible_partial_progress() {
+        let base = make_purge_fixture("purge_failure", "proj-failure", &["20000101"]);
+        let dir = base.join("audit/proj-failure");
+        // A directory with the bucket name cannot be removed as a file on
+        // either platform; no permissions/privileged-user assumptions needed.
+        let failed = dir.join("20000102.jsonl");
+        std::fs::create_dir(&failed).unwrap();
+        std::fs::write(failed.join("retain"), b"evidence").unwrap();
+        let error = purge(&base, "proj-failure", None, false).unwrap_err();
+        assert!(error.contains("20000102.jsonl"), "{error}");
+        assert!(
+            error.contains("Earlier paths may already have been removed"),
+            "{error}"
+        );
+        assert!(error.contains("retry purge"), "{error}");
+        assert!(!dir.join("20000101.jsonl").exists());
+        assert!(!dir.join(".head.20000101").exists());
+        assert!(failed.join("retain").exists());
+        assert!(dir.join(".lock.20000101").exists());
         std::fs::remove_dir_all(&base).ok();
     }
 

@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "arai",
     version,
-    about = "Instruction files that actually work (Claude + Grok Build)."
+    about = "Instruction files that actually work (Claude Code, Grok Build, Codex)."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -72,6 +72,9 @@ enum Commands {
     },
     /// Re-scan instruction files and update guardrails
     Scan {
+        /// Adopt matching pre-upgrade sources into local discovery (never external policy)
+        #[arg(long)]
+        adopt_legacy_sources: bool,
         /// Also scan source code for imports (builds code graph)
         #[arg(long)]
         code: bool,
@@ -423,12 +426,20 @@ fn main() {
             }
         }
         Commands::Scan {
+            adopt_legacy_sources,
             code,
             enrich,
             enrich_llm,
             enrich_api,
             enrich_file,
-        } => cmd_scan(code, enrich, enrich_llm, enrich_api, enrich_file),
+        } => cmd_scan(
+            code,
+            enrich,
+            enrich_llm,
+            enrich_api,
+            enrich_file,
+            adopt_legacy_sources,
+        ),
         Commands::Add { rule, allow_inert } => cmd_add_inner(&rule, allow_inert),
         Commands::Upgrade { full, lean } => upgrade::run(full, lean),
         Commands::Audit {
@@ -506,9 +517,20 @@ fn cmd_status() -> Result<(), String> {
     println!("  Sources:    {} file(s)", files.len());
 
     println!("  {}", style::structural("Integration", col));
-    println!("    Hooks:    Claude Code + Grok Build (native)");
-    println!("              • .claude/settings.json");
-    println!("              • .grok/hooks/arai.json");
+    println!("    Native:   Claude Code, Grok Build, Codex");
+    for path in [
+        ".claude/settings.json",
+        ".grok/hooks/arai.json",
+        ".codex/hooks.json",
+    ] {
+        let state = if cfg.project_root.join(path).is_file() {
+            "config present"
+        } else {
+            "config missing"
+        };
+        println!("              • {path} ({state})");
+    }
+    println!("    Host trust and hook activation must be checked in the host; Codex: /hooks");
     for f in &files {
         println!("    - {f}");
     }
@@ -526,9 +548,7 @@ fn cmd_status() -> Result<(), String> {
         let decision = e.get("decision").and_then(|v| v.as_str()).unwrap_or("?");
         println!("  Last firing: {ts}  {ev} {tool} → {decision}");
     } else {
-        println!(
-            "  Last firing: never (hooks registered but none have invoked Arai in this project)"
-        );
+        println!("  Last firing: none recorded (this does not prove whether hooks are active)");
     }
 
     let graph_tools = db.code_graph_tool_count().map_err(|e| e.to_string())?;
@@ -620,24 +640,22 @@ fn cmd_scan(
     enrich_llm: bool,
     enrich_api: bool,
     enrich_file: Option<String>,
+    adopt_legacy_sources: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
 
-    let mut total_rules = 0;
+    let total_rules = init::sync_discovered_rules_with_adoption(&db, &files, adopt_legacy_sources)?;
     for file in &files {
-        let triples = parser::extract_rules(&file.content, &file.source_type, file.confidence);
+        let triples =
+            parser::extract_rules_from_resolved(&file.content, &file.source_type, file.confidence);
         let count = triples.len();
-        db.upsert_file(&file.path, &file.content, &triples, &file.source_type)
-            .map_err(|e| e.to_string())?;
         if count > 0 {
             println!("  {} — {count} rule(s)", file.path);
         }
-        total_rules += count;
     }
 
-    db.classify_all_guardrails().map_err(|e| e.to_string())?;
     db.set_meta("last_scan", &chrono_now())
         .map_err(|e| e.to_string())?;
     println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
@@ -651,7 +669,7 @@ fn cmd_scan(
     let model_dir = cfg.arai_base_dir.join("models").join("all-MiniLM-L6-v2");
     if do_enrich || model_dir.join("model.onnx").exists() {
         println!("\n  Enriching rule intent with sentence transformer...");
-        let enriched = enrich::enrich_guardrails(&db, &cfg.arai_base_dir)?;
+        let enriched = init::enrich_discovered_rules(&db, &cfg.arai_base_dir)?;
         println!("    \u{2713} {enriched} rules enriched by model");
     }
 
@@ -757,12 +775,12 @@ fn read_check_diff_input(
         return Err("--cached and --from-rev are mutually exclusive".to_string());
     }
     if cached {
-        return git_diff(&["diff", "--cached", "--no-ext-diff", "--no-color"], cfg);
+        return git_diff(&["--cached"], cfg);
     }
     if let Some(from) = from_rev {
         return match to_rev {
-            Some(to) => git_diff(&["diff", "--no-ext-diff", "--no-color", from, to], cfg),
-            None => git_diff(&["diff", "--no-ext-diff", "--no-color", from], cfg),
+            Some(to) => git_diff(&[from, to], cfg),
+            None => git_diff(&[from], cfg),
         };
     }
 
@@ -770,7 +788,7 @@ fn read_check_diff_input(
     if std::io::stdin().is_terminal() {
         // No flags, nothing piped: default to the staged diff so
         // `arai check-diff` in a pre-commit hook / local run just works.
-        return git_diff(&["diff", "--cached", "--no-ext-diff", "--no-color"], cfg);
+        return git_diff(&["--cached"], cfg);
     }
     let mut buf = String::new();
     std::io::stdin()
@@ -784,6 +802,17 @@ fn read_check_diff_input(
 
 fn git_diff(args: &[&str], cfg: &config::Config) -> Result<String, String> {
     let out = std::process::Command::new("git")
+        .arg("diff")
+        // Enforcement must see repository-relative paths and original
+        // content, independent of the user's display/textconv settings.
+        .args([
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--no-relative",
+            "--no-textconv",
+            "--no-ext-diff",
+            "--no-color",
+        ])
         .args(args)
         .current_dir(&cfg.project_root)
         .env("GIT_PAGER", "cat")
@@ -792,7 +821,7 @@ fn git_diff(args: &[&str], cfg: &config::Config) -> Result<String, String> {
     // git diff exits 0 with or without changes (unless --exit-code).
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("git {} failed: {err}", args.join(" ")));
+        return Err(format!("git diff {} failed: {err}", args.join(" ")));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -903,10 +932,10 @@ fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     // Classify + enrich the new rule
-    db.classify_all_guardrails().map_err(|e| e.to_string())?;
+    init::classify_source(&db, &manual_path)?;
     let model_dir = cfg.arai_base_dir.join("models").join("all-MiniLM-L6-v2");
     if model_dir.join("model.onnx").exists() {
-        enrich::enrich_guardrails(&db, &cfg.arai_base_dir).ok();
+        enrich::enrich_guardrails_for_sources(&db, &cfg.arai_base_dir, &[manual_path]).ok();
     }
 
     // Manual-only projects often never re-run init; make sure host hooks exist.

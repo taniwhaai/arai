@@ -838,8 +838,7 @@ fn ac8_style_rs_block_unicode_colorize_true_has_ansi() {
     let fn_end = style
         .char_indices()
         .map(|(i, _)| i)
-        .filter(|&i| i <= raw_end)
-        .last()
+        .rfind(|&i| i <= raw_end)
         .unwrap_or(fn_start);
     let fn_region = &style[fn_start..fn_end];
 

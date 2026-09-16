@@ -86,10 +86,8 @@ then = { action = "block", message = "Never force-push to main." }
 fn sync_replaces_only_between_markers() {
     let dir = unique_tempdir("replace");
     let claude = dir.join("CLAUDE.md");
-    let pre = format!(
-        "# Top\nTop matter.\n\n<!-- BEGIN ARAI MANAGED RULES -->\nOLD CONTENT\n<!-- END ARAI MANAGED RULES -->\n\nBottom matter.\n"
-    );
-    std::fs::write(&claude, &pre).expect("seed CLAUDE.md");
+    let pre = "# Top\nTop matter.\n\n<!-- BEGIN ARAI MANAGED RULES -->\nOLD CONTENT\n<!-- END ARAI MANAGED RULES -->\n\nBottom matter.\n";
+    std::fs::write(&claude, pre).expect("seed CLAUDE.md");
     let toml = dir.join("arai.toml");
     std::fs::write(
         &toml,

@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --no-default-features --test embedding_compat --test audit_concurrency
+      - run: cargo clippy --no-default-features -- -D warnings
 
   test-enrich:
     name: Test (with enrich)
@@ -41,6 +43,21 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --features enrich
+
+  test-windows-hooks:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  release-safety:
+    name: Release safety checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash .github/scripts/test-release-safety.sh
 
   # Cloudflare Pages serves arai.taniwha.ai/install from site/install, which
   # is a copy of the canonical install.sh at the repo root.  Catch drift
@@ -61,18 +78,21 @@ jobs:
   # After tests pass on main: create release PR + tag/publish on merge
   release-plz:
     name: Release-plz
-    needs: [test, test-enrich]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      # Clone with the job token. Do not pass secrets.RELEASE_TOKEN here —
-      # an expired PAT makes checkout fail with "could not read Username for
-      # https://github.com" and the rest of the release job never runs
-      # (every main push since ~2026-07-27). release-plz still receives the
-      # PAT below so it can push tags that trigger the publish jobs.
+      # Clone with the job token; release-plz uses its dedicated token via
+      # the GitHub API so tag creation triggers the downstream publish jobs.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release authentication
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: bash .github/scripts/check-release-token.sh
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -81,20 +101,20 @@ jobs:
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Release
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # Build binaries on version tags
   build:
     name: Build (${{ matrix.platform }})
-    needs: [test, test-enrich]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
@@ -147,6 +167,7 @@ jobs:
           fi
 
       - name: Build full binary
+        id: full-build
         continue-on-error: true
         shell: bash
         run: |
@@ -155,19 +176,26 @@ jobs:
           $BUILD_CMD build --release --target ${{ matrix.target }} --features enrich
 
       - name: Stage full binary
-        continue-on-error: true
+        if: steps.full-build.outcome == 'success'
         shell: bash
         run: |
+          EXT=""
           if [ "${{ runner.os }}" = "Windows" ]; then
-            if [ -f target/${{ matrix.target }}/release/arai.exe ]; then
-              cp target/${{ matrix.target }}/release/arai.exe staged/arai-full-${{ matrix.platform }}.exe
-            fi
-          else
-            if [ -f target/${{ matrix.target }}/release/arai ]; then
-              cp target/${{ matrix.target }}/release/arai staged/arai-full-${{ matrix.platform }}
-              chmod +x staged/arai-full-${{ matrix.platform }}
-            fi
+            EXT=".exe"
           fi
+          SMOKE_TEST=false
+          if [ "$(rustc -vV | sed -n 's/^host: //p')" = "${{ matrix.target }}" ]; then
+            SMOKE_TEST=true
+          fi
+          bash .github/scripts/stage-full-binary.sh \
+            "target/${{ matrix.target }}/release/arai${EXT}" \
+            "staged/arai-${{ matrix.platform }}${EXT}" \
+            "staged/arai-full-${{ matrix.platform }}${EXT}" \
+            "$SMOKE_TEST"
+
+      - name: Report unavailable full variant
+        if: steps.full-build.outcome == 'failure'
+        run: echo "::warning::Full ${{ matrix.platform }} build failed; only the lean binary will be published for this platform."
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -247,13 +275,26 @@ jobs:
 
       - name: Attach to release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           for file in binaries/*; do
             echo "Uploading $(basename $file)..."
             gh release upload "$TAG" "$file" --clobber
           done
+
+  # Run only once the tag's binaries and checksum manifest are attached.
+  # release:published fires too early, while the platform builds still run.
+  homebrew-tap:
+    needs: attach-binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/homebrew-tap.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   # SLSA Level 3 provenance attestation via the slsa-github-generator
   # reusable workflow.  Builds a verifiable record of *how* each binary
@@ -348,7 +389,7 @@ jobs:
   # would dominate the release wall-clock; add a native arm64 runner later.
   container-publish:
     name: Publish container to ghcr.io
-    needs: [test, test-enrich]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Job-level permissions REPLACE the workflow-level block.

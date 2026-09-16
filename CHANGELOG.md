@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Recursive instruction discovery with directory scope, Claude `paths`, Cursor
+  `globs`/`alwaysApply`, explicit legacy-source adoption, and external policy custody.
+- Offline embedding regressions based on Kete's actual composition, plus an
+  Atlas-aligned stack integration guide and lean-library CI coverage.
+- Native Codex hooks in `.codex/hooks.json`: PreToolUse, PostToolUse and
+  UserPromptSubmit, with explicit `/hooks` trust guidance and Windows commands.
+- Per-file Codex `apply_patch` matching: additions and move destinations use
+  Write rules; updates and deletion paths use Edit rules. Malformed patches
+  fail closed. Structured `tool_response` content feeds post-tool observation.
+
+### Fixed
+
+- Local refresh removes deleted sources atomically, preserves severity pins and
+  upstream tier/source provenance, and leaves externally supplied policy intact.
+- Automatic enrichment and manual additions no longer reclassify unrelated
+  embedding policy. Malformed scopes abort refresh instead of widening rules.
+- Copy/rename diff paths cannot evade creation or source-edit rules; diff checks
+  no longer inherit prerequisite history through a shared synthetic session.
+- Malformed pre-tool envelopes fail closed. NotebookEdit and MultiEdit match
+  their native fields; file paths and Git diff configuration are normalized safely.
+- Concurrent audit writers serialize appends across processes, recover from the
+  canonical tail rather than a stale head, and refuse incomplete or invalid tails.
+- Audit retention honors writer locks across day changes and reports removal
+  failures instead of counting files that remain on disk as removed.
+- Library builds with default features disabled compile without code-graph types.
+- Compound shell commands starting with `arai` no longer bypass matching.
+- Applicable Block rules survive relevance ranking alongside advisory rules.
+- Diff parsing validates hunk lengths and quoted paths; added content cannot
+  masquerade as a file header, and malformed input fails explicitly.
+- Hook refresh/removal preserves unrelated handlers, recognises legacy
+  registrations, and supports pre-commit hooks in worktrees and `core.hooksPath`.
+- Release authentication fails clearly on invalid dedicated tokens. Full
+  binaries cannot silently reuse lean output; Homebrew waits for uploaded assets.
+- Installation examples no longer pin pre-commit to a tag without its manifest,
+  and pass `ARAI_FULL` to the installer process. Status distinguishes config-file
+  presence from host trust or proof of hook activation.
+
+
 ## [1.1.2] - 2026-09-16
 
 ### Added

@@ -63,6 +63,7 @@ pub fn scan_project(_project_root: &Path) -> Vec<ImportInfo> {
     Vec::new()
 }
 
+#[cfg(feature = "code-graph")]
 fn is_supported_extension(ext: &str) -> bool {
     matches!(
         ext,
@@ -98,11 +99,6 @@ fn extract_imports(ext: &str, content: &str) -> Option<Vec<String>> {
     let mut tools = Vec::new();
     collect_imports(tree.root_node(), content.as_bytes(), ext, &mut tools);
     Some(tools)
-}
-
-#[cfg(not(feature = "code-graph"))]
-fn extract_imports(_ext: &str, _content: &str) -> Option<Vec<String>> {
-    None
 }
 
 /// Walk the AST and collect import nodes based on language-specific node kinds.
@@ -170,8 +166,10 @@ fn child_by_field(node: Node, field: &str, source: &[u8]) -> Option<String> {
 }
 
 // --- Language-specific import extractors ---
+// Grammar feature flags do not enable the scanner engine by themselves.
+// Keep every Node-based helper behind code-graph, including fallback stubs.
 
-#[cfg(feature = "lang-python")]
+#[cfg(all(feature = "code-graph", feature = "lang-python"))]
 fn extract_python_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     match kind {
         "import_statement" => {
@@ -188,12 +186,12 @@ fn extract_python_import(node: Node, source: &[u8], kind: &str) -> Option<String
     }
 }
 
-#[cfg(not(feature = "lang-python"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-python")))]
 fn extract_python_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
-#[cfg(feature = "lang-javascript")]
+#[cfg(all(feature = "code-graph", feature = "lang-javascript"))]
 fn extract_js_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     match kind {
         "import_statement" => child_by_field(node, "source", source),
@@ -216,12 +214,12 @@ fn extract_js_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     }
 }
 
-#[cfg(not(feature = "lang-javascript"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-javascript")))]
 fn extract_js_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
-#[cfg(feature = "lang-rust")]
+#[cfg(all(feature = "code-graph", feature = "lang-rust"))]
 fn extract_rust_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     match kind {
         "use_declaration" => {
@@ -234,7 +232,7 @@ fn extract_rust_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
     }
 }
 
-#[cfg(feature = "lang-rust")]
+#[cfg(all(feature = "code-graph", feature = "lang-rust"))]
 fn extract_rust_use_path(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
         "scoped_identifier" | "scoped_use_list" => {
@@ -252,12 +250,12 @@ fn extract_rust_use_path(node: Node, source: &[u8]) -> Option<String> {
     }
 }
 
-#[cfg(not(feature = "lang-rust"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-rust")))]
 fn extract_rust_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
-#[cfg(feature = "lang-go")]
+#[cfg(all(feature = "code-graph", feature = "lang-go"))]
 fn extract_go_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     if kind == "import_spec" {
         child_by_field(node, "path", source)
@@ -266,12 +264,12 @@ fn extract_go_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     }
 }
 
-#[cfg(not(feature = "lang-go"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-go")))]
 fn extract_go_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
-#[cfg(feature = "lang-ruby")]
+#[cfg(all(feature = "code-graph", feature = "lang-ruby"))]
 fn extract_ruby_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     if kind == "call" {
         let method = node.child_by_field_name("method")?;
@@ -296,12 +294,12 @@ fn extract_ruby_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
     None
 }
 
-#[cfg(not(feature = "lang-ruby"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-ruby")))]
 fn extract_ruby_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
-#[cfg(feature = "lang-java")]
+#[cfg(all(feature = "code-graph", feature = "lang-java"))]
 fn extract_java_import(node: Node, source: &[u8], kind: &str) -> Option<String> {
     if kind == "import_declaration" {
         // Get the full scoped identifier
@@ -315,12 +313,13 @@ fn extract_java_import(node: Node, source: &[u8], kind: &str) -> Option<String> 
     None
 }
 
-#[cfg(not(feature = "lang-java"))]
+#[cfg(all(feature = "code-graph", not(feature = "lang-java")))]
 fn extract_java_import(_: Node, _: &[u8], _: &str) -> Option<String> {
     None
 }
 
 /// Normalize an import path to a top-level tool/library name.
+#[cfg(any(feature = "code-graph", test))]
 fn normalize_import(import_text: &str, ext: &str) -> Option<String> {
     let text = import_text.trim().trim_matches('"').trim_matches('\'');
 
@@ -389,6 +388,7 @@ fn normalize_import(import_text: &str, ext: &str) -> Option<String> {
     Some(name)
 }
 
+#[cfg(any(feature = "code-graph", test))]
 fn is_stdlib(name: &str, ext: &str) -> bool {
     match ext {
         "py" => matches!(
@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(normalize_import("java.util.List", "java"), None); // stdlib
     }
 
-    #[cfg(feature = "lang-python")]
+    #[cfg(all(feature = "code-graph", feature = "lang-python"))]
     #[test]
     fn test_python_extraction() {
         let code = r#"
@@ -544,7 +544,7 @@ import json
         assert!(!imports.contains(&"json".to_string()));
     }
 
-    #[cfg(feature = "lang-rust")]
+    #[cfg(all(feature = "code-graph", feature = "lang-rust"))]
     #[test]
     fn test_rust_extraction() {
         let code = r#"

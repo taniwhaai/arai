@@ -22,7 +22,12 @@ fn fresh_env(label: &str) -> (PathBuf, PathBuf, PathBuf) {
     let project = root.join("project");
     let home = root.join("home");
     fs::create_dir_all(&project).expect("project");
-    fs::create_dir_all(project.join(".git")).expect(".git");
+    let git = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&project)
+        .output()
+        .expect("git init");
+    assert!(git.status.success(), "git init: {:?}", git.stderr);
     fs::create_dir_all(&home).expect("home");
     (root, project, home)
 }
@@ -154,6 +159,41 @@ fn check_diff_json_reports_blocked() {
 }
 
 #[test]
+fn check_diff_header_like_content_cannot_rewrite_enforced_path() {
+    let (root, project, home) = fresh_env("header_content");
+    init_with_alembic(&project, &home);
+    let diff = "diff --git a/alembic/notes.txt b/alembic/notes.txt\n\
+new file mode 100644\n\
+--- /dev/null\n\
++++ b/alembic/notes.txt\n\
+@@ -0,0 +1 @@\n\
++++ harmless\n";
+    let (stdout, stderr, code) = run_check_diff(&project, &home, diff, &["--json"]);
+    assert_eq!(code, 1, "expected block: {stdout} {stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["blocked"], true);
+    assert_eq!(report["files"][0]["path"], "alembic/notes.txt");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn check_diff_rejects_truncated_or_unsupported_input() {
+    let (root, project, home) = fresh_env("malformed");
+    init_with_alembic(&project, &home);
+    for diff in [
+        ALEMBIC_DIFF.replace("+def upgrade():\n", ""),
+        "diff --cc alembic/notes.txt\n".to_string(),
+        "--- a/alembic/notes.txt\n+++ b/alembic/notes.txt\n".to_string(),
+    ] {
+        let (stdout, stderr, code) = run_check_diff(&project, &home, &diff, &["--json"]);
+        assert_ne!(code, 0, "malformed input must not pass: {diff:?}");
+        assert!(stdout.is_empty(), "must not emit an allow report: {stdout}");
+        assert!(stderr.contains("diff"), "missing diagnostic: {stderr}");
+    }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn init_pre_commit_writes_hook() {
     let (root, project, home) = fresh_env("precommit");
     fs::write(project.join("CLAUDE.md"), "- Never force-push to main\n").unwrap();
@@ -203,7 +243,7 @@ fn lint_marks_inert_rules() {
 }
 
 #[test]
-fn status_reports_last_firing_never() {
+fn status_distinguishes_configuration_from_recorded_firings() {
     let (root, project, home) = fresh_env("status");
     init_with_alembic(&project, &home);
     let out = Command::new(arai_bin())
@@ -216,9 +256,11 @@ fn status_reports_last_firing_never() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Last firing: never"),
+        stdout.contains("Last firing: none recorded"),
         "expected last-firing line: {stdout}"
     );
+    assert!(stdout.contains(".codex/hooks.json (config present)"));
+    assert!(stdout.contains("Host trust and hook activation must be checked"));
 
     let _ = fs::remove_dir_all(&root);
 }
