@@ -150,7 +150,7 @@ jobs:
           set -uo pipefail
           # A version that cannot collide with anything published.
           node -e "const p=require('./package.json'); p.version='0.0.0-oidc-check.${GITHUB_RUN_ID}'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2)+'\n')"
-          npm publish --access public --dry-run --loglevel silly 2>&1 | tee publish.log | grep -i -E 'oidc|provenance|ENEEDAUTH|E404|npm ERR|npm error' || true
+          npm publish --access public --tag oidc-check --dry-run --loglevel silly 2>&1 | tee publish.log | grep -i -E 'oidc|provenance|ENEEDAUTH|E404|npm ERR|npm error' || true
           if grep -q 'oidc Successfully retrieved and set token' publish.log; then
             echo
             echo "OK: registry.npmjs.org accepted this workflow's OIDC identity for @taniwhaai/arai."
