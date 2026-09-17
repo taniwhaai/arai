@@ -3,7 +3,30 @@
 Public-facing documents committed to the repo and linked from the
 marketing site (`site/index.html`) + main README.
 
-## Files
+## Product guides
+
+| File | What it covers |
+|------|----------------|
+| [enforcement.md](enforcement.md) | Deny mode, severity pins, disable/enable, `check-diff`, `why`, compliance, expiry |
+| [audit.md](audit.md) | Local JSONL log, `--verify`, `status`, `stats` |
+| [audit-ship.md](audit-ship.md) | `arai audit --ship` to your own collector |
+| [rule-testing.md](rule-testing.md) | `diff`, `lint`, `test`, `record` |
+| [extends.md](extends.md) | `arai:extends`, trust list, signatures, private sources |
+| [mcp.md](mcp.md) | Stdio MCP tools (add / list / check_action / recent_decisions) |
+| [codex.md](codex.md) | Codex native hooks, `/hooks` trust, `apply_patch` |
+| [instruction-discovery.md](instruction-discovery.md) | Nested files, Claude `paths`, Cursor `globs`, legacy adoption |
+| [rules-file-spec.md](rules-file-spec.md) | Canonical `arai.toml`; `canonicalize` / `sync` |
+| [enrichment.md](enrichment.md) | Taxonomy / ONNX / LLM classification tiers |
+| [repo-layer-scope.md](repo-layer-scope.md) | What `check-diff` does and does not match |
+| [telemetry-payload.md](telemetry-payload.md) | Self-hosted telemetry event schema |
+| [stack-integration.md](stack-integration.md) | Arai upstream of Kete |
+| [releases.md](releases.md) | Release-plz, tokens, Homebrew |
+| [upstream/grok-hooks-reverification-1.0.0.md](upstream/grok-hooks-reverification-1.0.0.md) | Grok Build 1.0.0 PreToolUse deny evidence |
+| [voice.md](voice.md) | User-facing copy register (committed; do not paraphrase) |
+
+Design notes (not user-facing how-tos): [design-http-hooks-kete-integration.md](design-http-hooks-kete-integration.md).
+
+## Compliance feature inventory
 
 - **`arai-compliance-features.pdf`** — the canonical artifact linked
   from the site and README.  GitHub previews PDFs inline, so an

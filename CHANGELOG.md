@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- Align contributor, agent, and MCP docs with the shipped 1.1.2 surface:
+  Claude Code + Grok Build + Codex hooks, four MCP tools including
+  `arai_check_action`, `canonicalize`/`sync`/`disable`/`deinit`, and
+  retire Grok-TUI-planning copy that treated those hosts as unmerged
+
 ## [1.1.2] - 2026-09-16
 
 ### Added

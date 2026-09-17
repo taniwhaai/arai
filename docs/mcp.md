@@ -16,12 +16,13 @@ lookup, agent-authored guards, and decision history — the agent must call thos
 tools; there is no automatic PreToolUse deny path.
 
 `arai mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io/)
-server on stdio. Three tools, exposed to any MCP-capable agent:
+server on stdio. Four tools, exposed to any MCP-capable agent:
 
 | Tool | What it does |
 |------|--------------|
-| `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. On hosts with native PreToolUse hooks it takes effect on the next tool call (same path as CLAUDE.md rules). On MCP-only hosts it updates the store for later use / listing — it does not auto-deny tools. |
+| `arai_add_guard(rule, reason?)` | Register a new guardrail mid-session. On hosts with native PreToolUse hooks it takes effect on the next tool call (same path as CLAUDE.md rules). On MCP-only hosts it updates the store for later use / listing — it does not auto-deny tools. Inert rules (no enforceable tool domain) are refused, matching `arai add`. |
 | `arai_list_guards(pattern?)` | List active guardrails, optionally substring-filtered, so the agent can check what constraints are live before acting. |
+| `arai_check_action(tool, tool_input, event?)` | Probe whether a hypothetical tool call would match any active rule — no execution, no audit write. Use before a regulated action to avoid a deny-and-retry loop. |
 | `arai_recent_decisions(session_id?, limit?, since?)` | Look up recent Ārai decisions (deny / inject / review) so the agent can self-check after a refusal — closes the model-side feedback loop. |
 
 This closes two gaps instruction files don't cover. First, when an agent
@@ -67,3 +68,12 @@ and point it at the same `arai mcp` command — the protocol is identical.
 Prerequisite: `arai` must be on your `PATH`. The install script, `cargo
 install arai`, `npm install -g @taniwhaai/arai`, and the Homebrew tap all
 put it there.
+
+## Optional authentication
+
+Set `ARAI_MCP_AUTH_TOKEN` to a shared secret. When it is set (non-empty),
+the client's `initialize` must present the same value as `auth_token`
+(constant-time compare) before `tools/list` or `tools/call` succeed.
+When unset, the server is open — matching the pre-auth behaviour. Stdio
+MCP authenticates the connection at handshake; individual tool calls do
+not re-present the token.

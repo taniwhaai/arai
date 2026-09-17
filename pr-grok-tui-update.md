@@ -1,3 +1,10 @@
+# Historical: First-class Grok TUI Support (Core Implementation)
+
+**Status (2026-09): shipped.** Grok Build native hooks are on `main`.
+Codex native hooks shipped in v1.1.2. This file is a leftover PR note
+from the integration branch; it is not a current task list. See
+`README.md`, `docs/codex.md`, and `CHANGELOG.md`.
+
 # Update: First-class Grok TUI Support (Core Implementation)
 
 **Current branch state (as of latest autonomous work):** Very strong core implementation + extensive practical dogfooding via `AGENTS.md` + clean CI + detailed PR description.

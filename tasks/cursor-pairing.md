@@ -1,5 +1,21 @@
 # Cursor pairing — better than advisory
 
+**Status (2026-09): partly shipped, plan otherwise stale.**
+
+- `arai_check_action` exists on the MCP server (see `docs/mcp.md`).
+- `arai sync` writes classified rules into existing `.cursorrules` /
+  other per-tool files. There is **no** `arai sync-cursor-rules` command
+  generating `.cursor/rules/*.mdc` as this brief specified.
+- Workflow here said "push directly to main". Current flow is PR-to-main.
+- Blocking via PreToolUse is no longer Claude-Code-only: Grok Build and
+  Codex have native adapters. Cursor/Windsurf/Cline remain MCP (advise).
+
+Keep this file as the remaining-work brief for Cursor MDC generation and
+MCP resources/prompts. Do not follow the "push to main, four commits"
+procedure.
+
+# Cursor pairing — original brief
+
 Plan for shipping four layered improvements to Arai's Cursor (and other
 non-Claude MCP-client) story.  Self-contained brief — pick this up cold,
 execute, push.
