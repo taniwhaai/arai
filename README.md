@@ -16,7 +16,7 @@ arai init
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
 
-Codex support and the hardening described below require **v1.1.2 or newer**. Until those release assets are available, build this revision with `cargo install --path . --locked`, then run `arai init` in your project. The v1.1.1 binary does not include them.
+Codex support and the hardening described below require **v1.1.2 or newer** (released 2026-09-16). Every install path below serves it; to build from source instead, run `cargo install --path . --locked` from this checkout.
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
 
@@ -24,7 +24,7 @@ To also block violating diffs at `git commit` (universal across tools that have 
 arai init --pre-commit
 ```
 
-Or add this local [pre-commit](https://pre-commit.com) framework hook. It requires an installed `arai` with `check-diff` on PATH; `language: system` does not install Arai. The v1.1.1 tag predates the repository hook manifest.
+Or add this local [pre-commit](https://pre-commit.com) framework hook. It requires an installed `arai` with `check-diff` on PATH; `language: system` does not install Arai. The repository's own `.pre-commit-hooks.yaml` manifest exists from v1.1.2 onward.
 
 ```yaml
 repos:

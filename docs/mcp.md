@@ -11,8 +11,7 @@ guards mid-session, and self-check recent decisions.
 
 **MCP does not block or inject on tool calls by itself.** The strongest
 enforcement uses native PreToolUse adapters for **Claude Code**, **Grok Build**,
-and **Codex** (Codex support requires the Unreleased source build; see
-[setup](codex.md)). On MCP-only integrations, Arai exposes rule
+and **Codex** (v1.1.2 or newer; see [setup](codex.md)). On MCP-only integrations, Arai exposes rule
 lookup, agent-authored guards, and decision history — the agent must call those
 tools; there is no automatic PreToolUse deny path.
 
