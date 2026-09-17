@@ -17,7 +17,7 @@ impl Fixture {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = long_form(std::env::temp_dir()).join(format!(
             "arai_registration_{label}_{}_{}",
             std::process::id(),
             nanos
@@ -78,6 +78,23 @@ impl Fixture {
 
     fn read_json(&self, relative: &str) -> Value {
         serde_json::from_str(&fs::read_to_string(self.project.join(relative)).unwrap()).unwrap()
+    }
+}
+
+/// On Windows `%TEMP%` is often an 8.3 short path (`C:\Users\RUNNER~1\...`).
+/// PowerShell normalises its own and its children's working directory to
+/// the long form, and Arai's project slug hashes the raw path, so `arai
+/// init` and a hook launched through the encoded PowerShell command must
+/// see the same spelling or the hook opens an empty store.  Resolve the
+/// fixture root up front so every step agrees.  (The product-side slug
+/// fragility is tracked separately from this test.)
+fn long_form(path: PathBuf) -> PathBuf {
+    match fs::canonicalize(&path) {
+        Ok(canonical) => {
+            let text = canonical.to_string_lossy();
+            PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+        }
+        Err(_) => path,
     }
 }
 
