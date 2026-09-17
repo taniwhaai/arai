@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "preToolUse",
+  "conversation_id": "conversation-1",
+  "generation_id": "generation-1",
+  "tool_use_id": "tool-1",
+  "cursor_version": "fixture",
+  "workspace_roots": ["/project"],
+  "cwd": "/project",
+  "tool_name": "Shell",
+  "tool_input": {"command": "cargo clean", "working_directory": "/project/packages/api"}
+}

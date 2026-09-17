@@ -34,6 +34,26 @@ pub const CANONICAL_TOOLS: &[&str] = &[
 /// Designed for minimal impact: all existing match arms, `.contains()`, and `==`
 /// checks continue to work unchanged after normalization.
 pub fn normalize_tool_name(raw: &str) -> String {
+    normalize_tool_name_ref(raw).to_owned()
+}
+
+/// Select the canonical verb using input only where a host has multiple forms
+/// of one tool. Monitor's WebSocket form does not execute a shell command.
+/// Validation remains the caller's responsibility; PowerShell must still pass
+/// the same command-string validation as Bash before matching.
+pub(crate) fn normalize_tool_name_for_input<'a>(raw: &'a str, input: &Value) -> &'a str {
+    if raw.eq_ignore_ascii_case("PowerShell")
+        || (raw.eq_ignore_ascii_case("Monitor")
+            && input.get("command").is_some_and(Value::is_string)
+            && input.get("ws").is_none())
+    {
+        "Bash"
+    } else {
+        normalize_tool_name_ref(raw)
+    }
+}
+
+fn normalize_tool_name_ref(raw: &str) -> &str {
     match raw {
         // Grok Build names from docs.x.ai and live hook samples.  Grok also
         // auto-maps some tools to Claude names for some events, so canonical
@@ -42,32 +62,35 @@ pub fn normalize_tool_name(raw: &str) -> String {
         // `run_terminal_command` is the live Grok Build tool name (see
         // docs.x.ai PreToolUse examples and issue #161 live verify). The
         // older `run_terminal_cmd` alias is kept for compatibility.
-        "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
-        "search_replace" | "edit_file" | "apply_patch" => "Edit".to_string(),
-        "read_file" => "Read".to_string(),
-        "list_dir" => "Glob".to_string(),
-        "grep_search" => "Grep".to_string(),
+        "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash",
+        "search_replace" | "edit_file" | "apply_patch" => "Edit",
+        "read_file" => "Read",
+        "list_dir" => "Glob",
+        "grep_search" | "grep" => "Grep",
+        "spawn_subagent" => "Agent",
         // File-creation variants.  Without these, Write-scoped rules
         // ("never hand-write migration files") silently never fire on a
         // host that names its file tool this way — the domain-rules-only
         // gate drops unknown tools.
-        "write_file" | "create_file" => "Write".to_string(),
+        "write_file" | "create_file" => "Write",
 
         // Claude Code + existing canonical names (pass-through for idempotency)
         "Bash" | "Edit" | "Write" | "Read" | "Glob" | "Agent" | "ToolSearch" | "Grep"
-        | "NotebookEdit" | "MultiEdit" => raw.to_string(),
+        | "NotebookEdit" | "MultiEdit" => raw,
 
         // Future-proof fallback for common variants
         other => {
             let lower = other.to_ascii_lowercase();
             match lower.as_str() {
-                "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
+                "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash",
                 "write" | "notebookedit" | "notebook_edit" | "write_file" | "writefile"
-                | "create_file" | "createfile" => "Write".to_string(),
-                "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit".to_string(),
-                "multiedit" | "multi_edit" => "MultiEdit".to_string(),
-                "tool_search" | "toolsearch" => "ToolSearch".to_string(),
-                _ => other.to_string(),
+                | "create_file" | "createfile" => "Write",
+                "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit",
+                "multiedit" | "multi_edit" => "MultiEdit",
+                "tool_search" | "toolsearch" => "ToolSearch",
+                "grep" => "Grep",
+                "spawn_subagent" => "Agent",
+                _ => other,
             }
         }
     }
@@ -1010,6 +1033,45 @@ fn shell_tokenize(input: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_aware_host_verbs_distinguish_command_and_websocket_monitors() {
+        let command = serde_json::json!({"command":"cargo clean", "timeout_ms":1000});
+        assert_eq!(
+            normalize_tool_name_for_input("PowerShell", &command),
+            "Bash"
+        );
+        assert_eq!(normalize_tool_name_for_input("Monitor", &command), "Bash");
+        for input in [
+            serde_json::json!({"ws":{"url":"wss://example.test/events"}}),
+            serde_json::json!({"command":"cargo clean", "ws":{"url":"wss://example.test/events"}}),
+            serde_json::json!({"command":42}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(normalize_tool_name_for_input("Monitor", &input), "Monitor");
+        }
+        // Name-only callers cannot infer Monitor's operation, and their API
+        // remains compatible. Known PowerShell input is validated as Bash.
+        assert_eq!(normalize_tool_name("Monitor"), "Monitor");
+        assert_eq!(normalize_tool_name("PowerShell"), "PowerShell");
+        assert_eq!(
+            normalize_tool_name_for_input("PowerShell", &Value::Null),
+            "Bash"
+        );
+    }
+
+    #[test]
+    fn grok_search_and_subagent_names_use_existing_matching_and_skip_semantics() {
+        assert_eq!(normalize_tool_name("grep"), "Grep");
+        assert_eq!(normalize_tool_name("spawn_subagent"), "Agent");
+        assert!(should_skip_tool(normalize_tool_name_for_input(
+            "spawn_subagent",
+            &Value::Null
+        )));
+        for tool in CANONICAL_TOOLS {
+            assert_eq!(normalize_tool_name_for_input(tool, &Value::Null), *tool);
+        }
+    }
 
     #[test]
     fn test_normalize_tool_name_grok_terminal_aliases() {

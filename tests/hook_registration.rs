@@ -1,5 +1,6 @@
 //! Registration refresh/removal must preserve user hooks and work with Git's
 //! configured paths. Child-local environments keep parallel tests isolated.
+use base64::Engine;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,8 +103,24 @@ fn commands(value: &Value, event: &str) -> Vec<String> {
         .unwrap()
         .iter()
         .flat_map(|group| group["hooks"].as_array().unwrap())
-        .filter_map(|handler| handler["command"].as_str().map(str::to_owned))
+        .filter_map(|handler| handler["command"].as_str().map(decoded_command))
         .collect()
+}
+
+fn decoded_command(command: &str) -> String {
+    let prefix = "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ";
+    if let Some(encoded) = command.strip_prefix(prefix) {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let words: Vec<_> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&words).unwrap()
+    } else {
+        command.to_string()
+    }
 }
 
 #[test]
@@ -148,6 +165,7 @@ fn refresh_migrates_old_paths_without_removing_neighbours() {
         assert!(hooks
             .last()
             .unwrap()
+            .replace('\\', "/")
             .contains(&env!("CARGO_BIN_EXE_arai").replace('\\', "/")));
         first.push(body);
     }
@@ -303,7 +321,7 @@ fn malformed_codex_config_is_not_overwritten() {
 
 #[cfg(windows)]
 #[test]
-fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
+fn nested_host_windows_commands_run_from_path_with_spaces_and_metacharacters() {
     use std::io::Write;
     use std::process::Stdio;
     let fixture = Fixture::new("windows_command");
@@ -313,36 +331,56 @@ fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
     let mut init = Command::new(&binary);
     fixture.isolate(&mut init, &fixture.project);
     assert_success(&init.arg("init").output().unwrap());
-    let settings = fixture.read_json(".codex/hooks.json");
-    let command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["commandWindows"]
-        .as_str()
-        .unwrap();
-    let (program, arguments) = command.split_once(' ').unwrap();
-    let mut hook = Command::new(program);
-    fixture.isolate(&mut hook, &fixture.project);
-    let mut child = hook
-        .args(arguments.split_whitespace())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Malformed PreToolUse must reach the binary and produce the JSON deny.
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"{\"hook_event_name\":\"PreToolUse\",\"tool_input\":{")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert_success(&output);
-    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    let paths = [
+        (".claude/settings.json", "claude"),
+        (".grok/hooks/arai.json", "grok"),
+        (".codex/hooks.json", "codex"),
+    ];
+    let mut first = Vec::new();
+    for (path, platform) in paths {
+        let settings = fixture.read_json(path);
+        let handler = &settings["hooks"]["PreToolUse"][0]["hooks"][0];
+        let command = handler["command"].as_str().unwrap();
+        if platform == "codex" {
+            assert_eq!(handler["commandWindows"], handler["command"]);
+        }
+        let (program, arguments) = command.split_once(' ').unwrap();
+        let mut hook = Command::new(program);
+        fixture.isolate(&mut hook, &fixture.project);
+        let mut child = hook
+            .args(arguments.split_whitespace())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Pinned platform/event must survive a malformed payload without host env.
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"{ invalid JSON")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if platform == "grok" { 2 } else { 0 })
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        if platform == "grok" {
+            assert_eq!(response["decision"], "deny");
+        } else {
+            assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+        }
+        first.push(settings);
+    }
     // Refresh and remove encoded Windows handlers as well as their POSIX side.
     let mut init = Command::new(&binary);
     fixture.isolate(&mut init, &fixture.project);
     assert_success(&init.arg("init").output().unwrap());
-    assert_eq!(fixture.read_json(".codex/hooks.json"), settings);
+    for ((path, _), settings) in paths.into_iter().zip(first) {
+        assert_eq!(fixture.read_json(path), settings);
+    }
     fixture.run(&["deinit"]);
     assert!(commands(&fixture.read_json(".codex/hooks.json"), "PreToolUse").is_empty());
 }

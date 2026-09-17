@@ -6,6 +6,7 @@
 //! `.grok/hooks/arai.json`, and `arai add "Never run echo …"` printed
 //! `Added:` for a rule that can never match.
 
+use base64::Engine;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -72,17 +73,43 @@ fn init_without_instruction_files_registers_hooks() {
     let codex_body: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(codex).unwrap()).unwrap();
     let hooks = codex_body["hooks"].as_object().unwrap();
-    assert_eq!(hooks.len(), 3);
-    for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+    assert_eq!(hooks.len(), 5);
+    for event in [
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "SessionStart",
+        "SubagentStart",
+    ] {
         assert!(hooks.contains_key(event), "missing Codex event {event}");
     }
     assert!(stdout.contains("/hooks") && stdout.contains("does not grant trust"));
 
     let grok_body = fs::read_to_string(&grok).expect("read grok hooks");
+    let grok_json: serde_json::Value = serde_json::from_str(&grok_body).unwrap();
+    let command = grok_json["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    let command = if let Some(encoded) =
+        command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
+    {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let words: Vec<_> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&words).unwrap()
+    } else {
+        command.to_string()
+    };
     assert!(
-        grok_body.contains("guardrails --match-stdin"),
+        command.contains("guardrails --match-stdin --platform grok --hook-event PreToolUse"),
         "hook command missing: {grok_body}"
     );
+    assert_eq!(grok_json["hooks"].as_object().unwrap().len(), 4);
+    assert!(grok_json["hooks"].get("UserPromptSubmit").is_none());
     assert!(
         grok_body.contains("PreToolUse"),
         "PreToolUse registration missing: {grok_body}"

@@ -16,6 +16,10 @@ arai init
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
 
+Codex support and the hardening described below require **v1.1.2 or newer**.
+The opt-in **Cursor native pilot is Unreleased**: build this revision and use
+`arai init --platform cursor`. See [Cursor coverage and verification limits](docs/cursor.md)
+and [platform selection and adapter design](docs/platform-adapters.md).
 Codex support and the hardening described below require **v1.1.2 or newer** (released 2026-09-16). Every install path below serves it; to build from source instead, run `cargo install --path . --locked` from this checkout.
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
@@ -56,7 +60,9 @@ Assistant: "I should use alembic revision --autogenerate instead..."
 
 Rules only fire when relevant. No noise on `ls`. No repeating principles already in your instruction files.
 
-Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
+Firings are written to a local audit log. Existing Claude/Grok/Codex integrations
+also estimate compliance by correlating recent pre/post calls by session and
+tool. Cursor's pilot records observations without claiming that attribution.
 
 
 ## How It Works
@@ -79,7 +85,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | `AGENTS.md` / `Agents.md` | Codex (native) | Hooks (block + advise; requires host trust) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
 | `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
-| `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
+| `.cursorrules` / `.cursor/rules` | Cursor | Opt-in native hook pilot; [coverage limits](docs/cursor.md) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
 
@@ -96,18 +102,20 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   can issue `deny` decisions and actually block tool calls.
 - On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
   host invokes hooks (verified on **1.0.0** headless with `--trust`; project
-  hooks stay inactive until the folder is trusted). Advisory text is still
-  emitted as `additionalContext` on allow responses and recorded in the audit
-  log, but Grok's documented PreToolUse contract only specifies
-  `allow` / `deny`+`reason` — so warn/inform injection into the model is
-  **best-effort** until the host surfaces that field. Treat block as the
-  guarantee; treat advise as optional context. See
+  hooks stay inactive until the folder is trusted). Current public Grok source
+  supports nested allow-side `additionalContext`, delivered **after execution**.
+  Arai records it as deferred advice, without pre-action compliance credit.
+  The prior live block verification is in
   [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
-- Codex registers `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` in
+- Codex registers `PreToolUse`, `PostToolUse`, `UserPromptSubmit`,
+  `SessionStart` and `SubagentStart` in
   `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
   `apply_patch` is checked per file, including additions and move destinations.
   Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
-- Arai's integrations for Cursor, Windsurf, Cline and other MCP clients provide **agent-facing tools**
+- Cursor's opt-in native pilot checks pre/post tool calls. Its allowed calls
+  and prompt hooks do not inject guidance; actual host verification remains
+  pending. See [setup and limits](docs/cursor.md).
+- Arai's MCP integrations for Cursor, Windsurf, Cline and other clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
@@ -115,21 +123,29 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   file is still ingested. This describes Arai's adapter coverage, not the
   current hook capabilities of those platforms.
 
-Arai hooks several more events alongside the standard tool-call events
-**when the host emits them** (not registered on Grok Build or Codex)
-so the rule set stays accurate to the live working tree:
+Claude, Grok and Codex startup hooks surface Arai's local availability early.
+Claude/Codex also receive brief model context, including on resume/compaction
+when the host emits SessionStart. Startup performs no scan or network/model work.
+Use [startup and activation](docs/host-activation.md) to distinguish registration
+from working tool gates in the CLI/TUI and desktop apps.
+
+Arai also uses these Claude events when the host emits them:
 
 - **`FileChanged` + `InstructionsLoaded`** — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
-  into context, Arai spawns an `arai scan` in the background. The next
-  tool-call hook sees the updated guardrails — no manual rescan.
+  into context, Arai requests an `arai scan` in the background. FileChanged
+  seeds literal instruction basenames; it does not watch every rule directory.
+  Refresh is asynchronous: run `arai scan` explicitly when freshness matters.
 - **`CwdChanged`** — when Claude `cd`s into a different directory
   (monorepo navigation), Arai re-scans rooted at the new directory so
   the next tool call matches against the right project's rules.
-- **`PostToolBatch`** — when Claude does a batch of parallel tool calls,
-  Arai correlates each call individually against any PreToolUse firings
-  in the same session, so per-rule compliance verdicts (Obeyed /
-  Ignored / Unclear) stay accurate on parallel workloads.
+- **`PostToolBatch`** — records the batch size. Individual PostToolUse events
+  handle observations and compliance, avoiding duplicate accounting.
+- **`PermissionDenied`** — records the native reason without requesting a retry.
+
+PowerShell and command-form Monitor use shell policy. Monitor WebSocket calls
+remain a separate tool category. Grok search_replace with an empty old_string
+checks both Write and Edit policies because it can create or overwrite a file.
 
 On hosts without those events, run `arai scan` after editing instruction files.
 

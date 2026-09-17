@@ -1,6 +1,7 @@
 //! Thin CLI over the `arai` library crate: argument parsing and IO only.
 //! All enforcement logic lives in [`arai`] (see `src/lib.rs`).
 
+use arai::platforms::Platform;
 use arai::{
     audit, canonicalize, code_scanner, config, discovery, enrich, extends, guardrails, hooks, init,
     intent, mcp, migrate, parser, repo_check, scenarios, ship, stats, store, style, sync, upgrade,
@@ -11,7 +12,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "arai",
     version,
-    about = "Instruction files that actually work (Claude Code, Grok Build, Codex)."
+    about = "Instruction files that actually work (Claude Code, Grok Build, Codex, Cursor)."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -30,6 +31,9 @@ enum Commands {
         /// Overwrite an existing `.git/hooks/pre-commit`.
         #[arg(long)]
         force: bool,
+        /// Register only these platforms; repeat to select several. Saved for subsequent init/add.
+        #[arg(long, value_enum)]
+        platform: Vec<Platform>,
     },
     /// Match a git diff against the live guardrail set (repo-layer enforcement).
     ///
@@ -57,18 +61,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Remove Arai hooks from .claude/settings.json
-    Deinit,
+    /// Remove Arai-owned hooks (all platforms unless selected)
+    Deinit {
+        #[arg(long, value_enum)]
+        platform: Vec<Platform>,
+    },
     /// Show what's being enforced
     Status,
     /// List active guardrails or match against stdin
     Guardrails {
-        /// Read Claude Code hook JSON from stdin and return matching guardrails
+        /// Read host hook JSON from stdin and return matching guardrails
         #[arg(long)]
         match_stdin: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Pin the host protocol, including the fail-closed error response
+        #[arg(long, value_enum, requires = "match_stdin")]
+        platform: Option<Platform>,
+        /// Expected host event, pinned by a native registration
+        #[arg(long, requires_all = ["match_stdin", "platform"])]
+        hook_event: Option<String>,
     },
     /// Re-scan instruction files and update guardrails
     Scan {
@@ -409,18 +422,27 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Init { pre_commit, force } => init::run(pre_commit, force),
+        Commands::Init {
+            pre_commit,
+            force,
+            platform,
+        } => init::run_for_platforms(pre_commit, force, &platform),
         Commands::CheckDiff {
             cached,
             from_rev,
             to_rev,
             json,
         } => cmd_check_diff(cached, from_rev, to_rev, json),
-        Commands::Deinit => init::deinit(),
+        Commands::Deinit { platform } => init::deinit_for_platforms(&platform),
         Commands::Status => cmd_status(),
-        Commands::Guardrails { match_stdin, json } => {
+        Commands::Guardrails {
+            match_stdin,
+            json,
+            platform,
+            hook_event,
+        } => {
             if match_stdin {
-                hooks::handle_stdin()
+                hooks::handle_stdin_for_platform(platform, hook_event.as_deref())
             } else {
                 cmd_guardrails(json)
             }
@@ -505,32 +527,32 @@ fn main() {
 
 fn cmd_status() -> Result<(), String> {
     let cfg = config::Config::load()?;
+    let col = style::should_colorize(style::Stream::Stdout);
+    println!("{}", style::structural("Arai status", col));
+    print_hook_status(&cfg);
+    if !cfg.db_path().is_file() {
+        println!("  Rules: not initialized (run `arai init --platform <host>`)");
+        return Ok(());
+    }
     let db = store::Store::open(&cfg.db_path())?;
     let files = db.list_files().map_err(|e| e.to_string())?;
     let count = db.guardrail_count().map_err(|e| e.to_string())?;
     let last_scan = db.get_meta("last_scan").map_err(|e| e.to_string())?;
 
-    let col = style::should_colorize(style::Stream::Stdout);
-
-    println!("{}", style::structural("Arai status", col));
     println!("  Rules:      {count}");
     println!("  Sources:    {} file(s)", files.len());
 
-    println!("  {}", style::structural("Integration", col));
-    println!("    Native:   Claude Code, Grok Build, Codex");
-    for path in [
-        ".claude/settings.json",
-        ".grok/hooks/arai.json",
-        ".codex/hooks.json",
-    ] {
-        let state = if cfg.project_root.join(path).is_file() {
-            "config present"
-        } else {
-            "config missing"
-        };
-        println!("              • {path} ({state})");
+    if cfg
+        .project_root
+        .join(Platform::Cursor.config_path())
+        .is_file()
+    {
+        println!(
+            "    Cursor pilot: pre/post tool hooks; no prompt or allowed-call context injection."
+        );
+        println!("    Check Cursor's hook execution log; a config file does not verify blocking.");
+        println!("    Enabled Claude third-party hooks can duplicate Arai's native Cursor hook.");
     }
-    println!("    Host trust and hook activation must be checked in the host; Codex: /hooks");
     for f in &files {
         println!("    - {f}");
     }
@@ -601,6 +623,74 @@ fn cmd_status() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn print_hook_status(cfg: &config::Config) {
+    println!("  Native adapters (configuration is not activation):");
+    for platform in Platform::ALL {
+        let path = platform.config_path();
+        let state = if cfg.project_root.join(path).is_file() {
+            "config present"
+        } else {
+            "config missing"
+        };
+        println!("    {}: {path} ({state})", platform.id());
+        match init::registration_diagnostics(cfg, platform) {
+            Ok(d) => {
+                println!(
+                    "      {} owned handlers; {} legacy/unpinned",
+                    d.owned_handlers, d.unpinned_handlers
+                );
+                let mut required = vec![platform.pre_event(), platform.post_event()];
+                if platform != Platform::Cursor {
+                    required.push("SessionStart");
+                    required.push("SubagentStart");
+                }
+                let missing: Vec<_> = required
+                    .into_iter()
+                    .filter(|e| !d.registered_events.iter().any(|got| got == e))
+                    .collect();
+                if !missing.is_empty() {
+                    println!(
+                        "      Missing events: {}; run `arai init --platform {}`",
+                        missing.join(", "),
+                        platform.id()
+                    );
+                }
+                for executable in d.missing_executables {
+                    println!("      Missing executable: {executable}; rerun init from the installed binary");
+                }
+                for executable in d.relative_executables {
+                    println!("      Executable requires host PATH resolution: {executable}");
+                }
+            }
+            Err(error) => println!("      Configuration could not be inspected: {error}"),
+        }
+        println!(
+            "      {}",
+            arai::lifecycle::invocation_summary(cfg, platform)
+        );
+    }
+    println!("    Host activation/trust is unverified here; a startup receipt does not prove tool gating.");
+    println!("    Claude Code CLI/Desktop Code: /hooks and /status; Codex CLI/app: review changed hooks in /hooks.");
+    println!(
+        "    Grok Build: /hooks and /hooks-trust; verify native Arai entries and the hook log."
+    );
+    if cfg
+        .project_root
+        .join(Platform::Grok.config_path())
+        .is_file()
+        && (cfg
+            .project_root
+            .join(Platform::Claude.config_path())
+            .is_file()
+            || cfg
+                .project_root
+                .join(Platform::Cursor.config_path())
+                .is_file())
+    {
+        println!("    Grok can import Claude/Cursor hooks too: inspect compatibility imports for duplicate Arai calls.");
+    }
 }
 
 fn cmd_guardrails(json: bool) -> Result<(), String> {

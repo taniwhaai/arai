@@ -1,11 +1,13 @@
 # Codex integration
 
-This integration requires Arai v1.1.2 or newer.
+This integration is available in v1.1.2 and newer.
+The adapter/startup improvements below are on the PR183 development branch;
+the published v1.1.2 does not yet include them.
 
 ## Setup
 
-Install a v1.1.2+ binary (or `cargo install --path . --locked` from this
-repository). In the project you want to protect, run `arai init`. This scans instruction
+Install v1.1.2 or newer, or build with `cargo install --path . --locked`.
+In the project you want to protect, run `arai init --platform codex`. This scans instruction
 files and merges Arai's handlers into `.codex/hooks.json`, preserving unrelated
 handlers. Re-running init refreshes old Arai executable paths. `arai deinit`
 removes the Arai registrations without removing other handlers.
@@ -32,6 +34,7 @@ different path requires another `arai init`.
 | `apply_patch` Delete File | Checks its path as Edit; the current rule schema has no separate Delete action. |
 | PostToolUse | Records observations and compliance; accepts Codex's structured `tool_response`. |
 | UserPromptSubmit | Injects applicable prompt-time guidance. |
+| SessionStart / SubagentStart | Reads local availability without scanning; injects brief context. SessionStart also displays status, including on resume/compact where emitted. |
 
 Codex passes the raw patch in `tool_input.command` and keeps `tool_name` as
 `apply_patch`. Arai parses all file operations before deciding, combines their
@@ -41,9 +44,15 @@ permissions. No patch is executed by the hook.
 
 Run `arai scan` after editing instruction files: this integration does not
 register instruction-change or working-directory-change events. `arai status`
-reports configuration presence and recorded firings, but cannot certify that
+reports owned registrations, missing executable paths and observed adapter
+invocations, but cannot certify that
 Codex has trusted or activated a handler. Use `/hooks` and a harmless synthetic
 blocked-rule probe to check host activation.
+
+Advisories inject context without granting permission. PermissionRequest,
+Interrupt, Stop and compaction events are recognized but intentionally not
+registered: existing tool checks and SessionStart cover Arai's present needs.
+See [TUI/desktop activation](host-activation.md) for trust and version boundaries.
 
 ## Boundaries
 

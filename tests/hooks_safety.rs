@@ -31,11 +31,16 @@ fn temp_arai_home() -> PathBuf {
 }
 
 fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
+    run_hook_args(payload, env, &[])
+}
+
+fn run_hook_args(payload: &str, env: &[(&str, &str)], args: &[&str]) -> (String, String, i32) {
     let bin = env!("CARGO_BIN_EXE_arai");
     let arai_home = temp_arai_home();
     let mut cmd = Command::new(bin);
     cmd.arg("guardrails")
         .arg("--match-stdin")
+        .args(args)
         .env("ARAI_BASE_DIR", &arai_home)
         .env_remove("GROK_HOOK_EVENT")
         .env_remove("GROK_SESSION_ID")
@@ -58,6 +63,84 @@ fn run_hook(payload: &str, env: &[(&str, &str)]) -> (String, String, i32) {
         String::from_utf8_lossy(&out.stderr).into_owned(),
         out.status.code().unwrap_or(-1),
     )
+}
+
+#[test]
+fn pinned_pretool_cannot_be_downgraded_by_passive_or_conflicting_aliases() {
+    for platform in ["claude", "grok", "codex"] {
+        for payload in [
+            r#"{"hook_event_name":"SessionStart","tool_name":"Read","tool_input":{}}"#,
+            r#"{"hook_event_name":"PreToolUse","hookEventName":"session_start","tool_name":"Bash","tool_input":{"command":"echo hello"}}"#,
+            r#"{"hook_event_name":"pre_tool_use","tool_name":"PowerShell","tool_input":{"command":null}}"#,
+        ] {
+            let (stdout, _, code) = run_hook_args(
+                payload,
+                &[],
+                &["--platform", platform, "--hook-event", "PreToolUse"],
+            );
+            let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            if platform == "grok" {
+                assert_eq!(code, 2);
+                assert_eq!(value["decision"], "deny");
+            } else {
+                assert_eq!(code, 0);
+                assert_eq!(value["hookSpecificOutput"]["permissionDecision"], "deny");
+            }
+        }
+    }
+}
+
+#[test]
+fn pinned_lifecycle_parse_failure_never_emits_a_tool_decision() {
+    for platform in ["claude", "grok", "codex"] {
+        let (stdout, stderr, code) = run_hook_args(
+            "{",
+            &[],
+            &["--platform", platform, "--hook-event", "SessionStart"],
+        );
+        assert_eq!(code, 0);
+        let response: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(response["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("failed"));
+        assert!(response["hookSpecificOutput"].is_null());
+        assert!(stderr.contains("Invalid hook JSON"));
+    }
+}
+
+#[test]
+fn legacy_conflicting_event_aliases_cannot_select_passive_error_output() {
+    let payload = r#"{"hook_event_name":"SessionStart","hookEventName":"pre_tool_use","tool_name":"Bash","tool_input":{"command":"echo hello"}}"#;
+    let (stdout, _, code) = run_hook(payload, &[("GROK_HOOK_EVENT", "pre_tool_use")]);
+    assert_eq!(code, 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap()["decision"],
+        "deny"
+    );
+}
+
+#[test]
+fn malformed_monitor_source_cannot_bypass_shell_validation() {
+    for input in [
+        r#"{"command":"git push","ws":{"url":"wss://example.test"}}"#,
+        r#"{"command":null}"#,
+        r#"{"ws":"wss://example.test"}"#,
+        "{}",
+    ] {
+        let payload = format!(
+            r#"{{"hook_event_name":"PreToolUse","tool_name":"Monitor","tool_input":{input}}}"#
+        );
+        let (stdout, _, _) = run_hook_args(
+            &payload,
+            &[],
+            &["--platform", "claude", "--hook-event", "PreToolUse"],
+        );
+        assert!(
+            stdout.contains(r#""permissionDecision":"deny""#),
+            "{input}: {stdout}"
+        );
+    }
 }
 
 /// A PreToolUse payload with malformed inner JSON (missing closing brace)
@@ -158,4 +241,51 @@ fn grok_tui_payload_does_not_crash() {
             || stdout.contains("permissionDecision"),
         "unexpected Grok payload output: {stdout:?}"
     );
+}
+
+/// The registered Cursor pre event remains the failure boundary even when the
+/// payload claims a post event and inherited environment identifies another host.
+#[test]
+fn cursor_registered_pre_event_cannot_be_spoofed_into_a_post_allow() {
+    let root = temp_arai_home();
+    std::fs::create_dir_all(root.join("project/.git")).unwrap();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arai"))
+        .args([
+            "guardrails",
+            "--match-stdin",
+            "--platform",
+            "cursor",
+            "--hook-event",
+            "preToolUse",
+        ])
+        .current_dir(root.join("project"))
+        .env("HOME", root.join("home"))
+        .env("USERPROFILE", root.join("home"))
+        .env("ARAI_BASE_DIR", root.join("state"))
+        .env("ARAI_TELEMETRY", "off")
+        .env("DO_NOT_TRACK", "1")
+        .env("GROK_HOOK_EVENT", "post_tool_use")
+        .env_remove("ARAI_DISABLED")
+        .env_remove("ARAI_DENY_MODE")
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"hook_event_name":"postToolUse","tool_name":"Shell","tool_input":{"command":"cargo clean"},"tool_output":"{}","conversation_id":"safety-1"}"#).unwrap();
+    let output = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["permission"], "deny");
+    assert!(response.get("hookSpecificOutput").is_none());
+    assert!(response.get("decision").is_none());
 }

@@ -7,20 +7,26 @@ Deny mode, per-rule severity rollout, dry-run explanations, compliance verdicts,
 Starting in v0.2.3, Arai no longer just *advises*: rules derived from
 prohibitive predicates (`never`, `forbids`, `must_not`) emit
 `permissionDecision: "deny"` (or equivalent) so the assistant refuses the tool call. Advisory
-rules (`always`, `requires`, `prefers`) keep the previous behaviour.
+rules (`always`, `requires`, `prefers`) add context where the host supports it.
 
 Severity is inferred from the predicate at extract time:
 
 | Predicate | Severity | Hook behaviour |
 |-----------|----------|----------------|
 | `never`, `forbids`, `must_not` | `block`  | `permissionDecision: "deny"` + reason |
-| `always`, `requires`, `enforces` | `warn` | `permissionDecision: "allow"` + context |
-| `prefers`, `learned_from` | `inform` | `permissionDecision: "allow"` + context |
+| `always`, `requires`, `enforces` | `warn` | Context without granting permission |
+| `prefers`, `learned_from` | `inform` | Context without granting permission |
+
+Claude/Codex advisory output omits permissionDecision, preserving host approval.
+Grok's allow response also preserves approval, but its nested context reaches
+the model after execution: audit labels it `defer`, without pre-action
+compliance credit. Cursor's pre-tool allow cannot carry advice.
+PermissionDenied is observed without requesting automatic retries.
 
 Rolling Arai out incrementally? Flip deny mode off at the env level:
 
 ```bash
-ARAI_DENY_MODE=off   # advisory-only — rules still fire in additionalContext
+ARAI_DENY_MODE=off   # advisory-only; context depends on the host's capability
 ```
 
 Useful pattern: ship Arai in advise mode for a week, watch `arai audit
