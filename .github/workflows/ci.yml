@@ -134,7 +134,7 @@ jobs:
           seg = sys.stdin.read().strip()
           seg += "=" * (-len(seg) % 4)
           c = json.loads(base64.urlsafe_b64decode(seg))
-          keys = ("repository", "repository_owner", "workflow_ref", "job_workflow_ref",
+          keys = ("sub", "repository", "repository_owner", "workflow_ref", "job_workflow_ref",
                   "environment", "ref", "event_name", "repository_visibility", "aud")
           print(json.dumps({k: c.get(k) for k in keys}, indent=2))
           '
