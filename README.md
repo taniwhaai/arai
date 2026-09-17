@@ -41,7 +41,7 @@ repos:
 
 ## What It Does
 
-When your AI coding assistant (Claude Code, Grok Build, or Codex) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
+When your AI coding assistant (Claude Code, Grok Build, Codex, or Cursor) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
 
 ```
 You: "Create a new database migration"
