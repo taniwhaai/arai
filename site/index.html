@@ -201,6 +201,14 @@
         .supported-item span {
             color: var(--text-secondary);
         }
+        .tag {
+            display: inline-block; vertical-align: middle;
+            font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            color: var(--primary); background: var(--bg-light);
+            border: 1px solid var(--primary-light); border-radius: 4px;
+            padding: 0.05rem 0.4rem; margin-left: 0.35rem;
+        }
 
         /* Install methods */
         .install-methods {
@@ -324,7 +332,7 @@
     <div class="container">
         <div class="eyebrow">Runtime policy enforcement for AI coding agents</div>
         <h1>Instruction files that actually block.</h1>
-        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
+        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Native hooks for Claude Code, Grok Build and Codex; a git pre-commit gate for everything else. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -342,6 +350,7 @@
             <tr><td>No record of what was ignored</td><td>Hash-chained audit log; <code>arai audit --verify</code></td></tr>
             <tr><td>You hope it listened</td><td>Per-rule obeyed / ignored / unclear verdicts</td></tr>
             <tr><td>Rewrite your rules into a new policy format</td><td>Your existing files <em>are</em> the policy</td></tr>
+            <tr><td>One assistant honours it, the next one doesn&rsquo;t</td><td>Same rules in Claude Code, Grok Build, Codex &mdash; and at <code>git commit</code> for any tool</td></tr>
         </table>
     </div>
 </section>
@@ -360,16 +369,20 @@
                 <span>Native hooks — block when hooks run (needs <code>--trust</code>; advise best-effort)</span>
             </div>
             <div class="supported-item">
-                <strong>Codex</strong>
-                <span>Native shell and patch hooks in the Unreleased source build — enable via <code>/hooks</code>; <a href="https://github.com/taniwhaai/arai/blob/main/docs/codex.md">setup and coverage</a></span>
+                <strong>Codex <span class="tag">new in v1.1.2</span></strong>
+                <span>Native PreToolUse / PostToolUse / UserPromptSubmit hooks in <code>.codex/hooks.json</code>; shell calls and <code>apply_patch</code> checked per file. You enable the hooks once in Codex via <code>/hooks</code>. <a href="https://github.com/taniwhaai/arai/blob/main/docs/codex.md">Setup and coverage</a></span>
+            </div>
+            <div class="supported-item">
+                <strong>Any tool, at <code>git commit</code></strong>
+                <span><code>arai check-diff --cached</code> as a pre-commit hook blocks a violating diff whether Cursor, Copilot, or a human wrote it</span>
             </div>
             <div class="supported-item">
                 <strong>Cursor, Windsurf, Cline &amp; others</strong>
-                <span>Arai MCP integration — list / add guards / recent decisions (no automatic block)</span>
+                <span>Arai MCP integration — list / add guards / recent decisions (no automatic block at the tool call)</span>
             </div>
             <div class="supported-item">
                 <strong>GitHub Copilot</strong>
-                <span>Instruction file ingestion only</span>
+                <span>Instruction file ingestion only (plus the pre-commit gate)</span>
             </div>
         </div>
     </div>
@@ -415,11 +428,23 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code and Grok Build when native PreToolUse hooks run. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf, Cline and similar hosts use MCP tools (list / add / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code, Grok Build and Codex when the host runs native PreToolUse hooks. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. On Codex you approve the hooks once in <code>/hooks</code>. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Cursor, Windsurf, Cline and similar hosts use MCP tools (list / add / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
+            </div>
+            <div class="feature">
+                <h3>Gate the diff, not just the tool <span class="tag">new in v1.1.2</span></h3>
+                <p>Host hooks are per-tool. <code>arai check-diff</code> runs the same rule engine over a git diff: added files match as Write, modified and renamed files as Edit, and any Block-severity hit exits non-zero. <code>arai init --pre-commit</code> installs it as a local git hook, and the repo ships a <a href="https://pre-commit.com">pre-commit</a> manifest &mdash; so a violating change is stopped whether Claude Code, Cursor, Copilot, or a person made it. It is a local hook: per clone, and <code>--no-verify</code> skips it like any pre-commit hook.</p>
+            </div>
+            <div class="feature">
+                <h3>Codex patches, per file <span class="tag">new in v1.1.2</span></h3>
+                <p>Codex writes files through <code>apply_patch</code>, so Ārai parses the patch instead of trusting the tool name: <em>Add File</em> checks as Write, <em>Update File</em> as Edit, <em>Move to</em> checks the destination as both, so a rename can&rsquo;t sidestep a creation rule. Malformed or unsupported patches fail closed. Nothing is executed by the hook.</p>
             </div>
             <div class="feature">
                 <h3>Intent-aware</h3>
                 <p>"Never hand-write migrations" fires on Write but not Edit. Editing existing migrations is fine.</p>
+            </div>
+            <div class="feature">
+                <h3>Rules scoped to where they live <span class="tag">new in v1.1.2</span></h3>
+                <p>A nested <code>CLAUDE.md</code> or <code>AGENTS.md</code> applies inside its directory. <code>.claude/rules/**/*.md</code> honours <code>paths:</code>, and <code>.cursor/rules/*.mdc</code> honours <code>globs:</code> / <code>alwaysApply:</code>, so a <code>paths:</code> rule about <code>migrations/</code> fires on file writes there and nowhere else. Global rules under <code>~/.claude/rules/</code> are picked up too. Invalid scope syntax aborts the scan rather than silently widening a rule.</p>
             </div>
             <div class="feature">
                 <h3>Code graph</h3>
@@ -431,7 +456,7 @@
             </div>
             <div class="feature">
                 <h3>Rule set stays live</h3>
-                <p>On hosts that emit the events (Claude Code today): edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules. Elsewhere, run <code>arai scan</code> after instruction-file edits.</p>
+                <p>On hosts that emit the events (Claude Code today): edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules. Grok Build and Codex don&rsquo;t emit those events, so there you run <code>arai scan</code> after instruction-file edits. A re-scan replaces its snapshot in one transaction: deleted files drop out, a failed scan keeps the previous rule set, and severity pins survive.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
@@ -445,7 +470,7 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Hash-chained audit log</h3>
-                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain.</p>
+                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain. Parallel sessions are safe: writers serialise across processes and resume from the canonical tail, never a stale head.</p>
             </div>
             <div class="feature">
                 <h3>Compliance tracking</h3>
@@ -475,7 +500,11 @@
             </div>
             <div class="feature">
                 <h3>Preview before commit</h3>
-                <p><code>arai lint</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB.</p>
+                <p><code>arai lint</code> shows exactly which rules a file produces with their classified intent. Iterate on wording without touching the DB. <code>lint</code> and <code>scan</code> warn about rules that can never fire, and <code>arai add</code> refuses them outright (<code>--allow-inert</code> keeps a documentary rule on purpose) &mdash; so an inert rule is never silent.</p>
+            </div>
+            <div class="feature">
+                <h3>Know it&rsquo;s actually running</h3>
+                <p><code>arai status</code> reports the last recorded firing, so "hooks registered but never invoked" shows up without reading JSONL. It reports what it can see &mdash; config present, firings observed &mdash; and says plainly that host trust and hook activation must be checked in the host itself.</p>
             </div>
             <div class="feature">
                 <h3>Diff before save</h3>
@@ -521,7 +550,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and self-check recent decisions via <code>arai_recent_decisions</code>. MCP does not inject or deny tool calls by itself &mdash; blocking still requires a native PreToolUse host (Claude Code, Grok Build). On MCP-only hosts, new guards apply when a supporting host next loads them.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session and self-check recent decisions via <code>arai_recent_decisions</code>. MCP does not inject or deny tool calls by itself &mdash; blocking still requires a native PreToolUse host (Claude Code, Grok Build, Codex) or the pre-commit gate. On MCP-only hosts, new guards apply when a supporting host next loads them.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>
@@ -600,6 +629,11 @@
             <span class="then-label">Then</span>
             <code>cd your-project &amp;&amp; arai init</code>
         </div>
+        <div class="then-line">
+            <span class="then-label">Plus</span>
+            <code>arai init --pre-commit &nbsp;<span style="color:#9CA3AF"># same init, plus a git hook running check-diff</span></code>
+        </div>
+        <p class="supported-intro" style="max-width:700px;margin:1rem auto 0;font-size:0.85rem">Codex users: after <code>arai init</code>, open <code>/hooks</code> in Codex and enable the project hooks &mdash; Ārai writes the registration but never grants host trust. Codex support needs Ārai v1.1.2 or newer.</p>
     </div>
 </section>
 
