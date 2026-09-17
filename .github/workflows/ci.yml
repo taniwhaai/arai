@@ -151,6 +151,16 @@ jobs:
             MSG=$(jq -r '.message // .error // .' body.json 2>/dev/null | head -c 600 || true)
             rm -f body.json
             echo "::error::npm token exchange failed (HTTP $CODE): $MSG"
+            # Control probe: same token against a package that certainly has
+            # no Trusted Publisher.  If npm answers identically, the error
+            # above means "no publisher matched these claims", not a
+            # transport or token problem.
+            CCODE=$(curl -sS -o cbody.json -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $ID_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$REGISTRY/-/npm/v1/oidc/token/exchange/package/@taniwhaai%2fno-such-package-control")
+            echo "Control (unconfigured package): HTTP $CCODE: $(jq -r '.message // .error // .' cbody.json 2>/dev/null | head -c 300 || true)"
+            rm -f cbody.json
             exit 1
           fi
 
