@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- npm keeps a portable Node launcher separate from the downloaded binary, so
+  Windows command shims launch Arai correctly and preserve arguments and exit status.
+- Windows installers and upgrades use `.exe` filenames; unshipped Windows ARM64
+  builds are rejected before downloading.
+- Upgrades verify release checksums and HTTP success before replacing the running
+  binary, with temporary downloads isolated and cleaned on failure.
+
 ## [1.1.2] - 2026-09-16
 
 ### Added
