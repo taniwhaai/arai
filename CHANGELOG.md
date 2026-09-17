@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
   Claude Code + Grok Build + Codex hooks, four MCP tools including
   `arai_check_action`, `canonicalize`/`sync`/`disable`/`deinit`, and
   retire Grok-TUI-planning copy that treated those hosts as unmerged
+- Refresh `docs/arai-compliance-features.{docx,pdf}` from v0.2.18 / May 2026
+  (`~/.arai` paths) to v1.1.2: Codex and Grok hosts, `check-diff`,
+  `audit --ship`/`--purge`, cosign/SLSA, disable/enable, canonicalize/sync
 
 ## [1.1.2] - 2026-09-16
 
