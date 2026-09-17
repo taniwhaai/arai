@@ -6,6 +6,15 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      verify_npm_oidc:
+        description: >-
+          Exchange this run's Actions OIDC token with registry.npmjs.org to
+          prove the @taniwhaai/arai Trusted Publisher is configured.
+          Publishes nothing.
+        type: boolean
+        default: false
 
 permissions:
   pull-requests: write
@@ -87,6 +96,61 @@ jobs:
           if ! diff -q install.sh site/install; then
             echo "::error::site/install is out of sync with install.sh."
             echo "::error::Run \`cp install.sh site/install\` and commit."
+            exit 1
+          fi
+
+  # Dry-run for npm trusted publishing.  Performs the same OIDC exchange
+  # `npm publish` (npm >= 11.5.1, lib/utils/oidc.js) does before it uploads:
+  # fetch an Actions id_token with audience npm:registry.npmjs.org and POST
+  # it to the registry's per-package exchange endpoint.  A 200 with a token
+  # means the Trusted Publisher on npmjs.com matches this repo + workflow
+  # file; anything else is the misconfiguration a real tag push would hit.
+  # The short-lived token is discarded.  Nothing is published.
+  verify-npm-oidc:
+    name: Verify npm trusted publisher (no publish)
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_npm_oidc
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Exchange Actions OIDC token with npm
+        env:
+          # npm-package-arg escapedName for @taniwhaai/arai
+          PACKAGE: '@taniwhaai%2farai'
+          REGISTRY: https://registry.npmjs.org
+        run: |
+          set -euo pipefail
+          ID_TOKEN=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r '.value // empty')
+          if [ -z "$ID_TOKEN" ]; then
+            echo "::error::GitHub did not issue an id_token (is id-token: write set?)"
+            exit 1
+          fi
+
+          echo "Claims the npm Trusted Publisher matches against:"
+          printf '%s' "$ID_TOKEN" | cut -d. -f2 | python3 -c '
+          import base64, json, sys
+          seg = sys.stdin.read().strip()
+          seg += "=" * (-len(seg) % 4)
+          c = json.loads(base64.urlsafe_b64decode(seg))
+          keys = ("repository", "repository_owner", "workflow_ref", "job_workflow_ref",
+                  "environment", "ref", "event_name", "repository_visibility", "aud")
+          print(json.dumps({k: c.get(k) for k in keys}, indent=2))
+          '
+
+          CODE=$(curl -sS -o body.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $ID_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$REGISTRY/-/npm/v1/oidc/token/exchange/package/$PACKAGE")
+          if [ "$CODE" = "200" ] && jq -e '.token | strings | length > 0' body.json >/dev/null 2>&1; then
+            rm -f body.json
+            echo "OK: npm accepted the OIDC token and issued a short-lived publish credential (discarded)."
+            echo "The Trusted Publisher for @taniwhaai/arai matches taniwhaai/arai + ci.yml."
+          else
+            MSG=$(jq -r '.message // .error // .' body.json 2>/dev/null | head -c 600 || true)
+            rm -f body.json
+            echo "::error::npm token exchange failed (HTTP $CODE): $MSG"
             exit 1
           fi
 
