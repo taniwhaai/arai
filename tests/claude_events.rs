@@ -23,13 +23,26 @@ impl Project {
         fs::create_dir_all(root.join("home")).unwrap();
         fs::write(root.join("project/CLAUDE.md"), rules).unwrap();
         let project = Self(root);
-        let out = project.command().arg("scan").output().unwrap();
+        project.scan();
+        project
+    }
+
+    fn scan(&self) {
+        let out = self.command().arg("scan").output().unwrap();
         assert!(
             out.status.success(),
             "scan: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        project
+    }
+
+    /// The session-start change check treats a file saved in the same
+    /// second the scan started as possibly newer (inclusive compare), so
+    /// tests that assert "nothing changed" first move the scan clearly past
+    /// the fixture's write.
+    fn settle(&self) {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        self.scan();
     }
 
     fn command(&self) -> Command {
@@ -232,6 +245,7 @@ fn permission_denied_retries_when_arai_only_warns() {
 #[test]
 fn session_start_rescans_only_when_instruction_files_changed() {
     let p = Project::new("session_start", "- Never run alembic upgrade by hand\n");
+    p.settle();
     // Codex/Claude shape: matcher value arrives as `source`.
     // Codex/Claude shape: matcher value arrives as `source`.  These hosts
     // already get the rules summary on UserPromptSubmit, so SessionStart

@@ -647,6 +647,8 @@ fn cmd_scan(
     adopt_legacy_sources: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
+    // Captured before any file is read; see init::run for why.
+    let scan_started = chrono_now();
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
 
@@ -660,7 +662,7 @@ fn cmd_scan(
         }
     }
 
-    db.set_meta("last_scan", &chrono_now())
+    db.set_meta("last_scan", &scan_started)
         .map_err(|e| e.to_string())?;
     println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
     warn_inert_rules(&db)?;

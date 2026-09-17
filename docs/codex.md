@@ -32,7 +32,7 @@ different path requires another `arai init`.
 | `apply_patch` Delete File | Checks its path as Edit; the current rule schema has no separate Delete action. |
 | PostToolUse | Records observations and compliance; accepts Codex's structured `tool_response`. |
 | UserPromptSubmit | Injects applicable prompt-time guidance. |
-| SessionStart (`startup\|resume`) | Spawns a background `arai scan` so instruction files edited between sessions are enforced, and returns a one-line summary of the active domain rules as `additionalContext`. |
+| SessionStart (`startup\|resume`) | Spawns a background `arai scan` when an instruction file was added, removed or modified since the last scan, so edits made between sessions are enforced. No output: Codex already receives the active-rules summary on UserPromptSubmit. |
 
 Codex passes the raw patch in `tool_input.command` and keeps `tool_name` as
 `apply_patch`. Arai parses all file operations before deciding, combines their

@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
 
+    // Captured before any file is read: the session-start change check
+    // compares instruction-file mtimes against this, so a save that lands
+    // while the scan is still running is not mistaken for "already seen".
+    let scan_started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
     println!("  Scanning for instruction files...");
     let files = discovery::discover(&cfg)?;
 
@@ -45,17 +53,8 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         }
     }
 
-    db.set_meta(
-        "last_scan",
-        &format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        ),
-    )
-    .map_err(|e| e.to_string())?;
+    db.set_meta("last_scan", &scan_started.to_string())
+        .map_err(|e| e.to_string())?;
 
     println!("\n  Scanning source code for imports...");
     let imports = code_scanner::scan_project(&cfg.project_root);
@@ -405,13 +404,20 @@ fn inject_host(spec: &HostSpec, cfg: &config::Config) -> Result<(), String> {
         // Refresh the binary path and matcher on every init. Remove only our
         // handlers, not entire groups: a group may also contain user hooks.
         remove_arai_entries(entries, spec.layout);
+        let mut handler = handler.clone();
+        // Session start walks the project for the change check; give it
+        // more than the tool-call budget so a large tree is not killed
+        // mid-check, which would silently leave the rule set stale.
+        if registration.event.eq_ignore_ascii_case("sessionstart") {
+            handler["timeout"] = serde_json::json!(10);
+        }
         match spec.layout {
             Layout::Grouped => entries.push(serde_json::json!({
                 "matcher": registration.matcher,
-                "hooks": [handler.clone()]
+                "hooks": [handler]
             })),
             Layout::Flat => {
-                let mut entry = handler.clone();
+                let mut entry = handler;
                 if !registration.matcher.is_empty() {
                     entry["matcher"] = Value::String(registration.matcher.into());
                 }

@@ -636,21 +636,31 @@ fn instruction_files_changed(cfg: &Config, db: &Store) -> bool {
     let Ok(discovered) = crate::discovery::discover_unresolved(cfg) else {
         return true;
     };
-    let Ok(mut known) = db.discovered_sources() else {
+    // A file on disk the store has never seen under any owner is new; a
+    // discovery-owned source no longer on disk was deleted.  Externally
+    // supplied (Kete) or retained legacy sources are known but not
+    // discovery-owned, so they must not count as "new" every session.
+    let (Ok(all_known), Ok(discovery_owned)) = (db.list_files(), db.discovered_sources()) else {
         return true;
     };
-    let mut current: Vec<&str> = discovered.iter().map(|f| f.path.as_str()).collect();
-    current.sort_unstable();
-    known.sort_unstable();
-    if current != known {
+    let current: std::collections::HashSet<&str> =
+        discovered.iter().map(|f| f.path.as_str()).collect();
+    if discovered.iter().any(|f| !all_known.contains(&f.path))
+        || discovery_owned
+            .iter()
+            .any(|path| !current.contains(path.as_str()))
+    {
         return true;
     }
+    // `last_scan` is captured before the scan reads its files and compared
+    // inclusively: a save landing in the same second as the scan start, or
+    // during a slow enrichment pass, still triggers one refresh.
     discovered.iter().any(|file| {
         std::fs::metadata(&file.path)
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|age| age.as_secs() > last_scan)
+            .map(|age| age.as_secs() >= last_scan)
             .unwrap_or(true)
     })
 }
@@ -781,8 +791,14 @@ fn handle_stdin_impl(
     let input =
         String::from_utf8(buf).map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
 
-    let mut hook: Value =
-        serde_json::from_str(&input).map_err(|e| format!("Invalid hook JSON: {e}"))?;
+    let mut hook: Value = serde_json::from_str(&input).map_err(|e| {
+        // Unparseable, but the bytes still say which host sent them; a
+        // truncated Cursor payload should get Cursor's deny shape and reason.
+        if input.contains("\"cursor_version\"") {
+            *host_hint = Host::Cursor;
+        }
+        format!("Invalid hook JSON: {e}")
+    })?;
     // Cursor payloads are rewritten into the canonical envelope here, and
     // again (idempotently) inside `match_hook`, so the side-effect paths
     // below (session recording, event gating) and the pure matcher agree.

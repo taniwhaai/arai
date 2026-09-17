@@ -313,31 +313,48 @@ fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
     let mut init = Command::new(&binary);
     fixture.isolate(&mut init, &fixture.project);
     assert_success(&init.arg("init").output().unwrap());
+    let mut add = Command::new(&binary);
+    fixture.isolate(&mut add, &fixture.project);
+    assert_success(&add.args(["add", "Never run cargo clean"]).output().unwrap());
     let settings = fixture.read_json(".codex/hooks.json");
     let command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["commandWindows"]
         .as_str()
         .unwrap();
     let (program, arguments) = command.split_once(' ').unwrap();
-    let mut hook = Command::new(program);
-    fixture.isolate(&mut hook, &fixture.project);
-    let mut child = hook
-        .args(arguments.split_whitespace())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Malformed PreToolUse must reach the binary and produce the JSON deny.
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"{\"hook_event_name\":\"PreToolUse\",\"tool_input\":{")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert_success(&output);
-    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let run = |payload: &[u8]| {
+        let mut hook = Command::new(program);
+        fixture.isolate(&mut hook, &fixture.project);
+        let mut child = hook
+            .args(arguments.split_whitespace())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(payload).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_success(&output);
+        output.stdout
+    };
+    // A malformed deny alone cannot prove stdin was forwarded (an empty
+    // stdin denies the same way), so also assert a rule-based deny with
+    // its reason and a clean allow for a harmless command.
+    let stdout = run(b"{\"hook_event_name\":\"PreToolUse\",\"tool_input\":{");
+    let response: Value = serde_json::from_slice(&stdout).unwrap();
     assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    let stdout = run(
+        br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo clean"}}"#,
+    );
+    let response: Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(response["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap()
+        .contains("cargo clean"));
+    let stdout = run(
+        br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo check"}}"#,
+    );
+    assert!(stdout.is_empty(), "{}", String::from_utf8_lossy(&stdout));
     // Refresh and remove encoded Windows handlers as well as their POSIX side.
     let mut init = Command::new(&binary);
     fixture.isolate(&mut init, &fixture.project);

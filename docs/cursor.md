@@ -10,8 +10,9 @@ the `arai check-diff` pre-commit gate.
 Run `arai init` in the project. This merges Arai's handlers into
 `.cursor/hooks.json` (creating it with `"version": 1` when absent) and
 preserves unrelated handlers. Re-running init refreshes old executable paths;
-`arai deinit` removes only Arai's handlers and deletes the file when nothing
-else is left in it.
+`arai deinit` removes only Arai's handlers and rewrites the file; like
+`.claude/settings.json`, it is never deleted, even when only empty arrays
+remain.
 
 Cursor loads project hooks from `<project>/.cursor/hooks.json`. Enterprise and
 team hooks take precedence over project hooks; a managed policy can restrict
@@ -31,7 +32,9 @@ hooks are loaded.
 understood if registered by hand (they become PreToolUse with a synthesised
 tool), but `arai init` does not register them: `preToolUse` already covers
 shell, MCP and file tools, and registering both would evaluate and audit each
-shell call twice.
+shell call twice. `beforeReadFile` always allows, because reads are on
+Arai's skip list; it is accepted only so a hand registration cannot fail
+closed by accident.
 
 ## Fail-closed posture
 

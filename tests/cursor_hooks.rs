@@ -27,13 +27,26 @@ impl Project {
     fn new(rules: &str) -> Self {
         let project = Self::bare();
         fs::write(project.0.join("project/AGENTS.md"), rules).unwrap();
-        let out = project.command().arg("scan").output().unwrap();
+        project.scan();
+        project
+    }
+
+    fn scan(&self) {
+        let out = self.command().arg("scan").output().unwrap();
         assert!(
             out.status.success(),
             "scan: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        project
+    }
+
+    /// The session-start change check treats a file saved in the same
+    /// second the scan started as possibly newer (inclusive compare), so
+    /// tests that assert "nothing changed" first move the scan clearly past
+    /// the fixture's write.
+    fn settle(&self) {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        self.scan();
     }
 
     fn command(&self) -> Command {
@@ -228,6 +241,18 @@ fn malformed_and_unrecognised_input_fails_closed_in_cursor_shape() {
     let out = out.expect("deny");
     assert_eq!(code, 0);
     assert_eq!(out["hookSpecificOutput"]["permissionDecision"], "deny");
+    // When the truncated bytes still carry Cursor's marker, the deny keeps
+    // Cursor's shape and reason.
+    let (out, code) = p.hook_bytes(
+        b"{\"cursor_version\":\"2.4.0\",\"hook_event_name\":\"preToolUse\",\"tool_input\":{",
+    );
+    let out = out.expect("deny");
+    assert_eq!(code, 0);
+    assert_eq!(out["permission"], "deny");
+    assert!(out["user_message"]
+        .as_str()
+        .unwrap()
+        .contains("internal error"));
     // A Cursor-shaped shell event with no command is a Cursor-shaped deny.
     let (out, _) = p.hook(json!({"hook_event_name": "beforeShellExecution", "sandbox": false}));
     let out = out.unwrap();
@@ -268,17 +293,20 @@ fn shell_synonyms_and_file_field_aliases_are_matched() {
         json!({"file_path": "README.md", "content": "# hi"}),
     ));
     assert_eq!(out.unwrap()["permission"], "allow");
-    // Delete is evaluated as an Edit on its path and always gets a decision.
+    // Delete is evaluated as an Edit on its path: the hand-write rule is
+    // Write-scoped, so this is an explicit allow rather than a deny or a
+    // validation failure.
     let (out, _) = p.hook(pre_tool_use(
         "Delete",
         json!({"target_file": "alembic/old.py"}),
     ));
-    assert!(out.unwrap().get("permission").is_some());
+    assert_eq!(out.unwrap(), json!({"permission": "allow"}));
 }
 
 #[test]
 fn after_file_edit_feeds_post_observation_and_session_start_summarises() {
     let p = Project::new(RULES);
+    p.settle();
     let (out, code) = p.hook(json!({"hook_event_name": "afterFileEdit",
         "file_path": "/p/notes/log.txt",
         "edits": [{"old_string": "", "new_string": "from alembic import op"}]}));
