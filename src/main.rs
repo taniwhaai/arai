@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "arai",
     version,
-    about = "Instruction files that actually work (Claude Code, Grok Build, Codex)."
+    about = "Instruction files that actually work (Claude Code, Grok Build, Codex, Cursor)."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -517,11 +517,12 @@ fn cmd_status() -> Result<(), String> {
     println!("  Sources:    {} file(s)", files.len());
 
     println!("  {}", style::structural("Integration", col));
-    println!("    Native:   Claude Code, Grok Build, Codex");
+    println!("    Native:   Claude Code, Grok Build, Codex, Cursor");
     for path in [
         ".claude/settings.json",
         ".grok/hooks/arai.json",
         ".codex/hooks.json",
+        ".cursor/hooks.json",
     ] {
         let state = if cfg.project_root.join(path).is_file() {
             "config present"
@@ -530,7 +531,10 @@ fn cmd_status() -> Result<(), String> {
         };
         println!("              • {path} ({state})");
     }
-    println!("    Host trust and hook activation must be checked in the host; Codex: /hooks");
+    println!("    Host trust and hook activation must be checked in the host:");
+    println!(
+        "    Claude Code: workspace trust; Codex: /hooks; Grok Build: /hooks-trust or --trust"
+    );
     for f in &files {
         println!("    - {f}");
     }
@@ -643,6 +647,8 @@ fn cmd_scan(
     adopt_legacy_sources: bool,
 ) -> Result<(), String> {
     let cfg = config::Config::load()?;
+    // Captured before any file is read; see init::run for why.
+    let scan_started = chrono_now();
     let files = discovery::discover(&cfg)?;
     let db = store::Store::open(&cfg.db_path())?;
 
@@ -656,7 +662,7 @@ fn cmd_scan(
         }
     }
 
-    db.set_meta("last_scan", &chrono_now())
+    db.set_meta("last_scan", &scan_started)
         .map_err(|e| e.to_string())?;
     println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
     warn_inert_rules(&db)?;

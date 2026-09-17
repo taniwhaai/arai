@@ -23,6 +23,17 @@ pub struct DiscoveredFile {
 /// Discover instruction sources without flattening their activation scope.
 /// Read/walk failures are surfaced: a partial snapshot must not prune policy.
 pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
+    discover_with(cfg, true)
+}
+
+/// Same enumeration as [`discover`] but without resolving `arai:extends`.
+/// For callers that only need paths and raw content (the session-start
+/// change check), so a hook handler never performs a network fetch.
+pub fn discover_unresolved(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
+    discover_with(cfg, false)
+}
+
+fn discover_with(cfg: &Config, resolve_extends: bool) -> Result<Vec<DiscoveredFile>, String> {
     let mut files = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -46,7 +57,7 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
         (".windsurfrules", "windsurf_rules", 0.90),
     ] {
         if let Some(file) = try_read_file(&cfg.project_root.join(name), source_type, confidence)? {
-            add_discovered(file, cfg, true, &mut files, &mut seen)?;
+            add_discovered(file, cfg, resolve_extends, &mut files, &mut seen)?;
         }
     }
     for path in walk_instruction_tree(&cfg.project_root, true)? {
@@ -55,7 +66,7 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
             continue;
         };
         if let Some(file) = try_read_file(&path, source_type, confidence)? {
-            add_discovered(file, cfg, true, &mut files, &mut seen)?;
+            add_discovered(file, cfg, resolve_extends, &mut files, &mut seen)?;
         }
     }
 
@@ -64,12 +75,12 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
         "claude_md_global",
         0.88,
     )? {
-        add_discovered(file, cfg, true, &mut files, &mut seen)?;
+        add_discovered(file, cfg, resolve_extends, &mut files, &mut seen)?;
     }
     for path in walk_instruction_tree(&cfg.home_dir.join(".claude/rules"), false)? {
         if path.extension().is_some_and(|extension| extension == "md") {
             if let Some(file) = try_read_file(&path, "claude_rules_global", 0.88)? {
-                add_discovered(file, cfg, true, &mut files, &mut seen)?;
+                add_discovered(file, cfg, resolve_extends, &mut files, &mut seen)?;
             }
         }
     }
@@ -79,7 +90,7 @@ pub fn discover(cfg: &Config) -> Result<Vec<DiscoveredFile>, String> {
             "agents_md_global",
             0.87,
         )? {
-            add_discovered(file, cfg, true, &mut files, &mut seen)?;
+            add_discovered(file, cfg, resolve_extends, &mut files, &mut seen)?;
         }
     }
     let memory_dir = cfg.claude_memory_dir();

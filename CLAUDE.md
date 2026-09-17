@@ -63,7 +63,9 @@ src/
 ├── parser.rs             # Rule extraction from markdown (7 layers of pattern matching); tracks layer + expiry
 ├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent); expired-rule filter
 ├── guardrails.rs         # Term extraction, subject matching, tool scope filtering; format_trace
-├── hooks.rs              # Hook protocol — Claude / Grok / Codex PreToolUse deny + FileChanged auto-rescan
+├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit + FileChanged/InstructionsLoaded/SessionStart auto-rescan; severity → deny/allow; per-host response shapes
+├── codex.rs              # Codex apply_patch wire format → per-file Write/Edit actions
+├── cursor.rs             # Cursor Agent hook payloads → canonical envelope; Cursor {"permission"} responses
 ├── init.rs               # `arai init` / `deinit` — discover → extract → classify → scan → hook inject
 ├── intent.rs             # Intent classification — action, timing, tool scope, severity
 ├── migrate.rs            # `arai migrate` — move legacy ~/.arai → ~/.taniwha/arai (prompted)

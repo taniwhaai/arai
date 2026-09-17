@@ -41,7 +41,7 @@ repos:
 
 ## What It Does
 
-When your AI coding assistant (Claude Code, Grok Build, or Codex) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
+When your AI coding assistant (Claude Code, Grok Build, Codex, or Cursor) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
 
 ```
 You: "Create a new database migration"
@@ -79,7 +79,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | `AGENTS.md` / `Agents.md` | Codex (native) | Hooks (block + advise; requires host trust) |
 | `~/.claude/CLAUDE.md` | Claude Code (global) | Hooks (block + advise) |
 | `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
-| `.cursorrules` / `.cursor/rules` | Cursor | MCP (advise) |
+| `.cursorrules` / `.cursor/rules` | Cursor | Hooks (block; advise at session start and after tool calls) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
 | `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
 
@@ -92,8 +92,11 @@ only sources they own. Existing stores require explicit adoption of legacy local
 sources. See [discovery, activation and upgrade handling](docs/instruction-discovery.md)
 and [Arai's place upstream of Kete](docs/stack-integration.md).
 
-- **Claude Code**, **Grok Build**, and **Codex** support PreToolUse hooks, so Arai
-  can issue `deny` decisions and actually block tool calls.
+- **Claude Code**, **Grok Build**, **Codex**, and **Cursor** support PreToolUse
+  hooks, so Arai can issue `deny` decisions and actually block tool calls.
+- On **Claude Code**, hooks in `.claude/settings.json` run only once the
+  workspace is trusted. Accept the trust prompt for the folder, or the
+  registration stays inactive.
 - On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
   host invokes hooks (verified on **1.0.0** headless with `--trust`; project
   hooks stay inactive until the folder is trusted). Advisory text is still
@@ -107,7 +110,12 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
   `apply_patch` is checked per file, including additions and move destinations.
   Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
-- Arai's integrations for Cursor, Windsurf, Cline and other MCP clients provide **agent-facing tools**
+- **Cursor** registers `preToolUse` (with `failClosed`), `postToolUse`,
+  `afterFileEdit`, and `sessionStart` in `.cursor/hooks.json`. Block is
+  load-bearing on `preToolUse`; advisory text reaches the model through the
+  session-start summary and post-tool context, because Cursor delivers
+  `agent_message` only on deny. See [coverage and limits](docs/cursor.md).
+- Arai's integrations for Windsurf, Cline and other MCP clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_check_action`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
@@ -116,22 +124,29 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   current hook capabilities of those platforms.
 
 Arai hooks several more events alongside the standard tool-call events
-**when the host emits them** (not registered on Grok Build or Codex)
-so the rule set stays accurate to the live working tree:
+**when the host emits them** so the rule set stays accurate to the live
+working tree:
 
-- **`FileChanged` + `InstructionsLoaded`** — when an instruction file
+- **`SessionStart`** (Codex, Grok Build, Cursor) — those hosts do not emit
+  instruction-change events, so at session start Arai checks whether an
+  instruction file was added, removed or modified since the last scan and,
+  only then, re-scans in the background. An `AGENTS.md` edited between
+  sessions is enforced without a manual `arai scan`; an edit made
+  mid-session still needs one.
+- **`FileChanged` + `InstructionsLoaded`** (Claude Code) — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
   into context, Arai spawns an `arai scan` in the background. The next
   tool-call hook sees the updated guardrails — no manual rescan.
-- **`CwdChanged`** — when Claude `cd`s into a different directory
+- **`CwdChanged`** (Claude Code) — when Claude `cd`s into a different directory
   (monorepo navigation), Arai re-scans rooted at the new directory so
   the next tool call matches against the right project's rules.
-- **`PostToolBatch`** — when Claude does a batch of parallel tool calls,
+- **`PostToolBatch`** (Claude Code) — when Claude does a batch of parallel tool calls,
   Arai correlates each call individually against any PreToolUse firings
   in the same session, so per-rule compliance verdicts (Obeyed /
   Ignored / Unclear) stay accurate on parallel workloads.
 
-On hosts without those events, run `arai scan` after editing instruction files.
+Run `arai scan` after editing instruction files mid-session on hosts without
+the file events.
 
 
 ## Smart Matching

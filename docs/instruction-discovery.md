@@ -40,7 +40,9 @@ in the shared store. Native Codex hooks are described in [codex.md](codex.md).
 
 FileChanged refresh uses the same instruction-path recognition as discovery,
 including `.mdc` and nested rules. It runs asynchronously where the host emits
-that event. On other hosts, run `arai scan` after instruction changes.
+that event. Codex, Grok Build and Cursor instead trigger a background scan on
+`SessionStart`; on those hosts, run `arai scan` after mid-session instruction
+changes.
 
 ## Snapshot and embedding boundaries
 

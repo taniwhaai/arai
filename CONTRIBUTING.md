@@ -59,7 +59,8 @@ src/
 ├── intent.rs          # Classify rule intent (action, timing, tool scope)
 ├── store.rs           # SQLite persistence
 ├── guardrails.rs      # Term extraction + matching
-├── hooks.rs           # Host hook protocol (Claude Code, Grok Build, Codex)
+├── hooks.rs           # Host hook protocol (Claude Code, Grok Build, Codex, Cursor)
+├── cursor.rs          # Cursor Agent hook payloads → canonical envelope
 ├── init.rs            # arai init / deinit — register and remove hooks
 ├── session.rs         # Session state + prerequisite tracking
 ├── code_scanner.rs    # tree-sitter AST import extraction
@@ -95,7 +96,7 @@ These are still open. Do not treat them as missing product surface that already 
 
 - Web dashboard for rule management
 - Rule-pack publication (canonical `arai.toml` packs beyond a single file)
-- Additional native PreToolUse hosts beyond Claude Code, Grok Build, and Codex
+- Additional native PreToolUse hosts beyond Claude Code, Grok Build, Codex, and Cursor
 
 Already shipped — do not re-propose:
 
@@ -114,7 +115,7 @@ Already shipped — do not re-propose:
 - Hook responses should stay under 50 ms median end-to-end (cold-start floor is ~20 ms; matching adds 5–15 ms). Run `bench/hot_path.sh` before/after perf-sensitive changes and post the before/after table in the commit body.
 - Don't add network calls to the hook path (only at scan/enrich/ship time)
 - Prefer expanding the verb taxonomy over adding ML complexity
-- Host-integration changes must keep Claude Code, Grok Build, and Codex paths tested; a missing tool-name alias is a silent fail-open
+- Host-integration changes must keep Claude Code, Grok Build, Codex, and Cursor paths tested; a missing tool-name alias is a silent fail-open
 
 ## License
 

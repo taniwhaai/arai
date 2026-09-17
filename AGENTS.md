@@ -40,7 +40,7 @@ These rules exist because mistakes here are expensive (corrupting Taniwha build 
 
 ## Using Arai (Dogfooding)
 
-`arai init` registers native hooks for Claude Code (`.claude/settings.json`), Grok Build (`.grok/hooks/arai.json`), and Codex (`.codex/hooks.json`).
+`arai init` registers native hooks for Claude Code (`.claude/settings.json`), Grok Build (`.grok/hooks/arai.json`), Codex (`.codex/hooks.json`), and Cursor (`.cursor/hooks.json`).
 - Run `arai init` in this repo so these rules are enforced on the host you are using.
 - Codex: after init, enable the project hooks through `/hooks`. Writing the file does not grant host trust.
 - Treat violations of the rules in this file as high-severity (many are `never` / `must` style).
@@ -51,7 +51,7 @@ These rules exist because mistakes here are expensive (corrupting Taniwha build 
 - Any change that touches hook handling, tool name normalization, response formats, matching logic, or discovery **must** include or update tests (especially in `tests/hooks_safety.rs` and `tests/codex_hooks.rs`).
 - When adding new instruction file support (new basenames or directories), update both `discovery.rs` and `hooks.rs::is_instruction_file`.
 
-## Host integrations (Claude Code, Grok Build, Codex)
+## Host integrations (Claude Code, Grok Build, Codex, Cursor)
 
 - All three native PreToolUse paths must remain functional. A change that fixes one host must not regress the others.
 - When modifying host detection or response emission, preserve and test Claude (`hookSpecificOutput.permissionDecision`), Grok (`decision` + exit 2), and Codex shapes.
@@ -59,7 +59,7 @@ These rules exist because mistakes here are expensive (corrupting Taniwha build 
 - Do not bypass Arai hooks when they are active (do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
 - When using `arai why` or `arai audit` during development, treat the output as authoritative for why a rule fired.
 - After landing host-integration changes, run `arai init` on the affected host and verify the hooks are active (`arai status`, host `/hooks` UI, a harmless blocked-rule probe).
-- Keep `normalize_tool_name` current with live host tool names. A missing alias is a silent fail-open. Grok Build: `run_terminal_command` → `Bash`. Codex: canonical `Bash` plus per-file `apply_patch`.
+- Keep `normalize_tool_name` current with live host tool names. A missing alias is a silent fail-open. Grok Build: `run_terminal_command` → `Bash`. Codex: canonical `Bash` plus per-file `apply_patch`. Cursor: `Shell` → `Bash`, `Delete` → `Edit` (see `src/cursor.rs`).
 - Do not let work on one host reduce quality or test coverage of the others.
 - When under high context pressure, treat the rules in this file as more important, not less.
 - When Arai fires a rule, treat it as feedback and update AGENTS.md, lessons, or the integration as needed.

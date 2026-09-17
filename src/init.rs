@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     let cfg = config::Config::load()?;
 
+    // Captured before any file is read: the session-start change check
+    // compares instruction-file mtimes against this, so a save that lands
+    // while the scan is still running is not mistaken for "already seen".
+    let scan_started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
     println!("  Scanning for instruction files...");
     let files = discovery::discover(&cfg)?;
 
@@ -45,17 +53,8 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         }
     }
 
-    db.set_meta(
-        "last_scan",
-        &format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        ),
-    )
-    .map_err(|e| e.to_string())?;
+    db.set_meta("last_scan", &scan_started.to_string())
+        .map_err(|e| e.to_string())?;
 
     println!("\n  Scanning source code for imports...");
     let imports = code_scanner::scan_project(&cfg.project_root);
@@ -68,22 +67,19 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     );
 
     println!("\n  Setting up hooks...");
-    inject_hooks(&cfg)?;
-    println!("    \u{2713} .claude/settings.json updated");
-    inject_codex_hooks(&cfg)?;
-    println!("    \u{2713} .codex/hooks.json updated (native Codex)");
-    print_codex_trust_guidance();
-
-    // Also register for native Grok Build support (if possible).
-    if let Err(e) = inject_grok_hooks(&cfg) {
-        // Non-fatal for now — many users will still get value via the
-        // .claude/settings.json compatibility layer that Grok loads.
-        eprintln!("    \u{26a0} Grok native hook registration skipped: {e}");
-    } else {
-        println!("    \u{2713} .grok/hooks/arai.json updated (native Grok Build)");
-        println!("      Grok Build gates project hooks behind trust: run /hooks-trust in the");
-        println!("      Grok session (or launch with --trust) the first time, or Arai's hooks");
-        println!("      stay inactive on the native path.");
+    for spec in HOSTS {
+        match inject_host(spec, &cfg) {
+            Ok(()) => {
+                println!("    \u{2713} {} updated", spec.label);
+                for line in trust_guidance(spec.kind) {
+                    println!("      {line}");
+                }
+            }
+            Err(e) if spec.optional => {
+                eprintln!("    \u{26a0} {} registration skipped: {e}", spec.label);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     // Track init event + flush queued telemetry
@@ -107,7 +103,9 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         println!("    \u{2713} Git pre-commit hook → arai check-diff --cached");
     }
 
-    println!("\n  Arai is registered for Claude Code, Codex, and Grok Build (PreToolUse hooks).");
+    println!(
+        "\n  Arai is registered for Claude Code, Codex, Grok Build, and Cursor (PreToolUse hooks)."
+    );
     println!("  Re-run init after moving the Arai binary to refresh registered paths.");
     Ok(())
 }
@@ -165,14 +163,13 @@ pub fn sync_discovered_rules_with_adoption(
 pub fn deinit() -> Result<(), String> {
     let cfg = config::Config::load()?;
     let mut errors = Vec::new();
-    for (path, delete_empty) in [
-        (cfg.claude_settings_path(), false),
-        (cfg.codex_hooks_path(), false),
-        (cfg.grok_hooks_dir().join("arai.json"), true),
-    ] {
-        match remove_hooks_file(&path, delete_empty) {
+    for spec in HOSTS {
+        match remove_host(spec, &cfg) {
             Ok(removed) if removed > 0 => {
-                println!("  Removed {removed} Arai hook(s) from {}", path.display());
+                println!(
+                    "  Removed {removed} Arai hook(s) from {}",
+                    (spec.path)(&cfg).display()
+                );
             }
             Ok(_) => {}
             Err(e) => errors.push(e),
@@ -205,16 +202,246 @@ pub fn deinit() -> Result<(), String> {
     Ok(())
 }
 
-fn remove_hooks_file(path: &Path, delete_empty: bool) -> Result<usize, String> {
+/// One hook registration: the host's event name, its matcher pattern, and
+/// whether Cursor's `failClosed` flag is set (grouped-layout hosts ignore
+/// the flag).  Tool-call events use an empty matcher — Arai's own skip-tool
+/// list filters.  FileChanged also uses the shared instruction-path filter
+/// in-process, so nested AGENTS files and rule-directory .md/.mdc files
+/// cannot be excluded by a second, narrower registration list.
+struct Registration {
+    event: &'static str,
+    matcher: &'static str,
+    fail_closed: bool,
+}
+
+const fn reg(event: &'static str, matcher: &'static str) -> Registration {
+    Registration {
+        event,
+        matcher,
+        fail_closed: false,
+    }
+}
+
+/// How a host's hooks file arranges handlers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// `{"hooks": {Event: [{matcher, hooks: [handler]}]}}` — Claude Code,
+    /// Codex and Grok Build.
+    Grouped,
+    /// `{"version": 1, "hooks": {event: [handler]}}` with `matcher` and
+    /// `failClosed` on the handler itself — Cursor.
+    Flat,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HostKind {
+    Claude,
+    Codex,
+    Grok,
+    Cursor,
+}
+
+/// Everything `init`, `ensure_hooks` and `deinit` need to know about one
+/// host.  Adding a host is one entry here plus a response shape in
+/// `hooks.rs`; the inject/remove code is shared.
+struct HostSpec {
+    kind: HostKind,
+    label: &'static str,
+    path: fn(&config::Config) -> PathBuf,
+    layout: Layout,
+    registrations: &'static [Registration],
+    /// Delete the file on deinit when nothing but Arai's handlers was in
+    /// it.  Only for a file Arai owns outright; shared settings files are
+    /// rewritten, never removed, even when only empty arrays remain.
+    delete_empty: bool,
+    /// Registration failure is reported but does not abort `init`.
+    optional: bool,
+}
+
+const CLAUDE_REGISTRATIONS: &[Registration] = &[
+    reg("PreToolUse", ""),
+    reg("PostToolUse", ""),
+    reg("UserPromptSubmit", ""),
+    reg("FileChanged", ""),
+    reg("InstructionsLoaded", ""),
+    // CwdChanged: monorepo navigation.  No matcher — every cd matters
+    // because we may be landing in a never-scanned subpackage.
+    reg("CwdChanged", ""),
+    // PostToolBatch: parallel-tool compliance correlation.  No matcher
+    // — Arai's own skip-tool list filters per-tool inside the handler.
+    reg("PostToolBatch", ""),
+    // PermissionDenied: classifier-disagreement audit + Warn-level
+    // retry override.  Empty matcher — the handler inspects the
+    // denied tool_input itself.
+    reg("PermissionDenied", ""),
+];
+
+// Codex and Grok Build support the three tool-call events with a verified
+// contract, plus SessionStart for the change-gated rescan (neither emits
+// FileChanged / InstructionsLoaded).  Claude-specific file/reload events
+// must not be copied into their configs.  Codex documents SessionStart
+// matcher values (startup|resume|clear|compact); Grok's matcher is only
+// documented against tool names, so its registration is unfiltered.
+const CODEX_REGISTRATIONS: &[Registration] = &[
+    reg("PreToolUse", ""),
+    reg("PostToolUse", ""),
+    reg("UserPromptSubmit", ""),
+    reg("SessionStart", "startup|resume"),
+];
+
+const GROK_REGISTRATIONS: &[Registration] = &[
+    reg("PreToolUse", ""),
+    reg("PostToolUse", ""),
+    reg("UserPromptSubmit", ""),
+    reg("SessionStart", ""),
+];
+
+/// Cursor Agent hooks (cursor.com/docs/agent/hooks).  Cursor is fail-open
+/// unless `failClosed` is set, so the decision event carries it; under that
+/// flag "no output" counts as a failure, which is why the handler always
+/// answers preToolUse explicitly.  postToolUse is limited to `Shell`
+/// because file edits arrive through afterFileEdit with documented fields.
+const CURSOR_REGISTRATIONS: &[Registration] = &[
+    Registration {
+        event: "preToolUse",
+        matcher: "",
+        fail_closed: true,
+    },
+    reg("postToolUse", "Shell"),
+    reg("afterFileEdit", ""),
+    reg("sessionStart", ""),
+];
+
+const HOSTS: &[HostSpec] = &[
+    HostSpec {
+        kind: HostKind::Claude,
+        label: ".claude/settings.json",
+        path: config::Config::claude_settings_path,
+        layout: Layout::Grouped,
+        registrations: CLAUDE_REGISTRATIONS,
+        delete_empty: false,
+        optional: false,
+    },
+    HostSpec {
+        kind: HostKind::Codex,
+        label: ".codex/hooks.json (native Codex)",
+        path: config::Config::codex_hooks_path,
+        layout: Layout::Grouped,
+        registrations: CODEX_REGISTRATIONS,
+        delete_empty: false,
+        optional: false,
+    },
+    HostSpec {
+        kind: HostKind::Cursor,
+        label: ".cursor/hooks.json (native Cursor Agent hooks)",
+        path: config::Config::cursor_hooks_path,
+        layout: Layout::Flat,
+        registrations: CURSOR_REGISTRATIONS,
+        delete_empty: false,
+        optional: false,
+    },
+    HostSpec {
+        kind: HostKind::Grok,
+        label: ".grok/hooks/arai.json (native Grok Build)",
+        path: config::Config::grok_hooks_path,
+        layout: Layout::Grouped,
+        registrations: GROK_REGISTRATIONS,
+        // Arai's own file: nothing else lives in it.
+        delete_empty: true,
+        // Non-fatal — users still get value via the .claude/settings.json
+        // compatibility layer that Grok loads.
+        optional: true,
+    },
+];
+
+/// What the host still requires from the user after registration.  Writing
+/// the file never grants trust; say so where each host gates on it.
+fn trust_guidance(kind: HostKind) -> &'static [&'static str] {
+    match kind {
+        HostKind::Claude => &[
+            "Claude Code runs project hooks only in a trusted workspace; accept the",
+            "trust prompt for this folder or the registration stays inactive.",
+        ],
+        HostKind::Codex => &[
+            "Codex requires a trusted project plus review of each new or changed",
+            "hook definition in /hooks. Registration does not grant trust.",
+            "User-level hooks also require review; managed policy may restrict hooks.",
+        ],
+        HostKind::Grok => &[
+            "Grok Build gates project hooks behind trust: run /hooks-trust in the",
+            "Grok session (or launch with --trust) the first time, or Arai's hooks",
+            "stay inactive on the native path.",
+        ],
+        HostKind::Cursor => &[
+            "Cursor loads project hooks from .cursor/hooks.json; check the Hooks tab",
+            "in Cursor settings if a managed or team policy restricts them.",
+        ],
+    }
+}
+
+fn inject_host(spec: &HostSpec, cfg: &config::Config) -> Result<(), String> {
+    let path = (spec.path)(cfg);
+    let mut settings = read_hooks_file(&path)?;
+    let root = settings
+        .as_object_mut()
+        .ok_or("Hook config is not an object")?;
+    if spec.layout == Layout::Flat {
+        root.entry("version")
+            .or_insert_with(|| serde_json::json!(1));
+    }
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or("hooks is not an object")?;
+    let handler = arai_hook_handler(spec.kind)?;
+    for registration in spec.registrations {
+        let entries = hooks
+            .entry(registration.event.to_string())
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or(format!("{} is not an array", registration.event))?;
+        // Refresh the binary path and matcher on every init. Remove only our
+        // handlers, not entire groups: a group may also contain user hooks.
+        remove_arai_entries(entries, spec.layout);
+        let mut handler = handler.clone();
+        // Session start walks the project for the change check; give it
+        // more than the tool-call budget so a large tree is not killed
+        // mid-check, which would silently leave the rule set stale.
+        if registration.event.eq_ignore_ascii_case("sessionstart") {
+            handler["timeout"] = serde_json::json!(10);
+        }
+        match spec.layout {
+            Layout::Grouped => entries.push(serde_json::json!({
+                "matcher": registration.matcher,
+                "hooks": [handler]
+            })),
+            Layout::Flat => {
+                let mut entry = handler;
+                if !registration.matcher.is_empty() {
+                    entry["matcher"] = Value::String(registration.matcher.into());
+                }
+                if registration.fail_closed {
+                    entry["failClosed"] = Value::Bool(true);
+                }
+                entries.push(entry);
+            }
+        }
+    }
+    write_hooks_file(&path, &settings)
+}
+
+fn remove_host(spec: &HostSpec, cfg: &config::Config) -> Result<usize, String> {
+    let path = (spec.path)(cfg);
     if !path.exists() {
         return Ok(0);
     }
-    let mut settings = read_hooks_file(path)?;
+    let mut settings = read_hooks_file(&path)?;
     let mut removed = 0;
     if let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) {
         for entries in hooks.values_mut() {
-            if let Some(groups) = entries.as_array_mut() {
-                removed += remove_arai_handlers(groups);
+            if let Some(entries) = entries.as_array_mut() {
+                removed += remove_arai_entries(entries, spec.layout);
             }
         }
     }
@@ -225,67 +452,27 @@ fn remove_hooks_file(path: &Path, delete_empty: bool) -> Result<usize, String> {
                     .values()
                     .all(|entries| entries.as_array().is_some_and(Vec::is_empty))
             });
-        if delete_empty && hooks_only {
-            std::fs::remove_file(path)
+        if spec.delete_empty && hooks_only {
+            std::fs::remove_file(&path)
                 .map_err(|e| format!("Could not remove {}: {e}", path.display()))?;
         } else {
-            write_hooks_file(path, &settings)?;
+            write_hooks_file(&path, &settings)?;
         }
     }
     Ok(removed)
 }
-/// Hook events Arai registers itself into and the `matcher` pattern for
-/// each.  Tool-call events (`PreToolUse`/`PostToolUse`/`UserPromptSubmit`)
-/// use an empty matcher — Arai's own skip-tool list filters. FileChanged
-/// also uses the shared instruction-path filter in-process, so nested
-/// AGENTS files and rule-directory .md/.mdc files cannot be excluded by
-/// a second, narrower registration list.
-const ARAI_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
-    ("PreToolUse", ""),
-    ("PostToolUse", ""),
-    ("UserPromptSubmit", ""),
-    ("FileChanged", ""),
-    ("InstructionsLoaded", ""),
-    // CwdChanged: monorepo navigation.  No matcher — every cd matters
-    // because we may be landing in a never-scanned subpackage.
-    ("CwdChanged", ""),
-    // PostToolBatch: parallel-tool compliance correlation.  No matcher
-    // — Arai's own skip-tool list filters per-tool inside the handler.
-    ("PostToolBatch", ""),
-    // PermissionDenied: classifier-disagreement audit + Warn-level
-    // retry override.  Empty matcher — the handler inspects the
-    // denied tool_input itself.
-    ("PermissionDenied", ""),
-];
 
-fn inject_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(&cfg.claude_settings_path(), ARAI_HOOK_REGISTRATIONS, false)
-}
-
-// These hosts support the three events Arai handles with a verified contract.
-// Claude-specific file/reload events must not be copied into their configs.
-const NATIVE_HOOK_REGISTRATIONS: &[(&str, &str)] = &[
-    ("PreToolUse", ""),
-    ("PostToolUse", ""),
-    ("UserPromptSubmit", ""),
-];
-
-fn inject_grok_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(
-        &cfg.grok_hooks_dir().join("arai.json"),
-        NATIVE_HOOK_REGISTRATIONS,
-        false,
-    )
-}
-
-fn inject_codex_hooks(cfg: &config::Config) -> Result<(), String> {
-    inject_hooks_file(&cfg.codex_hooks_path(), NATIVE_HOOK_REGISTRATIONS, true)
-}
-
-fn print_codex_trust_guidance() {
-    println!("      Codex requires a trusted project plus review of each new or changed");
-    println!("      hook definition in /hooks. Registration does not grant trust.");
-    println!("      User-level hooks also require review; managed policy may restrict hooks.");
+/// Strip Arai's own handlers from one event's entries, whichever layout the
+/// host uses.  Returns how many were removed.
+fn remove_arai_entries(entries: &mut Vec<Value>, layout: Layout) -> usize {
+    match layout {
+        Layout::Grouped => remove_arai_handlers(entries),
+        Layout::Flat => {
+            let before = entries.len();
+            entries.retain(|handler| !is_arai_handler(handler));
+            before - entries.len()
+        }
+    }
 }
 
 fn read_hooks_file(path: &Path) -> Result<Value, String> {
@@ -313,52 +500,36 @@ fn write_hooks_file(path: &Path, settings: &Value) -> Result<(), String> {
     std::fs::write(path, output).map_err(|e| format!("Could not write {}: {e}", path.display()))
 }
 
-fn inject_hooks_file(
-    path: &Path,
-    registrations: &[(&str, &str)],
-    codex: bool,
-) -> Result<(), String> {
-    let mut settings = read_hooks_file(path)?;
-    let hooks = settings
-        .as_object_mut()
-        .ok_or("Hook config is not an object")?
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-    let hooks_obj = hooks.as_object_mut().ok_or("hooks is not an object")?;
-    let handler = arai_hook_handler(codex)?;
-    for (event, matcher) in registrations {
-        let groups = hooks_obj
-            .entry(event.to_string())
-            .or_insert_with(|| serde_json::json!([]))
-            .as_array_mut()
-            .ok_or(format!("{event} is not an array"))?;
-        // Refresh the binary path and matcher on every init. Remove only our
-        // handlers, not entire groups: a group may also contain user hooks.
-        remove_arai_handlers(groups);
-        groups.push(serde_json::json!({
-            "matcher": matcher,
-            "hooks": [handler.clone()]
-        }));
-    }
-    write_hooks_file(path, &settings)
-}
-
-fn arai_hook_handler(codex: bool) -> Result<Value, String> {
+fn arai_hook_handler(kind: HostKind) -> Result<Value, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("Could not resolve current executable: {e}"))?;
-    let path = exe.to_string_lossy();
+    let native = exe.to_string_lossy();
     // Host command hooks use shell command strings. Single quotes also keep
     // dollar signs/backticks in an installation path from being evaluated.
     #[cfg(windows)]
-    let path = path.replace('\\', "/");
+    let path = native.replace('\\', "/");
+    #[cfg(not(windows))]
+    let path = native.to_string();
     let command = format!("'{}' guardrails --match-stdin", path.replace('\'', "'\\''"));
     let mut handler = serde_json::json!({
         "type": "command",
         "command": command,
         "timeout": 3
     });
-    if codex && cfg!(windows) {
-        handler["commandWindows"] = Value::String(codex_windows_command(&exe.to_string_lossy()));
+    if cfg!(windows) {
+        match kind {
+            HostKind::Codex => {
+                handler["commandWindows"] = Value::String(windows_command(&native));
+            }
+            // Cursor has no per-platform field and does not document which
+            // shell runs `command` on Windows.  An explicit PowerShell
+            // invocation with an encoded literal path parses the same under
+            // cmd.exe and PowerShell, unlike the POSIX quoting above.
+            HostKind::Cursor => {
+                handler["command"] = Value::String(windows_command(&native));
+            }
+            HostKind::Claude | HostKind::Grok => {}
+        }
     }
     Ok(handler)
 }
@@ -366,7 +537,7 @@ fn arai_hook_handler(codex: bool) -> Result<Value, String> {
 const POWERSHELL_PREFIX: &str =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ";
 
-fn codex_windows_command(path: &str) -> String {
+fn windows_command(path: &str) -> String {
     // Explicit interpreter and encoded literal path avoid relying on the
     // host's Windows shell or letting metacharacters become shell code.
     let script = format!(
@@ -449,11 +620,17 @@ fn is_arai_command(command: &str, arguments: &str) -> bool {
 }
 
 fn is_arai_handler(handler: &Value) -> bool {
+    // Every handler Arai writes carries `type: "command"`, including
+    // Cursor's (where it is the documented default).  On Windows the Cursor
+    // `command` is the encoded PowerShell form, so accept either spelling.
     handler.get("type").and_then(Value::as_str) == Some("command")
         && handler
             .get("command")
             .and_then(Value::as_str)
-            .is_some_and(|command| is_arai_command(command, "guardrails --match-stdin"))
+            .is_some_and(|command| {
+                is_arai_command(command, "guardrails --match-stdin")
+                    || is_arai_windows_command(command)
+            })
         && handler
             .get("commandWindows")
             .is_none_or(|command| command.as_str().is_some_and(is_arai_windows_command))
@@ -564,10 +741,12 @@ pub fn install_pre_commit(cfg: &config::Config, force: bool) -> Result<(), Strin
 /// Ensure all supported host registrations exist for manual-only projects.
 pub fn ensure_hooks() -> Result<(), String> {
     let cfg = config::Config::load()?;
-    inject_hooks(&cfg)?;
-    inject_grok_hooks(&cfg)?;
-    inject_codex_hooks(&cfg)?;
-    print_codex_trust_guidance();
+    for spec in HOSTS {
+        inject_host(spec, &cfg)?;
+    }
+    for line in trust_guidance(HostKind::Codex) {
+        println!("      {line}");
+    }
     Ok(())
 }
 /// Display a path relative to project root when possible.
@@ -622,7 +801,7 @@ mod registration_tests {
     #[test]
     fn windows_wrapper_is_literal_and_keeps_native_exit_status() {
         let path = "C:\\Arai's $install\\arai.exe";
-        let command = codex_windows_command(path);
+        let command = windows_command(path);
         assert!(is_arai_windows_command(&command));
         let encoded = command.strip_prefix(POWERSHELL_PREFIX).unwrap();
         let bytes = base64::engine::general_purpose::STANDARD
@@ -645,7 +824,7 @@ mod registration_tests {
         assert!(!is_arai_windows_command(&format!(
             "{POWERSHELL_PREFIX}not-base64!"
         )));
-        assert!(!is_arai_windows_command(&codex_windows_command(
+        assert!(!is_arai_windows_command(&windows_command(
             "C:\\tools\\unrelated.exe"
         )));
     }

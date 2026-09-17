@@ -69,11 +69,20 @@ fn init_without_instruction_files_registers_hooks() {
         codex.is_file(),
         "missing .codex/hooks.json after empty init"
     );
+    assert!(
+        project.join(".cursor/hooks.json").is_file(),
+        "missing .cursor/hooks.json after empty init"
+    );
     let codex_body: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(codex).unwrap()).unwrap();
     let hooks = codex_body["hooks"].as_object().unwrap();
-    assert_eq!(hooks.len(), 3);
-    for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
+    assert_eq!(hooks.len(), 4);
+    for event in [
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "SessionStart",
+    ] {
         assert!(hooks.contains_key(event), "missing Codex event {event}");
     }
     assert!(stdout.contains("/hooks") && stdout.contains("does not grant trust"));

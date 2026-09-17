@@ -32,6 +32,7 @@ different path requires another `arai init`.
 | `apply_patch` Delete File | Checks its path as Edit; the current rule schema has no separate Delete action. |
 | PostToolUse | Records observations and compliance; accepts Codex's structured `tool_response`. |
 | UserPromptSubmit | Injects applicable prompt-time guidance. |
+| SessionStart (`startup\|resume`) | Spawns a background `arai scan` when an instruction file was added, removed or modified since the last scan, so edits made between sessions are enforced. No output: Codex already receives the active-rules summary on UserPromptSubmit. |
 
 Codex passes the raw patch in `tool_input.command` and keeps `tool_name` as
 `apply_patch`. Arai parses all file operations before deciding, combines their
@@ -39,8 +40,9 @@ matches, and denies malformed or unsupported patch inputs. This is policy
 matching, not a replacement for the host's patch validation or filesystem
 permissions. No patch is executed by the hook.
 
-Run `arai scan` after editing instruction files: this integration does not
-register instruction-change or working-directory-change events. `arai status`
+The rule set is refreshed at session start. Codex does not emit
+instruction-change or working-directory-change events, so run `arai scan`
+after editing instruction files mid-session. `arai status`
 reports configuration presence and recorded firings, but cannot certify that
 Codex has trusted or activated a handler. Use `/hooks` and a harmless synthetic
 blocked-rule probe to check host activation.
