@@ -333,18 +333,32 @@ jobs:
       base64-subjects: ${{ needs.attach-binaries.outputs.hashes }}
       upload-assets: true
 
+  # Publishes via npm trusted publishing (OIDC): the job exchanges its
+  # GitHub Actions identity token for a short-lived npm credential, so
+  # there is no long-lived NPM_TOKEN to rotate.  npmjs must list this
+  # repo + workflow file (ci.yml) as a trusted publisher for the package.
   npm-publish:
     name: Publish to npm
     needs: attach-binaries
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Job-level permissions REPLACE the workflow-level block.
+    permissions:
+      contents: read
+      id-token: write    # OIDC token exchange for npm trusted publishing
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1.  Node 24 bundles npm 11,
+      # but pin the floor explicitly so a runner image change can't
+      # silently drop us back to a token-only client.
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g 'npm@^11.5.1' && npm --version
 
       - name: Sync version from tag
         run: |
@@ -352,10 +366,12 @@ jobs:
           cd npm
           node -e "const p=require('./package.json'); p.version='$TAG'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2)+'\n')"
 
+      # No NODE_AUTH_TOKEN: with the OIDC permission above, npm exchanges
+      # the Actions identity token itself.  Keeping the secret out of the
+      # env means an OIDC misconfiguration fails loudly instead of being
+      # masked by a token fallback.
       - name: Publish
         run: cd npm && npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Mirror the same npm wrapper to GitHub Packages so the repo's
   # "Packages" sidebar resolves to a first-party artifact.  The @taniwhaai
