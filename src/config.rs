@@ -326,10 +326,20 @@ impl Config {
         self.project_root.join(".codex").join("hooks.json")
     }
 
+    /// Path to the project's native Cursor Agent hooks (`version: 1` flat arrays).
+    pub(crate) fn cursor_hooks_path(&self) -> PathBuf {
+        self.project_root.join(".cursor").join("hooks.json")
+    }
+
     /// Path to the project's .grok/hooks directory (for native Grok Build hook registration).
     /// We prefer writing arai.json here when the user has a .grok/ project layout.
     pub(crate) fn grok_hooks_dir(&self) -> PathBuf {
         self.project_root.join(".grok").join("hooks")
+    }
+
+    /// Arai's dedicated Grok Build hooks file inside that directory.
+    pub(crate) fn grok_hooks_path(&self) -> PathBuf {
+        self.grok_hooks_dir().join("arai.json")
     }
 
     /// Path to the global Grok hooks directory (~/.grok/hooks).

@@ -346,3 +346,87 @@ fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
     fixture.run(&["deinit"]);
     assert!(commands(&fixture.read_json(".codex/hooks.json"), "PreToolUse").is_empty());
 }
+
+/// Cursor's hooks.json is a flat handler array per camelCase event under a
+/// top-level `version`.  Registration must preserve neighbours, set
+/// `failClosed` on the decision event only, be idempotent, and `deinit` must
+/// leave the user's handlers alone.  Codex and Grok additionally gain a
+/// SessionStart registration (Codex filtered to startup|resume).
+#[test]
+fn cursor_and_session_start_registrations() {
+    let fixture = Fixture::new("cursor");
+    let other = json!({"command": "./hooks/other.sh", "matcher": "Shell"});
+    let format = json!({"command": "./format.sh"});
+    fixture.write_json(
+        ".cursor/hooks.json",
+        &json!({"version": 1, "hooks": {
+            "preToolUse": [other, {"type": "command",
+                "command": "\"/old install/arai\" guardrails --match-stdin"}],
+            "afterFileEdit": [format],
+            "stop": [{"command": "./audit.sh", "loop_limit": 10}]
+        }}),
+    );
+    fixture.run(&["init"]);
+    let cursor = fixture.read_json(".cursor/hooks.json");
+    assert_eq!(cursor["version"], 1);
+    let exe = env!("CARGO_BIN_EXE_arai").replace('\\', "/");
+    let pre = cursor["hooks"]["preToolUse"].as_array().unwrap();
+    assert_eq!(pre.len(), 2, "{pre:?}");
+    assert_eq!(pre[0], other);
+    let command = pre[1]["command"].as_str().unwrap();
+    if cfg!(windows) {
+        // Cursor has no commandWindows field: the command itself is the
+        // shell-agnostic PowerShell invocation.
+        assert!(command.starts_with("powershell.exe"), "{command}");
+    } else {
+        assert!(command.contains(&exe), "{command}");
+    }
+    assert_eq!(pre[1]["failClosed"], true);
+    assert!(pre[1].get("matcher").is_none());
+    assert_eq!(pre[1]["type"], "command");
+    let post = cursor["hooks"]["postToolUse"].as_array().unwrap();
+    assert_eq!(post.len(), 1);
+    assert_eq!(post[0]["matcher"], "Shell");
+    assert!(post[0].get("failClosed").is_none());
+    let edit = cursor["hooks"]["afterFileEdit"].as_array().unwrap();
+    assert_eq!(edit[0], format);
+    assert_eq!(edit.len(), 2);
+    assert_eq!(cursor["hooks"]["sessionStart"].as_array().unwrap().len(), 1);
+    assert_eq!(cursor["hooks"]["stop"][0]["command"], "./audit.sh");
+
+    let codex = fixture.read_json(".codex/hooks.json");
+    assert_eq!(
+        codex["hooks"]["SessionStart"][0]["matcher"],
+        "startup|resume"
+    );
+    assert_eq!(commands(&codex, "SessionStart").len(), 1);
+    let grok = fixture.read_json(".grok/hooks/arai.json");
+    assert_eq!(grok["hooks"]["SessionStart"][0]["matcher"], "");
+    assert_eq!(commands(&grok, "SessionStart").len(), 1);
+
+    fixture.run(&["init"]);
+    assert_eq!(fixture.read_json(".cursor/hooks.json"), cursor);
+
+    fixture.run(&["deinit"]);
+    let cursor = fixture.read_json(".cursor/hooks.json");
+    assert_eq!(cursor["hooks"]["preToolUse"], json!([other]));
+    assert_eq!(cursor["hooks"]["afterFileEdit"], json!([format]));
+    assert_eq!(cursor["hooks"]["postToolUse"], json!([]));
+    assert_eq!(cursor["hooks"]["stop"][0]["command"], "./audit.sh");
+    assert!(commands(&fixture.read_json(".codex/hooks.json"), "SessionStart").is_empty());
+
+    // .cursor/hooks.json is a shared settings file like .claude/settings.json:
+    // deinit rewrites it and never deletes it, even when only empty arrays
+    // remain, so a user's placeholder file cannot vanish from git status.
+    let fresh = Fixture::new("cursor_fresh");
+    fresh.run(&["init"]);
+    assert!(fresh.project.join(".cursor/hooks.json").is_file());
+    fresh.run(&["deinit"]);
+    let left = fresh.read_json(".cursor/hooks.json");
+    assert_eq!(left["version"], 1);
+    assert!(left["hooks"]
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|entries| entries.as_array().is_some_and(Vec::is_empty)));
+}

@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Native Cursor Agent hooks in `.cursor/hooks.json`: `preToolUse` (registered
+  with `failClosed`), `postToolUse`, `afterFileEdit` and `sessionStart`.
+  Cursor payloads are translated inside `match_hook` (`Shell` → Bash,
+  `Delete` → Edit, `conversation_id` → session, `afterFileEdit` → Edit) so
+  `arai test` replays them like the live hook, and answered in Cursor's
+  `{"permission": ...}` shape; every PreToolUse gets an explicit allow because
+  Cursor treats empty stdout as a failure under `failClosed`. Host identity is
+  read from the payload only: `CURSOR_VERSION` is inherited by any CLI started
+  from Cursor's terminal and must not flip Claude Code into Cursor's shape
+  ([#189](https://github.com/taniwhaai/arai/issues/189))
+- `SessionStart` registered on Codex (`startup|resume`), Grok Build and Cursor:
+  a background `arai scan` when an instruction file was added, removed or
+  modified since the last scan (no network, no scan when nothing changed),
+  plus a one-line active-rules summary on Cursor, whose prompt event has no
+  model-visible slot. Closes the "run `arai scan` yourself" gap on hosts
+  without instruction-change events
+  ([#188](https://github.com/taniwhaai/arai/issues/188))
+- `arai init` registers every host from one table (`init::HOSTS`); Cursor's
+  flat handler layout and Windows command are properties of that entry rather
+  than a parallel code path
+- Claude Code workspace-trust note in `arai init`, `arai status` and the README,
+  matching the existing Grok Build and Codex trust guidance
+  ([#188](https://github.com/taniwhaai/arai/issues/188))
+
+### Fixed
+
+- `PostToolBatch` read a `tool_results[]` array Claude Code never sends; it now
+  content-sniffs each entry's own `tool_response` as documented, so batched
+  writes seed compliance terms ([#187](https://github.com/taniwhaai/arai/issues/187))
+- `PermissionDenied` read `denial_reason`; the documented field is `reason`, so
+  every audit entry recorded an empty classifier verdict
+  ([#187](https://github.com/taniwhaai/arai/issues/187))
+- Passive lifecycle events (Stop, Notification, SessionEnd, compaction, ...)
+  exit before touching config or the store instead of running the matcher
+  with nothing to match
+
 ## [1.1.2] - 2026-09-16
 
 ### Added
