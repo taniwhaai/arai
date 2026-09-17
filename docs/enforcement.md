@@ -4,10 +4,10 @@ Deny mode, per-rule severity rollout, dry-run explanations, compliance verdicts,
 
 ## Deny mode — actually block bad actions
 
-Starting in v0.2.3, Arai no longer just *advises*: rules derived from
-prohibitive predicates (`never`, `forbids`, `must_not`) emit
-`permissionDecision: "deny"` (or equivalent) so the assistant refuses the tool call. Advisory
-rules (`always`, `requires`, `prefers`) keep the previous behaviour.
+Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`)
+emit `permissionDecision: "deny"` (or the host equivalent: Grok Build
+`decision: deny` + exit 2) so the assistant refuses the tool call. Advisory
+rules (`always`, `requires`, `prefers`) inject context and allow the call.
 
 Severity is inferred from the predicate at extract time:
 
@@ -59,11 +59,25 @@ own column and are never touched by re-classification. Drop one with
 predicate.
 
 
+## arai disable / enable — silence a rule without deleting it
+
+`arai disable <triple-id>` stops a rule from firing on the hot path.
+The disable is keyed by the rule's content (subject/predicate/object),
+so it survives `arai scan` re-extraction. `arai enable <triple-id>`
+turns it back on. No arguments to `disable` lists current disables.
+
+```bash
+arai disable                 # list
+arai disable 42              # silence triple-id 42
+arai enable 42
+```
+
+
 ## arai check-diff — repo-layer enforcement
 
 Host hooks are per-tool. `arai check-diff` sits at the git diff, so the
 same rule engine blocks a violating change whether Claude Code, Grok Build,
-Cursor, Copilot, or a human produced it.
+Codex, Cursor, Copilot, or a human produced it.
 
 ```bash
 arai check-diff --cached              # staged changes (pre-commit default)

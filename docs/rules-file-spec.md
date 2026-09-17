@@ -1,8 +1,14 @@
 # Canonical rules-file spec (v1)
 
-**Status:** draft for review.
+**Status:** shipped. `arai canonicalize` writes this format from existing
+instruction files; `arai sync` fans it out to per-tool files that already
+exist in the project.
 **Scope:** resolves [#75](https://github.com/taniwhaai/arai/issues/75) (format spike), [#76](https://github.com/taniwhaai/arai/issues/76) (schema design), and [#79](https://github.com/taniwhaai/arai/issues/79) (rule-pack accommodation).
-**Out of scope:** `arai migrate` (#78), `arai sync` (#77), rule-pack publication.
+**Still out of scope:** published rule-packs as a distribution channel.
+
+`arai migrate` is **not** this bootstrap. That command moves the on-disk
+layout from `~/.arai` to `~/.taniwha/arai`. Bootstrapping `arai.toml` from
+instruction files is `arai canonicalize` (the work originally tracked as #78).
 
 ---
 
@@ -10,9 +16,9 @@
 
 Today, Arai reads rules from whatever instruction file each tool happens to use — `CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`. Each format has its own conventions, and the rules drift: a `should not` added to `CLAUDE.md` to fix a Claude misbehaviour never makes it to Cursor, because the maintainer forgot the second file existed.
 
-A canonical `arai.toml` (the *one* file you commit, version-controlled, schema-checked) becomes the source of truth. `arai sync` (#77) writes the per-tool files. `arai migrate` (#78) bootstraps the canonical file from whatever rules Arai's parser can already extract.
+A canonical `arai.toml` (the *one* file you commit, version-controlled, schema-checked) is the source of truth for teams that want one file instead of N instruction dialects. `arai canonicalize` extracts whatever the parser already recognises; `arai sync` writes the per-tool files. Review `when.tool` / `when.path` / `when.command_pattern` on the generated file before treating it as authoritative — extraction is lossy-but-honest.
 
-This document fixes the file's format and schema so those two pieces of work can begin.
+This document is the format those two commands implement. The live matcher is unchanged: instruction files remain valid policy even if you never canonicalize.
 
 ---
 
@@ -139,7 +145,7 @@ YAML's only meaningful win is multi-line strings (`>` folded scalar). TOML handl
 
 ## Part 2 — Schema (resolves #76)
 
-The v1 schema fixes the minimum needed to make `arai sync` (#77) and `arai migrate` (#78) implementable. Anything not listed is deliberately out of scope for v1.
+The v1 schema is what `arai canonicalize` emits and `arai sync` consumes. Anything not listed is deliberately out of scope for v1 (including published rule-pack distribution).
 
 ### Top-level layout
 

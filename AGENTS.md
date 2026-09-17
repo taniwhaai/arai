@@ -34,39 +34,34 @@ These rules exist because mistakes here are expensive (corrupting Taniwha build 
 
 ## Git / Branching
 
-- Feature work for the Grok TUI integration lives on `feat/grok-tui-support`.
-- Keep the main integration changes focused. Large new features (deeper parser improvements, full dogfooding guardrails, etc.) should be discussed before expanding scope.
+- Contribution flow is PR-to-main. Do not push feature work straight to `main`.
+- Grok Build and Codex hook support have **shipped** (Grok in 1.1.x, Codex in 1.1.2). Do not treat `feat/grok-tui-support` as the live integration branch.
+- Keep host-integration changes focused. Large new features should be discussed before expanding scope.
 
 ## Using Arai (Dogfooding)
 
-Once the Grok Build integration is merged and installed:
-- Run `arai init` in this repo to start enforcing these rules via native Grok hooks.
+`arai init` registers native hooks for Claude Code (`.claude/settings.json`), Grok Build (`.grok/hooks/arai.json`), and Codex (`.codex/hooks.json`).
+- Run `arai init` in this repo so these rules are enforced on the host you are using.
+- Codex: after init, enable the project hooks through `/hooks`. Writing the file does not grant host trust.
 - Treat violations of the rules in this file as high-severity (many are `never` / `must` style).
 - Use `arai why`, `arai status`, and `arai audit` to inspect and improve compliance.
 
 ## Changes That Affect Guardrails
 
-- Any change that touches hook handling, tool name normalization, response formats, matching logic, or discovery **must** include or update tests (especially in `tests/hooks_safety.rs`).
+- Any change that touches hook handling, tool name normalization, response formats, matching logic, or discovery **must** include or update tests (especially in `tests/hooks_safety.rs` and `tests/codex_hooks.rs`).
 - When adding new instruction file support (new basenames or directories), update both `discovery.rs` and `hooks.rs::is_instruction_file`.
 
-## Grok Build Integration
+## Host integrations (Claude Code, Grok Build, Codex)
 
-- The Grok Build support (normalization, dual response formats, native `.grok/hooks` registration) must remain fully functional and low-regression for Claude Code.
-- When modifying host detection or response emission logic, ensure both Grok and Claude shapes are preserved and tested.
-- The `AGENTS.md` file itself should be treated as a first-class instruction file for Grok users of this repo.
-- Do not bypass Arai hooks when they are active in this environment (e.g., do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
-- When the Grok Build integration is active, prefer using native `.grok/hooks/` registration over relying solely on the Claude compatibility layer for this project.
-- When using `arai why` or `arai audit` during development, treat the output as authoritative for understanding why a rule fired.
-- After landing changes to the Grok Build integration, run `arai init` locally in Grok Build and verify that the new hooks are active and the rules in this file are being respected.
-- Use the Grok Build + Arai combination to enforce the rules in this file on yourself during development of this project.
-- After making changes to the Grok Build integration or AGENTS.md, actively verify (via `arai status`, `arai why`, etc.) that the rules are still being respected and look for opportunities to strengthen the dogfooding.
-- Do not allow the quality or test coverage of the Grok Build integration to regress over time — treat it with the same rigor as the original Claude Code path.
-- When the Grok Build integration is active, use `arai status` and the Grok hooks modal regularly to confirm the integration is healthy and the project's rules are being enforced.
-- When under high context pressure, treat the rules in this file as even more important, not less — use `arai why` and short sessions to stay compliant.
-- When Arai fires a rule (via `arai why`, audit, or a block), treat it as valuable feedback and update AGENTS.md, lessons, or the integration as needed.
-- When developing the Grok Build integration, use the integration (once active) to catch your own mistakes in real time rather than relying only on manual review.
-- Treat the Grok Build integration as a tool for better real-time self-correction during long or high-pressure sessions, not just as an external enforcement layer.
-- Do not let the existence of Grok Build support cause any reduction in quality or test coverage for the Claude Code path (or vice versa).
-- Keep `normalize_tool_name` current with live Grok Build tool names (especially `run_terminal_command` → `Bash`); a missing alias is a silent fail-open.
+- All three native PreToolUse paths must remain functional. A change that fixes one host must not regress the others.
+- When modifying host detection or response emission, preserve and test Claude (`hookSpecificOutput.permissionDecision`), Grok (`decision` + exit 2), and Codex shapes.
+- Prefer each host's native registration over relying on another host's compatibility layer.
+- Do not bypass Arai hooks when they are active (do not set `ARAI_DISABLED=1` or `ARAI_DENY_MODE=off` without explicit justification and logging).
+- When using `arai why` or `arai audit` during development, treat the output as authoritative for why a rule fired.
+- After landing host-integration changes, run `arai init` on the affected host and verify the hooks are active (`arai status`, host `/hooks` UI, a harmless blocked-rule probe).
+- Keep `normalize_tool_name` current with live host tool names. A missing alias is a silent fail-open. Grok Build: `run_terminal_command` → `Bash`. Codex: canonical `Bash` plus per-file `apply_patch`.
+- Do not let work on one host reduce quality or test coverage of the others.
+- When under high context pressure, treat the rules in this file as more important, not less.
+- When Arai fires a rule, treat it as feedback and update AGENTS.md, lessons, or the integration as needed.
 
 These rules are here to protect the integrity of the project. Violating them has real downstream cost.

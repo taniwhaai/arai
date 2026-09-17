@@ -6,10 +6,12 @@ verification.
 
 ## What this server does
 
-`arai mcp` is a stdio MCP server exposing three tools:
+`arai mcp` is a stdio MCP server exposing four tools:
 
 - `arai_add_guard(rule, reason?)` — register a new guardrail rule.
 - `arai_list_guards(pattern?)` — list active guardrails, optionally filtered.
+- `arai_check_action(tool, tool_input, event?)` — dry-run match a hypothetical
+  tool call against live rules (no audit write).
 - `arai_recent_decisions(session_id?, limit?, since?)` — read recent Arai
   decisions (deny/inject/review) from the local audit log.
 
@@ -50,9 +52,9 @@ curl -sSf https://arai.taniwha.ai/install | sh
 arai --version
 ```
 
-Expected: a version string like `arai 0.2.9`. If the command is not
-found, the user's shell may need to reload `PATH` — instruct them to
-open a new terminal.
+Expected: a version string like `arai 1.1.2`. Codex native hooks require
+**1.1.2 or newer**. If the command is not found, the user's shell may
+need to reload `PATH` — instruct them to open a new terminal.
 
 ## Step 3 — Verify the MCP server starts
 

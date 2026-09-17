@@ -1,8 +1,10 @@
-//! Minimal MCP server over stdio — two tools an LLM can call to
+//! Minimal MCP server over stdio — four tools an LLM can call to
 //! program its own deterministic guardrails mid-session:
 //!
 //!   `arai_add_guard(rule, reason?)`  → parse + store a rule
 //!   `arai_list_guards(pattern?)`     → introspect active rules
+//!   `arai_check_action(...)`         → dry-run match a hypothetical call
+//!   `arai_recent_decisions(...)`     → read recent deny/inject/review firings
 //!
 //! Matches the Claude Code MCP transport (newline-delimited JSON-RPC 2.0
 //! on stdin/stdout).  No async runtime, no external MCP SDK — the wire
