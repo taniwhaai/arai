@@ -59,6 +59,21 @@ jobs:
       - uses: actions/checkout@v6
       - run: bash .github/scripts/test-release-safety.sh
 
+  npm-installer:
+    name: Installer checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm test --prefix npm
+      - run: bash .github/scripts/test-installer.sh
+        shell: bash
+
   # Cloudflare Pages serves arai.taniwha.ai/install from site/install, which
   # is a copy of the canonical install.sh at the repo root.  Catch drift
   # before it ships an outdated installer to every `curl | sh` user.
@@ -78,7 +93,7 @@ jobs:
   # After tests pass on main: create release PR + tag/publish on merge
   release-plz:
     name: Release-plz
-    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety, npm-installer]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -114,7 +129,7 @@ jobs:
   # Build binaries on version tags
   build:
     name: Build (${{ matrix.platform }})
-    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety, npm-installer]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
@@ -318,18 +333,32 @@ jobs:
       base64-subjects: ${{ needs.attach-binaries.outputs.hashes }}
       upload-assets: true
 
+  # Publishes via npm trusted publishing (OIDC): the job exchanges its
+  # GitHub Actions identity token for a short-lived npm credential, so
+  # there is no long-lived NPM_TOKEN to rotate.  npmjs must list this
+  # repo + workflow file (ci.yml) as a trusted publisher for the package.
   npm-publish:
     name: Publish to npm
     needs: attach-binaries
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Job-level permissions REPLACE the workflow-level block.
+    permissions:
+      contents: read
+      id-token: write    # OIDC token exchange for npm trusted publishing
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1.  Node 24 bundles npm 11,
+      # but pin the floor explicitly so a runner image change can't
+      # silently drop us back to a token-only client.
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g 'npm@^11.5.1' && npm --version
 
       - name: Sync version from tag
         run: |
@@ -337,10 +366,12 @@ jobs:
           cd npm
           node -e "const p=require('./package.json'); p.version='$TAG'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2)+'\n')"
 
+      # No NODE_AUTH_TOKEN: with the OIDC permission above, npm exchanges
+      # the Actions identity token itself.  Keeping the secret out of the
+      # env means an OIDC misconfiguration fails loudly instead of being
+      # masked by a token fallback.
       - name: Publish
         run: cd npm && npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Mirror the same npm wrapper to GitHub Packages so the repo's
   # "Packages" sidebar resolves to a first-party artifact.  The @taniwhaai
@@ -389,7 +420,7 @@ jobs:
   # would dominate the release wall-clock; add a native arm64 runner later.
   container-publish:
     name: Publish container to ghcr.io
-    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety]
+    needs: [fmt, test, test-enrich, test-windows-hooks, install-script-sync, release-safety, npm-installer]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Job-level permissions REPLACE the workflow-level block.

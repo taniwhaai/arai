@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -21,13 +21,13 @@ function main() {
 
   fs.mkdirSync(path.dirname(dest), { recursive: true });
 
-  // Remove placeholder if it exists
+  // Replace only the native payload; bin/arai remains the npm launcher.
   if (fs.existsSync(dest)) {
     fs.unlinkSync(dest);
   }
 
   try {
-    execSync(`curl -sL --fail -o "${dest}" "${url}"`, { stdio: "pipe" });
+    execFileSync("curl", ["-sL", "--fail", "-o", dest, url], { stdio: "pipe" });
   } catch (e) {
     console.error(`  Failed to download from ${url}`);
     console.error(`  You can install manually: https://github.com/${REPO}/releases`);
@@ -51,7 +51,7 @@ function main() {
     console.warn("  \u26a0 Skipping checksum verification (ARAI_SKIP_CHECKSUM=1)");
   } else {
     try {
-      execSync(`curl -sL --fail -o "${checksumsPath}" "${checksumsUrl}"`, {
+      execFileSync("curl", ["-sL", "--fail", "-o", checksumsPath, checksumsUrl], {
         stdio: "pipe",
       });
     } catch (e) {
@@ -110,9 +110,12 @@ function parseChecksum(content, filename) {
   return null;
 }
 
-function detectPlatform() {
-  const platform = os.platform();
-  const arch = os.arch();
+function detectPlatform(platform = os.platform(), arch = os.arch()) {
+  if (platform === "win32" && arch === "arm64") {
+    throw new Error(
+      "Windows ARM64 native binaries are not available. Use x64 Node.js under Windows x64 emulation, or build Arai from source with Cargo."
+    );
+  }
 
   let osName;
   switch (platform) {
@@ -126,9 +129,7 @@ function detectPlatform() {
       osName = "windows";
       break;
     default:
-      console.error(`  Unsupported platform: ${platform}`);
-      console.error(`  Install manually: https://github.com/${REPO}/releases`);
-      process.exit(1);
+      throw new Error(`Unsupported platform: ${platform}`);
   }
 
   let archName;
@@ -140,9 +141,7 @@ function detectPlatform() {
       archName = "aarch64";
       break;
     default:
-      console.error(`  Unsupported architecture: ${arch}`);
-      console.error(`  Install manually: https://github.com/${REPO}/releases`);
-      process.exit(1);
+      throw new Error(`Unsupported architecture: ${arch}`);
   }
 
   return `${osName}-${archName}`;
@@ -156,7 +155,7 @@ function getBinaryDownloadName(platform) {
 }
 
 function getLocalBinaryName() {
-  return process.platform === "win32" ? "arai.exe" : "arai";
+  return process.platform === "win32" ? "arai-native.exe" : "arai-native";
 }
 
 function getVersion() {
@@ -166,4 +165,13 @@ function getVersion() {
   return pkg.version;
 }
 
-main();
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`  ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
+module.exports = { detectPlatform, getBinaryDownloadName, parseChecksum };
