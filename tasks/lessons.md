@@ -9,3 +9,8 @@
   A local host adapter must not narrow the shared enforcement core or turn an
   optional upstream integration into a mandatory remote dependency. Track and
   resolve surfaced gaps explicitly instead of leaving them in review notes.
+
+- Windows installer migrations need native Git Bash checks: MSYS resolves
+  `test -e arai` to arai.exe even when no extensionless file exists. Enumerate
+  actual filenames before moving a legacy payload, preserve it outside PATH,
+  and verify repeated installs do not accumulate unnecessary backups.

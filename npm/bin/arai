@@ -1,3 +1,46 @@
-#!/bin/sh
-echo "arai: binary not installed. Run: node $(dirname $0)/../install.js" >&2
-exit 1
+#!/usr/bin/env node
+"use strict";
+
+const { spawn } = require("child_process");
+const path = require("path");
+
+const binary = path.join(
+  __dirname,
+  process.platform === "win32" ? "arai-native.exe" : "arai-native"
+);
+const child = spawn(binary, process.argv.slice(2), { stdio: "inherit" });
+const handlers = new Map();
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  const forward = () => child.kill(signal);
+  handlers.set(signal, forward);
+  process.on(signal, forward);
+}
+
+function removeHandlers() {
+  for (const [signal, handler] of handlers) {
+    process.removeListener(signal, handler);
+  }
+}
+
+child.on("error", (error) => {
+  removeHandlers();
+  if (error.code === "ENOENT") {
+    console.error(
+      "arai: native binary not installed. Reinstall @taniwhaai/arai with lifecycle scripts enabled, or run:"
+    );
+    console.error(`  node ${JSON.stringify(path.join(__dirname, "..", "install.js"))}`);
+  } else {
+    console.error(`arai: could not start native binary: ${error.message}`);
+  }
+  process.exitCode = 1;
+});
+
+child.on("exit", (code, signal) => {
+  removeHandlers();
+  if (signal) {
+    process.kill(process.pid, signal);
+  } else {
+    process.exitCode = code === null ? 1 : code;
+  }
+});

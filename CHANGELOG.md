@@ -4,9 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-- Opt-in native Cursor hook pilot with explicit platform/event dispatch, conservative mutation normalization, native fail-closed responses and persistent platform selection for init/add/deinit.
-- Adapter onboarding and capability documentation preserving the existing local matcher and Kete embedding APIs. Cursor live-host verification remains pending; the pilot does not claim prompt/pre-allow context injection or compliance attribution.
+### Fixed
+
+- npm keeps a portable Node launcher separate from the downloaded binary, so
+  Windows command shims launch Arai correctly and preserve arguments and exit status.
+- Windows installers and upgrades use `.exe` filenames; unshipped Windows ARM64
+  builds are rejected before downloading.
+- Upgrades verify release checksums and HTTP success before replacing the running
+  binary, with temporary downloads isolated and cleaned on failure.
 
 ## [1.1.2] - 2026-09-16
 
