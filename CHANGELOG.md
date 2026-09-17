@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-09-17
+
+### CI
+
+- *(npm)* Publish via trusted publishing (OIDC) instead of NPM_TOKEN ([#184](https://github.com/taniwhaai/arai/pull/184))
+
+### Documentation
+
+- *(site)* Reflect Codex hooks, check-diff and scoped discovery on arai.taniwha.ai ([#186](https://github.com/taniwhaai/arai/pull/186))
+- Align contributor and MCP docs with the 1.1.2 surface ([#192](https://github.com/taniwhaai/arai/pull/192))
+
+### Fixed
+
+- Repair Windows installers and verify self-upgrades ([#182](https://github.com/taniwhaai/arai/pull/182))
+
+
 ### Added
 
 - Native Cursor Agent hooks in `.cursor/hooks.json`: `preToolUse` (registered
