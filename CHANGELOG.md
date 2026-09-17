@@ -30,6 +30,16 @@ All notable changes to this project will be documented in this file.
   matching the existing Grok Build and Codex trust guidance
   ([#188](https://github.com/taniwhaai/arai/issues/188))
 
+### Documentation
+
+- Align contributor, agent, and MCP docs with the shipped 1.1.2 surface:
+  Claude Code + Grok Build + Codex hooks, four MCP tools including
+  `arai_check_action`, `canonicalize`/`sync`/`disable`/`deinit`, and
+  retire Grok-TUI-planning copy that treated those hosts as unmerged
+- Refresh `docs/arai-compliance-features.{docx,pdf}` from v0.2.18 / May 2026
+  (`~/.arai` paths) to v1.1.2: Codex and Grok hosts, `check-diff`,
+  `audit --ship`/`--purge`, cosign/SLSA, disable/enable, canonicalize/sync
+
 ### Fixed
 
 - `PostToolBatch` read a `tool_results[]` array Claude Code never sends; it now

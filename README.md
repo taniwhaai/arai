@@ -116,7 +116,7 @@ and [Arai's place upstream of Kete](docs/stack-integration.md).
   session-start summary and post-tool context, because Cursor delivers
   `agent_message` only on deny. See [coverage and limits](docs/cursor.md).
 - Arai's integrations for Windsurf, Cline and other MCP clients provide **agent-facing tools**
-  (`arai_list_guards`, `arai_add_guard`, `arai_recent_decisions`) — not
+  (`arai_list_guards`, `arai_add_guard`, `arai_check_action`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
 - Arai does not currently register native GitHub Copilot hooks. Its instruction
@@ -176,6 +176,7 @@ Arai doesn't just do keyword matching. It understands your rules:
 ```bash
 arai init                  # Discover, extract, classify, scan, set up hooks
 arai init --pre-commit     # Also install a git hook: arai check-diff --cached
+arai deinit                # Remove Arai hook registrations; leave other handlers
 arai status                # Show what's being enforced
 arai guardrails            # List all active rules
 arai why "git push --force" # Explain which rules would fire (dry-run, no audit write)
@@ -186,10 +187,14 @@ arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
 arai add "Never X"         # Add a rule manually (refuses rules that can never fire)
 arai add --allow-inert "…" # Keep a documentary rule that will not enforce
+arai disable 42            # Silence a rule by triple-id (survives rescan)
+arai enable 42             # Re-enable a previously disabled rule
 arai audit                 # Inspect the local log of rule firings
 arai audit --outcome=ignored # Compliance verdicts where the model ignored a rule
 arai audit --rule alembic  # Filter audit by rule subject/predicate/object substring
 arai audit --verify        # Verify the SHA-256 hash chain across every day-bucket
+arai audit --ship          # Ship pending day-buckets to your collector
+arai audit --purge --older=90  # Drop day-buckets older than 90 days
 arai stats                 # Aggregate audit log — top rules, compliance, token economics
 arai stats --by-rule       # Just the per-rule compliance + token economics
 arai severity alembic block # Pin a rule's severity (incremental deny rollout)
@@ -198,8 +203,11 @@ arai diff CLAUDE.md        # Preview rule-set delta before saving an edit
 arai test scenarios.json   # Replay synthetic hook scenarios against rules
 arai record --since=1h     # Capture recent firings as a scenario skeleton
 arai lint CLAUDE.md        # Parse a file and preview extracted rules
+arai canonicalize          # Extract recognised rules into ./arai.toml
+arai sync                  # Write arai.toml into existing per-tool instruction files
 arai trust                 # Manage URLs trusted for shared-policy extends
 arai mcp                   # Run the MCP server (stdio) for agent-authored guards
+arai migrate               # Move legacy ~/.arai → ~/.taniwha/arai
 arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 ```
 
@@ -314,7 +322,7 @@ running the binary:
 
 ```bash
 # 1. Download the binary, its .cosign.bundle, and (optionally) checksums.txt
-VERSION=v0.2.24
+VERSION=v1.1.2
 FILE=arai-linux-x86_64
 curl -fL -o "$FILE"               "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
 curl -fL -o "${FILE}.cosign.bundle" "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}.cosign.bundle"
@@ -350,7 +358,7 @@ Verify consumer-side with [`slsa-verifier`](https://github.com/slsa-framework/sl
 
 ```bash
 # 1. Download the binary and the release-level provenance attestation
-VERSION=v0.2.25
+VERSION=v1.1.2
 FILE=arai-linux-x86_64
 curl -fL -o "$FILE" \
   "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
@@ -463,7 +471,11 @@ capability set is documented in focused guides:
 - [Shared policies](docs/extends.md) — `arai:extends`, trust list, pinning,
   signatures, private policy sources
 - [MCP integration](docs/mcp.md) — agent-authored guards for Cursor,
-  Windsurf, and any MCP client
+  Windsurf, and any MCP client (`arai_check_action` included)
+- [Codex setup](docs/codex.md) — `.codex/hooks.json`, `/hooks` trust, `apply_patch`
+- [Instruction discovery](docs/instruction-discovery.md) — nested files, Claude `paths`, Cursor `globs`
+- [Canonical `arai.toml`](docs/rules-file-spec.md) — `arai canonicalize` / `arai sync`
+- [Arai upstream of Kete](docs/stack-integration.md)
 - [Rule enrichment](docs/enrichment.md) — the three classification tiers
 - [Telemetry payload schema](docs/telemetry-payload.md) — what a
   self-hosted collector receives

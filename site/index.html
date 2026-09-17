@@ -432,7 +432,7 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code, Grok Build, Codex and Cursor when the host runs native PreToolUse hooks. Claude Code runs project hooks only in a trusted workspace. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. On Codex you approve the hooks once in <code>/hooks</code>. On Cursor, advise reaches the model at session start and after tool calls rather than at the call. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Windsurf, Cline and similar hosts use MCP tools (list / add / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
+                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code, Grok Build, Codex and Cursor when the host runs native PreToolUse hooks. Claude Code runs project hooks only in a trusted workspace. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. On Codex you approve the hooks once in <code>/hooks</code>. On Cursor, advise reaches the model at session start and after tool calls rather than at the call. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Windsurf, Cline and similar hosts use MCP tools (list / add / check_action / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
             </div>
             <div class="feature">
                 <h3>Gate the diff, not just the tool <span class="tag">new in v1.1.2</span></h3>
@@ -554,7 +554,7 @@
             </div>
             <div class="feature">
                 <h3>Agent-authored guards</h3>
-                <p>Runs as an MCP server. The agent can register new rules mid-session and self-check recent decisions via <code>arai_recent_decisions</code>. MCP does not inject or deny tool calls by itself &mdash; blocking still requires a native PreToolUse host (Claude Code, Grok Build, Codex, Cursor) or the pre-commit gate. On MCP-only hosts, new guards apply when a supporting host next loads them.</p>
+                <p>Runs as an MCP server. The agent can register new rules mid-session, dry-run a hypothetical call with <code>arai_check_action</code>, and self-check recent decisions via <code>arai_recent_decisions</code>. MCP does not inject or deny tool calls by itself &mdash; blocking still requires a native PreToolUse host (Claude Code, Grok Build, Codex, Cursor) or the pre-commit gate. On MCP-only hosts, new guards apply when a supporting host next loads them.</p>
             </div>
             <div class="feature">
                 <h3>MCP authentication</h3>

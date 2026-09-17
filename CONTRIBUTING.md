@@ -1,6 +1,6 @@
 # Contributing to Arai
 
-Thanks for your interest in contributing to Arai! This guide will help you get started.
+Thanks for your interest in contributing to Arai. This guide will help you get started.
 
 ## Development Setup
 
@@ -10,6 +10,8 @@ cd arai
 cargo build
 cargo test
 ```
+
+Contribution flow is **PR-to-main**. Do not push feature work straight to `main`.
 
 ### Build variants
 
@@ -36,30 +38,46 @@ chore: bump tree-sitter-python to 0.26
 ### Running tests
 
 ```bash
-cargo test                         # All 52 tests
+cargo test                         # Unit + integration suite
 cargo test parser                  # Parser tests only
 cargo test intent                  # Intent classification tests
 cargo test session                 # Session tracking tests
 cargo test --features enrich       # Tests with ONNX feature
 ```
 
+Do not pin a test count in this file; the suite grows. Run `cargo test` before opening a PR.
+
 ### Project structure
 
 ```
 src/
-├── main.rs            # CLI entry point (clap)
+├── lib.rs             # Library crate — documented embedding API
+├── main.rs            # Thin CLI over the library (clap)
 ├── config.rs          # Configuration, paths, env vars
-├── discovery.rs       # Find instruction files
+├── discovery.rs       # Find instruction files (scoped / nested)
 ├── parser.rs          # Extract rules from markdown
 ├── intent.rs          # Classify rule intent (action, timing, tool scope)
 ├── store.rs           # SQLite persistence
 ├── guardrails.rs      # Term extraction + matching
-├── hooks.rs           # Claude Code hook protocol (stdin/stdout JSON)
+├── hooks.rs           # Host hook protocol (Claude Code, Grok Build, Codex)
+├── init.rs            # arai init / deinit — register and remove hooks
 ├── session.rs         # Session state + prerequisite tracking
 ├── code_scanner.rs    # tree-sitter AST import extraction
 ├── enrich.rs          # Sentence transformer + LLM enrichment
-└── upgrade.rs         # Self-upgrade between binary variants
+├── audit.rs           # Hash-chained local JSONL log
+├── compliance.rs      # Pre/Post obeyed / ignored / unclear
+├── canonicalize.rs    # Instruction files → arai.toml
+├── sync.rs            # arai.toml → per-tool instruction files
+├── repo_check.rs      # git-diff matcher (check-diff / pre-commit)
+├── mcp.rs             # Stdio MCP server
+├── extends.rs         # arai:extends upstream policy
+├── ship.rs            # arai audit --ship
+├── migrate.rs         # ~/.arai → ~/.taniwha/arai layout
+├── upgrade.rs         # Self-upgrade between binary variants
+└── …
 ```
+
+Native host payload details live in `codex.rs` and `hooks.rs`. Integration tests live under `tests/`.
 
 ## What to Contribute
 
@@ -67,25 +85,36 @@ src/
 
 - Improve parser pattern matching for edge cases
 - Add more languages to the tree-sitter code scanner
-- Expand the known tools list in `parser.rs`
-- Add integration tests for hook protocol
+- Expand the known tools list and host tool-name aliases
+- Add integration tests for a host hook payload
 - Improve subject extraction accuracy
 
 ### Bigger contributions
 
-- Direct LLM API support ([#1](https://github.com/taniwhaai/arai/issues/1))
-- Support for additional AI coding tools beyond Claude Code
-- Blocking mode (`permissionDecision: "deny"`) for critical guardrails
-- `arai deinit` to cleanly remove hooks
+These are still open. Do not treat them as missing product surface that already shipped:
+
 - Web dashboard for rule management
+- Rule-pack publication (canonical `arai.toml` packs beyond a single file)
+- Additional native PreToolUse hosts beyond Claude Code, Grok Build, and Codex
+
+Already shipped — do not re-propose:
+
+- Blocking mode (`permissionDecision: "deny"` / Grok `decision: deny`)
+- `arai deinit`
+- Grok Build native hooks
+- Codex native hooks (v1.1.2)
+- Direct LLM API enrichment (`arai scan --enrich-api`)
+- `arai check-diff` / `arai init --pre-commit`
+- `arai canonicalize` / `arai sync`
 
 ## Guidelines
 
 - Run `cargo test` before submitting a PR
 - Keep the lean binary under 15MB
 - Hook responses should stay under 50 ms median end-to-end (cold-start floor is ~20 ms; matching adds 5–15 ms). Run `bench/hot_path.sh` before/after perf-sensitive changes and post the before/after table in the commit body.
-- Don't add network calls to the hook path (only at scan/enrich time)
+- Don't add network calls to the hook path (only at scan/enrich/ship time)
 - Prefer expanding the verb taxonomy over adding ML complexity
+- Host-integration changes must keep Claude Code, Grok Build, and Codex paths tested; a missing tool-name alias is a silent fail-open
 
 ## License
 

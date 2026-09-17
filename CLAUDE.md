@@ -1,6 +1,6 @@
 # CLAUDE.md — Arai
 
-Arai is a Rust CLI that enforces AI coding assistant instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) via hooks (Claude Code + native Grok Build).
+Arai is a Rust CLI that enforces AI coding assistant instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) via native hooks (Claude Code, Grok Build, and Codex as of v1.1.2). Current crate version is in `Cargo.toml`.
 
 ## Commands
 
@@ -9,8 +9,9 @@ cargo build                    # Build
 cargo test                     # Run tests
 cargo install --path .         # Install lean binary
 cargo install --path . --features enrich  # Install with ONNX enrichment
-cargo run -- init              # Test init flow
+cargo run -- init              # Test init flow (Claude + Grok + Codex hook files)
 cargo run -- init --pre-commit # Also install .git/hooks/pre-commit (check-diff --cached)
+cargo run -- deinit            # Remove Arai hook registrations, leave other handlers
 cargo run -- check-diff --cached  # Match the staged git diff against guardrails
 cargo run -- guardrails        # List guardrails
 cargo run -- status            # Show enforcement status
@@ -40,6 +41,10 @@ cargo run -- test scenarios/alembic-migration.json  # Replay the canonical scena
 cargo run -- record --since=1h # Build scenarios from recent audit entries
 cargo run -- trust --add <url> # Approve a URL for arai:extends
 cargo run -- trust --add <url> --bearer-env ARAI_EXTENDS_TOKEN  # Private source: send bearer from env var
+cargo run -- disable 42        # Silence a rule by triple-id (survives rescan)
+cargo run -- enable 42         # Re-enable a previously disabled rule
+cargo run -- canonicalize      # Extract recognised rules into ./arai.toml
+cargo run -- sync              # Write arai.toml into existing per-tool instruction files
 cargo run -- migrate           # Move legacy ~/.arai → ~/.taniwha/arai (prompted, default no)
 cargo run -- migrate --yes     # Non-interactive migration (for scripts)
 cargo run -- mcp               # Run the MCP server on stdio (blocks on stdin)
@@ -52,31 +57,37 @@ ARAI_DENY_MODE=off cargo run -- guardrails --match-stdin  # Advise-only (no deny
 ```
 src/
 ├── lib.rs                # Library crate root — pub mods for the embeddable core (parser, store, guardrails, hooks, audit, …); CLI-support modules #[doc(hidden)]; telemetry private
-├── main.rs               # Thin CLI over the library (clap) — arg parsing + IO only; init, status, guardrails, scan, add, audit, mcp, upgrade, why
+├── main.rs               # Thin CLI over the library (clap) — arg parsing + IO only
 ├── config.rs             # Config, project paths + slug, env vars, LLM command
-├── discovery.rs          # Instruction file discovery (CLAUDE.md, .cursorrules, etc.)
+├── discovery.rs          # Instruction file discovery (scoped / nested; Claude paths, Cursor globs)
 ├── parser.rs             # Rule extraction from markdown (7 layers of pattern matching); tracks layer + expiry
 ├── store.rs              # SQLite + FTS5 (files, triples, code_graph, rule_intent); expired-rule filter
 ├── guardrails.rs         # Term extraction, subject matching, tool scope filtering; format_trace
 ├── hooks.rs              # Hook protocol — PreToolUse/PostToolUse/UserPromptSubmit + FileChanged/InstructionsLoaded/SessionStart auto-rescan; severity → deny/allow; per-host response shapes
 ├── codex.rs              # Codex apply_patch wire format → per-file Write/Edit actions
 ├── cursor.rs             # Cursor Agent hook payloads → canonical envelope; Cursor {"permission"} responses
-├── init.rs               # `arai init` flow — discover → extract → classify → scan → hook inject
+├── init.rs               # `arai init` / `deinit` — discover → extract → classify → scan → hook inject
 ├── intent.rs             # Intent classification — action, timing, tool scope, severity
 ├── migrate.rs            # `arai migrate` — move legacy ~/.arai → ~/.taniwha/arai (prompted)
 ├── session.rs            # Session state — prerequisite tracking across tool calls
 ├── code_scanner.rs       # tree-sitter AST parsing — import extraction for 7 languages
-├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out)
+├── enrich.rs             # Tier 2 (ONNX sentence transformer) + Tier 3 (LLM shell-out / API)
 ├── audit.rs              # Local JSONL firing log — record_firing, record_event, layer_label
 ├── compliance.rs         # Pre/Post correlation — Obeyed/Ignored/Unclear verdicts per rule
 ├── stats.rs              # Aggregate views — `arai stats`, per-rule compliance, token economics
 ├── scenarios.rs          # Scenario replay harness — `arai test <file>`
 ├── repo_check.rs         # Repo-layer matcher — git diffs synthesised as Write/Edit
+├── canonicalize.rs       # `arai canonicalize` — instruction files → arai.toml
+├── sync.rs               # `arai sync` — arai.toml → existing per-tool instruction files
+├── ship.rs               # `arai audit --ship`
+├── source_scope.rs       # Directory / path / glob scope for nested instruction files
+├── style.rs              # Colour / glyph helpers for CLI output
 ├── extends.rs            # `arai:extends` upstream-policy fetch + trust list
-├── mcp.rs                # Stdio MCP server — arai_add_guard + arai_list_guards for agent-authored rules
+├── mcp.rs                # Stdio MCP — add_guard, list_guards, check_action, recent_decisions
 ├── telemetry.rs          # Anonymous usage analytics (opt-out, no project context)
 ├── prompt_collector.rs   # Pure prompt-pattern collector — regex seed ruleset, PromptMatchReceipt; no enforcement
-└── upgrade.rs            # Self-upgrade between lean/full binaries
+├── upgrade.rs            # Self-upgrade between lean/full binaries
+└── codex.rs              # Codex apply_patch / payload normalization (internal)
 ```
 
 ## Prompt-collector module (`src/prompt_collector.rs`)
@@ -115,6 +126,9 @@ leaves the machine.
 - **Severity-aware** — prohibitive predicates block, affirmative predicates warn, prefers informs
 - **~22 ms skip-tool fast-exit, ~32 ms full match (median)** — see `bench/hot_path.sh` for the breakdown; cost is dominated by binary fork+exec, not matching
 - **Single binary** — no runtime dependencies for users
+
+Historical notes below (v0.2.x) are kept for parser/compliance archaeology.
+Current release is **v1.1.2** (Codex hooks, scoped discovery, check-diff).
 
 ## v0.2.11 additions at a glance
 
