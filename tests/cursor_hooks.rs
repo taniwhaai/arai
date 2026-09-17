@@ -9,16 +9,27 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Project(PathBuf);
 
 impl Project {
     fn bare() -> Self {
+        // Tests start on parallel threads within the same tick, so a
+        // pid+timestamp name alone can collide (seen on the Windows runner:
+        // two fixtures shared a root, one scan hit "database is locked" and
+        // the other's project was torn down under it).  A process-wide
+        // counter makes every root unique regardless of clock resolution.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("arai_cursor_{}_{stamp}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "arai_cursor_{}_{}_{stamp}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir_all(root.join("project/.git")).unwrap();
         fs::create_dir_all(root.join("home")).unwrap();
         Self(root)
