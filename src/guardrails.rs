@@ -34,6 +34,42 @@ pub const CANONICAL_TOOLS: &[&str] = &[
 /// Designed for minimal impact: all existing match arms, `.contains()`, and `==`
 /// checks continue to work unchanged after normalization.
 pub fn normalize_tool_name(raw: &str) -> String {
+    normalize_tool_name_ref(raw).to_owned()
+}
+
+/// Input-aware normalization, for the tools whose canonical name depends on
+/// what they were asked to do rather than on their name alone.
+///
+/// Only `Monitor` needs this today: its command form executes a shell command
+/// (so Bash-scoped policy must apply), while its WebSocket form does not.
+/// Name-only callers cannot make that distinction and get the conservative
+/// name-only answer from [`normalize_tool_name`].
+///
+/// Everything else falls through unchanged, so wiring a call site over to this
+/// function is behaviour-preserving for every tool but `Monitor`.
+pub(crate) fn normalize_tool_name_for_input<'a>(raw: &'a str, input: &Value) -> &'a str {
+    if raw.eq_ignore_ascii_case("Monitor")
+        && monitor_field(input, "command").is_some_and(Value::is_string)
+        && monitor_field(input, "ws").is_none()
+    {
+        return "Bash";
+    }
+    normalize_tool_name_ref(raw)
+}
+
+/// Reads one of `Monitor`'s two mutually exclusive operation fields, treating
+/// an explicit JSON `null` as absent.
+///
+/// Serializers that emit every field of a tagged union write the unused arm as
+/// `null`, so `{"command": "...", "ws": null}` is the command form.  Without
+/// this, that payload is ambiguous on PreToolUse (rejected, fail-closed) but
+/// merely uncanonical on PostToolUse, where nothing validates it — the same
+/// call would then be enforced and yet contribute no compliance terms.
+pub(crate) fn monitor_field<'a>(input: &'a Value, key: &str) -> Option<&'a Value> {
+    input.get(key).filter(|value| !value.is_null())
+}
+
+fn normalize_tool_name_ref(raw: &str) -> &str {
     match raw {
         // Grok Build names from docs.x.ai and live hook samples.  Grok also
         // auto-maps some tools to Claude names for some events, so canonical
@@ -42,32 +78,37 @@ pub fn normalize_tool_name(raw: &str) -> String {
         // `run_terminal_command` is the live Grok Build tool name (see
         // docs.x.ai PreToolUse examples and issue #161 live verify). The
         // older `run_terminal_cmd` alias is kept for compatibility.
-        "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
-        "search_replace" | "edit_file" | "apply_patch" => "Edit".to_string(),
-        "read_file" => "Read".to_string(),
-        "list_dir" => "Glob".to_string(),
-        "grep_search" => "Grep".to_string(),
+        "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash",
+        // PowerShell is the primary shell on Windows hosts and always
+        // executes a command — without this arm it stays uncanonical, and
+        // the domain-rules-only gate drops every Bash-scoped rule on it.
+        "PowerShell" | "powershell" | "pwsh" => "Bash",
+        "search_replace" | "edit_file" | "apply_patch" => "Edit",
+        "read_file" => "Read",
+        "list_dir" => "Glob",
+        "grep_search" => "Grep",
         // File-creation variants.  Without these, Write-scoped rules
         // ("never hand-write migration files") silently never fire on a
         // host that names its file tool this way — the domain-rules-only
         // gate drops unknown tools.
-        "write_file" | "create_file" => "Write".to_string(),
+        "write_file" | "create_file" => "Write",
 
         // Claude Code + existing canonical names (pass-through for idempotency)
         "Bash" | "Edit" | "Write" | "Read" | "Glob" | "Agent" | "ToolSearch" | "Grep"
-        | "NotebookEdit" | "MultiEdit" => raw.to_string(),
+        | "NotebookEdit" | "MultiEdit" => raw,
 
         // Future-proof fallback for common variants
         other => {
             let lower = other.to_ascii_lowercase();
             match lower.as_str() {
-                "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash".to_string(),
+                "run_terminal_command" | "run_terminal_cmd" | "bash" => "Bash",
+                "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "Bash",
                 "write" | "notebookedit" | "notebook_edit" | "write_file" | "writefile"
-                | "create_file" | "createfile" => "Write".to_string(),
-                "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit".to_string(),
-                "multiedit" | "multi_edit" => "MultiEdit".to_string(),
-                "tool_search" | "toolsearch" => "ToolSearch".to_string(),
-                _ => other.to_string(),
+                | "create_file" | "createfile" => "Write",
+                "edit_file" | "editfile" | "apply_patch" | "applypatch" => "Edit",
+                "multiedit" | "multi_edit" => "MultiEdit",
+                "tool_search" | "toolsearch" => "ToolSearch",
+                _ => other,
             }
         }
     }
@@ -1020,6 +1061,111 @@ mod tests {
         assert_eq!(normalize_tool_name("Bash"), "Bash");
         // Case-insensitive fallback path
         assert_eq!(normalize_tool_name("Run_Terminal_Command"), "Bash");
+    }
+
+    #[test]
+    fn powershell_is_canonicalised_by_name_alone() {
+        // PowerShell has no non-executing form, so unlike Monitor it needs no
+        // input to classify.  Canonicalising by name means every call site —
+        // including name-only ones such as `arai why` — sees a shell tool.
+        // Before this, PowerShell stayed uncanonical and the domain-rules-only
+        // gate silently dropped every Bash-scoped rule on Windows hosts.
+        for raw in [
+            "PowerShell",
+            "powershell",
+            "pwsh",
+            "POWERSHELL",
+            "powershell.exe",
+            "pwsh.exe",
+        ] {
+            assert_eq!(normalize_tool_name(raw), "Bash", "name-only: {raw}");
+            assert_eq!(
+                normalize_tool_name_for_input(raw, &Value::Null),
+                "Bash",
+                "input-aware: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn monitor_is_a_shell_only_in_its_command_form() {
+        // Monitor's command form runs a shell command; its ws form watches a
+        // socket and executes nothing.  Only the input distinguishes them, so
+        // anything ambiguous or malformed stays uncanonical rather than being
+        // guessed into Bash scope.
+        assert_eq!(
+            normalize_tool_name_for_input("Monitor", &serde_json::json!({"command": "rm -rf /"})),
+            "Bash"
+        );
+        for ambiguous in [
+            serde_json::json!({"ws": {"url": "wss://example.test/events"}}),
+            serde_json::json!({"command": "cargo test", "ws": {"url": "wss://example.test/e"}}),
+            serde_json::json!({"command": 42}),
+            serde_json::json!({}),
+            Value::Null,
+        ] {
+            assert_eq!(
+                normalize_tool_name_for_input("Monitor", &ambiguous),
+                "Monitor",
+                "should not guess: {ambiguous}"
+            );
+        }
+        // Name-only callers cannot see the input, so they get the
+        // conservative answer and the existing public API is unchanged.
+        assert_eq!(normalize_tool_name("Monitor"), "Monitor");
+    }
+
+    #[test]
+    fn aliasing_to_a_narrower_extractor_would_loosen_enforcement() {
+        // Canonicalising a host's tool name is only a fix when the canonical
+        // extractor sees at least what the unknown-tool path did.  Unknown
+        // tools take `extract_generic_terms`, which keeps every word of every
+        // string field.  `grep` -> Grep would narrow that to "grep" plus path
+        // components, dropping the search pattern; `spawn_subagent` -> Agent
+        // would hit SKIP_TOOLS and extract nothing at all.  Either alias would
+        // silently stop rules that fire today, so both stay uncanonical until
+        // the target extractor covers the fields they would lose.
+        let input = serde_json::json!({"pattern": "DATABASE_PASSWORD", "path": "src"});
+        for raw in ["grep", "spawn_subagent"] {
+            assert_eq!(normalize_tool_name(raw), raw);
+            assert!(
+                extract_terms(&normalize_tool_name(raw), &input)
+                    .contains(&"database_password".to_string()),
+                "{raw} lost the pattern term"
+            );
+        }
+    }
+
+    #[test]
+    fn input_aware_normalization_is_unchanged_for_every_other_tool() {
+        // The wiring change at six call sites is only safe if the two
+        // functions agree everywhere except Monitor.
+        let inputs = [
+            Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({"command": "git push --force"}),
+            serde_json::json!({"ws": {"url": "wss://example.test/events"}}),
+        ];
+        for raw in CANONICAL_TOOLS.iter().copied().chain([
+            "run_terminal_command",
+            "search_replace",
+            "write_file",
+            "read_file",
+            "list_dir",
+            "grep_search",
+            "apply_patch",
+            "PowerShell",
+            "totally_unknown_tool",
+            "",
+        ]) {
+            for input in &inputs {
+                assert_eq!(
+                    normalize_tool_name_for_input(raw, input),
+                    normalize_tool_name(raw),
+                    "diverged for {raw} on {input}"
+                );
+            }
+        }
     }
 
     #[test]
