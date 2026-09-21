@@ -426,3 +426,140 @@ fn cached_diff_uses_raw_content_and_stable_paths_despite_git_display_settings() 
     assert_eq!(report["files"][0]["path"], "src/generated.py");
     assert_eq!(report["files"][0]["matched"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn powershell_calls_match_the_same_bash_scoped_rules_as_bash() {
+    // The gap this closes: `PowerShell` was not a canonical tool name, and
+    // the domain-rules-only gate drops rules whose tool scope it cannot
+    // resolve.  On a Windows host, where PowerShell is the primary shell,
+    // every Bash-scoped guardrail therefore matched nothing at all.
+    let fixture = Fixture::new();
+    let db = fixture.store("- Never run `git push --force` against main\n");
+
+    let bash = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git push --force origin main"},
+    });
+    let baseline = hooks::match_hook(&bash, &fixture.cfg, &db).unwrap();
+    assert!(
+        !baseline.matched.is_empty(),
+        "fixture rule did not fire on Bash, so this test proves nothing"
+    );
+
+    for raw in ["PowerShell", "powershell", "pwsh", "powershell.exe"] {
+        let payload = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": raw,
+            "tool_input": {"command": "git push --force origin main"},
+        });
+        let result = hooks::match_hook(&payload, &fixture.cfg, &db).unwrap();
+        assert_eq!(result.tool_name, "Bash", "{raw} was not canonicalised");
+        assert_eq!(
+            result.matched.len(),
+            baseline.matched.len(),
+            "{raw} matched a different rule set than Bash"
+        );
+    }
+}
+
+#[test]
+fn monitor_matches_shell_policy_only_when_it_runs_a_command() {
+    let fixture = Fixture::new();
+    let db = fixture.store("- Never run `git push --force` against main\n");
+
+    // Command form: executes a shell command, so Bash policy applies.
+    let command_form = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Monitor",
+        "tool_input": {"command": "git push --force origin main"},
+    });
+    let matched = hooks::match_hook(&command_form, &fixture.cfg, &db).unwrap();
+    assert_eq!(matched.tool_name, "Bash");
+    assert!(!matched.matched.is_empty(), "shell form did not match");
+
+    // WebSocket form: executes nothing, so it must not inherit shell policy.
+    let ws_form = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Monitor",
+        "tool_input": {"ws": {"url": "wss://example.test/events"}},
+    });
+    let watched = hooks::match_hook(&ws_form, &fixture.cfg, &db).unwrap();
+    assert_eq!(watched.tool_name, "Monitor");
+    assert!(
+        watched.matched.is_empty(),
+        "a non-executing watch inherited shell policy"
+    );
+}
+
+#[test]
+fn ambiguous_monitor_payloads_are_rejected_rather_than_guessed() {
+    // Neither form, both forms, or a malformed form leaves the tool's scope
+    // undecidable.  Guessing either way is wrong: guessing Bash denies a
+    // watch, guessing Monitor lets a shell command through unchecked.
+    let fixture = Fixture::new();
+    let db = fixture.store("");
+    for input in [
+        json!({}),
+        json!({"command": "git push --force", "ws": {"url": "wss://example.test/e"}}),
+        json!({"command": 42}),
+        json!({"command": null, "ws": null}),
+        json!({"ws": "wss://example.test/events"}),
+        json!({"ws": {"url": 42}}),
+        json!({"ws": {}}),
+    ] {
+        let payload = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Monitor",
+            "tool_input": input,
+        });
+        assert!(
+            hooks::match_hook(&payload, &fixture.cfg, &db).is_err(),
+            "ambiguous Monitor payload was accepted: {payload}"
+        );
+    }
+}
+
+#[test]
+fn an_explicit_null_arm_reads_as_the_other_form_on_every_event() {
+    // A serializer that writes both arms of the union emits the unused one as
+    // null.  PreToolUse validates and PostToolUse does not, so if the two
+    // disagreed about what null means, the same call would be enforced as a
+    // shell command and yet contribute no compliance terms afterwards.
+    //
+    // Only the canonical tool name is asserted on both events: whether a rule
+    // *fires* is timing-gated (a prohibitive rule routes to PreToolUse), and
+    // that gate is deliberately unchanged here.
+    let fixture = Fixture::new();
+    let db = fixture.store(
+        "- Never run `git push --force` against main
+",
+    );
+    for event in ["PreToolUse", "PostToolUse"] {
+        let payload = json!({
+            "hook_event_name": event,
+            "tool_name": "Monitor",
+            "tool_input": {"command": "git push --force origin main", "ws": null},
+        });
+        let result = hooks::match_hook(&payload, &fixture.cfg, &db)
+            .unwrap_or_else(|e| panic!("{event} rejected the command form: {e}"));
+        assert_eq!(
+            result.tool_name, "Bash",
+            "{event} did not canonicalise the command form"
+        );
+    }
+
+    // The enforcement half still fires on the event that gates it.
+    let pre = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Monitor",
+        "tool_input": {"command": "git push --force origin main", "ws": null},
+    });
+    assert!(
+        !hooks::match_hook(&pre, &fixture.cfg, &db)
+            .unwrap()
+            .matched
+            .is_empty(),
+        "the command form matched no rule on PreToolUse"
+    );
+}

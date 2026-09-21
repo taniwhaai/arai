@@ -274,17 +274,30 @@ fn validate_hook_input(hook: &Value) -> Result<(), String> {
     let input = hook_field(hook, "tool_input", "toolInput")
         .filter(|value| value.is_object())
         .ok_or("PreToolUse requires a tool_input object")?;
-    let tool = guardrails::normalize_tool_name(raw_tool);
+    // Monitor carries either a `command` string (runs a shell command, so
+    // Bash policy applies) or a `ws` object (a WebSocket watch, which
+    // executes nothing).  Exactly one must be present and well-formed, or we
+    // cannot tell which scope to enforce and must not guess.
+    if raw_tool.eq_ignore_ascii_case("Monitor") {
+        let command = guardrails::monitor_field(input, "command");
+        let ws = guardrails::monitor_field(input, "ws");
+        if command.is_some() == ws.is_some()
+            || command.is_some_and(|v| !v.is_string())
+            || ws.is_some_and(|v| !v.is_object() || !v.get("url").is_some_and(Value::is_string))
+        {
+            return Err(
+                "Monitor requires a command string or a ws object with a url string".into(),
+            );
+        }
+    }
+    let tool = guardrails::normalize_tool_name_for_input(raw_tool, input);
     if tool == "Bash" || crate::codex::is_patch_tool(raw_tool, input) {
         input
             .get("command")
             .and_then(Value::as_str)
             .filter(|command| !command.contains('\0'))
             .ok_or("Command tools require a command string without NUL bytes")?;
-    } else if matches!(
-        tool.as_str(),
-        "Edit" | "Write" | "MultiEdit" | "NotebookEdit"
-    ) {
+    } else if matches!(tool, "Edit" | "Write" | "MultiEdit" | "NotebookEdit") {
         let path = if tool == "NotebookEdit" {
             input
                 .get("notebook_path")
@@ -327,7 +340,11 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     )
     .to_string();
     let raw_tool_name = hook_field_str(hook, "tool_name", "toolName").unwrap_or("");
-    let tool_name = guardrails::normalize_tool_name(raw_tool_name);
+    let tool_name = guardrails::normalize_tool_name_for_input(
+        raw_tool_name,
+        hook_field(hook, "tool_input", "toolInput").unwrap_or(&Value::Null),
+    )
+    .to_string();
     // Sanitize session_id at the boundary — anything that wouldn't survive
     // path-traversal validation is treated as no-session (session features
     // silently disable, the rest of the hook still works).  See
@@ -554,7 +571,7 @@ fn observed_terms(raw_tool_name: &str, tool_input: &Value) -> Result<Vec<String>
         Ok(terms)
     } else {
         Ok(guardrails::extract_terms(
-            &guardrails::normalize_tool_name(raw_tool_name),
+            guardrails::normalize_tool_name_for_input(raw_tool_name, tool_input),
             tool_input,
         ))
     }
@@ -813,7 +830,11 @@ fn handle_stdin_impl(
     validate_hook_input(&hook)?;
 
     let raw_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
-    let tool_name = guardrails::normalize_tool_name(raw_tool_name);
+    let tool_name = guardrails::normalize_tool_name_for_input(
+        raw_tool_name,
+        hook_field(&hook, "tool_input", "toolInput").unwrap_or(&Value::Null),
+    )
+    .to_string();
     let raw_event = hook_field(&hook, "hook_event_name", "hookEventName")
         .and_then(|v| v.as_str())
         .unwrap_or("PreToolUse");
@@ -1012,7 +1033,11 @@ fn handle_stdin_impl(
         // pre-call gate.  Lets us reuse extract_terms, code-graph
         // enrichment, severity-from-rule logic without forking.
         let raw_denied_tool_name = hook_field_str(&hook, "tool_name", "toolName").unwrap_or("");
-        let denied_tool_name = guardrails::normalize_tool_name(raw_denied_tool_name);
+        let denied_tool_name = guardrails::normalize_tool_name_for_input(
+            raw_denied_tool_name,
+            hook_field(&hook, "tool_input", "toolInput").unwrap_or(&Value::Null),
+        )
+        .to_string();
         let synthesized = serde_json::json!({
             "hook_event_name": "PreToolUse",
             "tool_name": denied_tool_name,
@@ -1098,7 +1123,11 @@ fn handle_stdin_impl(
             // model saw.  There is no parallel results array.
             for call in tool_calls.iter() {
                 let raw_tool_name = hook_field_str(call, "tool_name", "toolName").unwrap_or("");
-                let tool_name = guardrails::normalize_tool_name(raw_tool_name);
+                let tool_name = guardrails::normalize_tool_name_for_input(
+                    raw_tool_name,
+                    hook_field(call, "tool_input", "toolInput").unwrap_or(&Value::Null),
+                )
+                .to_string();
                 if tool_name.is_empty() || guardrails::should_skip_tool(&tool_name) {
                     continue;
                 }
