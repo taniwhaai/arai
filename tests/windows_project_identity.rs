@@ -290,14 +290,12 @@ fn legacy_store_migration_preserves_manual_rules_and_discovery_pins() {
         .list_files()
         .unwrap()
         .contains(&"manual://arai-add/retained".into()));
-    assert!(db.list_files().unwrap().contains(
-        &p.root()
-            .join("packages")
-            .join("web")
-            .join("AGENTS.md")
-            .to_string_lossy()
-            .into_owned()
-    ));
+    let nested_identity = fs::canonicalize(p.root().join("packages/web/AGENTS.md")).unwrap();
+    assert!(db
+        .list_files()
+        .unwrap()
+        .iter()
+        .any(|path| { fs::canonicalize(path).is_ok_and(|identity| identity == nested_identity) }));
     for (cwd, denied) in [(p.root().join("packages/web"), true), (p.root(), false)] {
         let output = p.registered_hook("codex", json!({"hook_event_name":"PreToolUse", "tool_name":"Bash",
             "tool_input":{"command":"npm publish"}, "cwd":cwd, "session_id":"nested-identity-test"}));
