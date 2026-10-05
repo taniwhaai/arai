@@ -83,6 +83,37 @@ explicitly external sources. Absent legacy rows remain retained: restore the
 matching local source, adopt it, then remove it and scan if that rule source is
 indeed obsolete. Do not use adoption to replace verified embedding policy.
 
+## Windows project state upgrades
+
+Windows project roots are resolved to their filesystem spelling before hashing
+or discovering sources. Long names, 8.3 short names, case variants, and verbatim
+paths select the same store, including hooks launched by PowerShell. UNC paths
+retain their network root. Unix project identities are unchanged.
+Hook working directories and file paths also expand existing 8.3 components,
+including the parent of a file that has not been created yet, so directory and
+glob scopes continue to apply.
+
+When the canonical store is absent, Arai checks the original invocation spelling
+and the filesystem's 8.3 spellings of the root and its ancestors for an existing
+store (including a short `%TEMP%` parent with a long checkout name). Under a
+per-project lock, it relocates the entire project directory and its audit directory. Manual rules,
+disabled rules, and severity pins remain in the same database. Local source paths
+are rebased without replacing rule IDs, so a subsequent scan retains pins.
+External library source identifiers are not rewritten.
+
+Old stores contain a hash, not their original project root. For a historical
+mixed-case or other spelling that cannot be reconstructed, run the upgraded Arai
+once from that **exact original spelling**, before initializing from a different
+spelling. For example, use `cmd.exe` and `cd /d` to retain an 8.3 working directory;
+PowerShell may expand it before starting Arai.
+
+An existing canonical store takes precedence; legacy stores are left intact.
+Multiple legacy candidates or conflicting audit directories stop migration with
+an error rather than merging policy or audit chains. If stores already exist
+under several spellings, back them up and reconcile their rules and severity
+choices before removing any old state. Close older Arai processes before the
+upgrade so Windows can rename their store directory.
+
 Host references: [Claude memory and rules](https://code.claude.com/docs/en/memory),
 [Cursor rules](https://cursor.com/docs/rules), and
 [Codex AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md).

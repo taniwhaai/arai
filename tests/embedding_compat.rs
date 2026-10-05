@@ -148,8 +148,21 @@ fn explicit_project_configuration_never_changes_process_cwd() {
     let first_cfg = Config::load_from(&project.0.join("project/src/nested")).unwrap();
     let second_cfg = Config::load_from(&second.0.join("project")).unwrap();
     assert_eq!(std::env::current_dir().unwrap(), before);
-    assert_eq!(first_cfg.project_root, project.0.join("project"));
-    assert_eq!(second_cfg.project_root, second.0.join("project"));
+    // Windows may expand a short %TEMP% ancestor (e.g. RUNNER~1). Compare
+    // directory identity while still requiring unchanged Unix spellings.
+    assert_eq!(
+        fs::canonicalize(&first_cfg.project_root).unwrap(),
+        fs::canonicalize(project.0.join("project")).unwrap()
+    );
+    assert_eq!(
+        fs::canonicalize(&second_cfg.project_root).unwrap(),
+        fs::canonicalize(second.0.join("project")).unwrap()
+    );
+    #[cfg(not(windows))]
+    {
+        assert_eq!(first_cfg.project_root, project.0.join("project"));
+        assert_eq!(second_cfg.project_root, second.0.join("project"));
+    }
     assert_ne!(first_cfg.project_slug(), second_cfg.project_slug());
 }
 

@@ -376,8 +376,22 @@ fn resolve_path(path: &str, base: &str) -> String {
 fn normalize_path(path: &str) -> String {
     let path = native_separators(path);
     #[cfg(windows)]
-    let path = path.strip_prefix("//?/").unwrap_or(&path);
+    let path = if let Some(unc) = path.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else {
+        path.strip_prefix("//?/").unwrap_or(&path).to_string()
+    };
+    #[cfg(windows)]
+    let path = expand_windows_short_path(&path);
     let rooted = path.starts_with('/');
+    // Keep the UNC introducer, including after stripping a verbatim prefix.
+    let root_prefix = if cfg!(windows) && path.starts_with("//") {
+        "//"
+    } else if rooted {
+        "/"
+    } else {
+        ""
+    };
     let mut parts: Vec<&str> = Vec::new();
     for part in path.split('/') {
         match part {
@@ -395,12 +409,103 @@ fn normalize_path(path: &str) -> String {
             _ => parts.push(part),
         }
     }
-    let result = format!("{}{}", if rooted { "/" } else { "" }, parts.join("/"));
+    let result = format!("{root_prefix}{}", parts.join("/"));
     if cfg!(windows) {
         result.to_lowercase()
     } else {
         result
     }
+}
+
+/// Expand existing 8.3 components without resolving junctions/symlinks, whose
+/// logical locations can carry different instruction scopes. For a new file,
+/// resolve its existing ancestor and retain the not-yet-created suffix.
+#[cfg(windows)]
+fn expand_windows_short_path(path: &str) -> String {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Component, Path, PathBuf};
+
+    if !path.contains('~') || path.contains('\0') || !Path::new(path).is_absolute() {
+        return path.to_string();
+    }
+    #[repr(C)]
+    struct FindData {
+        attributes: u32,
+        creation_time: [u32; 2],
+        access_time: [u32; 2],
+        write_time: [u32; 2],
+        size_high: u32,
+        size_low: u32,
+        reserved: [u32; 2],
+        name: [u16; 260],
+        alternate_name: [u16; 14],
+    }
+    const _: [(); 592] = [(); std::mem::size_of::<FindData>()];
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn FindFirstFileW(path: *const u16, data: *mut FindData) -> *mut std::ffi::c_void;
+        fn FindClose(handle: *mut std::ffi::c_void) -> i32;
+    }
+    // Query only ambiguous components. GetLongPathNameW also queries every
+    // ancestor, failing on restricted ancestors even when this file is readable.
+    let native = path.replace('/', "\\");
+    let mut resolved = PathBuf::new();
+    for component in Path::new(&native).components() {
+        resolved.push(component);
+        if let Component::Normal(name) = component {
+            let name = name.to_string_lossy();
+            if name.contains('~') && !name.contains(['*', '?']) {
+                let input: Vec<u16> = resolved.as_os_str().encode_wide().chain(Some(0)).collect();
+                let mut data = std::mem::MaybeUninit::<FindData>::zeroed();
+                // SAFETY: terminated input and correctly sized WIN32_FIND_DATAW.
+                let handle = unsafe { FindFirstFileW(input.as_ptr(), data.as_mut_ptr()) };
+                if handle as isize != -1 {
+                    // SAFETY: successful lookup initializes the data, and this
+                    // handle is closed exactly once without being reused.
+                    let data = unsafe {
+                        FindClose(handle);
+                        data.assume_init()
+                    };
+                    let len = data
+                        .name
+                        .iter()
+                        .position(|&unit| unit == 0)
+                        .unwrap_or(data.name.len());
+                    resolved.set_file_name(OsString::from_wide(&data.name[..len]));
+                }
+            }
+        }
+    }
+    native_separators(&resolved.to_string_lossy())
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn short_scope_paths_expand_existing_ancestors() {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32;
+    }
+    let root =
+        std::env::temp_dir().join(format!("arai_scope_long_directory_{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let input: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut short = vec![0u16; 32768];
+    let size = unsafe { GetShortPathNameW(input.as_ptr(), short.as_mut_ptr(), short.len() as u32) };
+    assert!(size > 0 && size < short.len() as u32);
+    let short = std::ffi::OsString::from_wide(&short[..size as usize])
+        .to_string_lossy()
+        .into_owned();
+    let actual = normalize_path(&format!("{short}/not-created/new.py"));
+    let expected = normalize_path(&root.join("not-created/new.py").to_string_lossy());
+    std::fs::remove_dir(&root).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(
+        normalize_path(r"\\?\UNC\server\share\new.py"),
+        "//server/share/new.py"
+    );
 }
 
 fn native_separators(path: &str) -> String {
