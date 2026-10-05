@@ -2,6 +2,10 @@ use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+#[path = "windows_project.rs"]
+mod windows_project;
+
 /// Resolved runtime configuration: project root, state directory, and the
 /// optional knobs from `{arai_base}/config.toml` plus environment variables.
 /// Build one with [`Config::load`]; nearly every library entry point takes
@@ -179,6 +183,10 @@ impl Config {
     /// (process-global, thread-unsafe) working directory.
     pub fn load_from(project_dir: &Path) -> Result<Config, String> {
         let project_root = find_project_root_from(project_dir)?;
+        #[cfg(windows)]
+        let original_root = project_root.clone();
+        #[cfg(windows)]
+        let project_root = windows_project::canonical_root(&project_root)?;
         let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
 
         // Resolve the base directory through the pure resolver, injecting
@@ -200,6 +208,8 @@ impl Config {
         }
 
         let arai_base_dir = PathBuf::from(resolved.path);
+        #[cfg(windows)]
+        windows_project::migrate_store(&arai_base_dir, &original_root, &project_root)?;
 
         let llm_command = std::env::var("ARAI_LLM_CMD").ok();
         let api_url = std::env::var("ARAI_API_URL").ok();
@@ -278,19 +288,17 @@ impl Config {
     /// subdirectory name under `{arai_base}/projects/` and
     /// `{arai_base}/audit/`.
     pub fn project_slug(&self) -> String {
-        let canonical = self.project_root.to_string_lossy().to_string();
-        let dir_name = self
-            .project_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
-        let hash = hasher.finalize();
-        let short_hash = hex_encode(&hash[..4]);
-
-        format!("{dir_name}-{short_hash}")
+        // Config is also publicly constructible by embedders. Resolve an
+        // existing Windows root here as well as in load_from; retain the
+        // historical behavior for synthetic/nonexistent library paths.
+        #[cfg(windows)]
+        {
+            let root = windows_project::canonical_root(&self.project_root)
+                .unwrap_or_else(|_| self.project_root.clone());
+            slug_for_path(&root)
+        }
+        #[cfg(not(windows))]
+        slug_for_path(&self.project_root)
     }
 
     /// DB path: `~/.taniwha/arai/projects/<dirname>-<8char-sha256>/arai.db`
@@ -347,6 +355,15 @@ impl Config {
     pub(crate) fn grok_global_hooks_dir(&self) -> PathBuf {
         self.home_dir.join(".grok").join("hooks")
     }
+}
+
+fn slug_for_path(root: &Path) -> String {
+    let dir_name = root
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_else(|| "unknown".into());
+    let hash = Sha256::digest(root.to_string_lossy().as_bytes());
+    format!("{dir_name}-{}", hex_encode(&hash[..4]))
 }
 
 fn find_project_root_from(start: &Path) -> Result<PathBuf, String> {

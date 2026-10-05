@@ -92,6 +92,11 @@ only sources they own. Existing stores require explicit adoption of legacy local
 sources. See [discovery, activation and upgrade handling](docs/instruction-discovery.md)
 and [Arai's place upstream of Kete](docs/stack-integration.md).
 
+On Windows, project state uses the resolved directory path so long names,
+8.3 aliases, case variants, and PowerShell hooks share one store. See
+[Windows state upgrades](docs/instruction-discovery.md#windows-project-state-upgrades)
+if you already have state created under a different path spelling.
+
 - **Claude Code**, **Grok Build**, **Codex**, and **Cursor** support PreToolUse
   hooks, so Arai can issue `deny` decisions and actually block tool calls.
 - On **Claude Code**, hooks in `.claude/settings.json` run only once the

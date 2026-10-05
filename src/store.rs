@@ -308,6 +308,70 @@ impl Store {
         )
     }
 
+    /// Keep discovered rule IDs (and therefore severity pins) when upgrading
+    /// a Windows store whose source paths used an alias of the project root.
+    /// External policy IDs belong to embedders and are deliberately untouched.
+    #[cfg(windows)]
+    pub(crate) fn relocate_project_sources(&self, old: &Path, new: &Path) -> Result<(), String> {
+        fn rebase(path: &str, old: &Path, new: &Path) -> Option<String> {
+            // Scope directories were stored in lowercase with '/' separators.
+            // Compare components case-insensitively, preserving the suffix.
+            let path = path.replace('\\', "/");
+            let old = old.to_string_lossy().replace('\\', "/");
+            let prefix = format!("{}/", old.trim_end_matches('/'));
+            let suffix = if path.eq_ignore_ascii_case(&old) {
+                ""
+            } else if path.get(..prefix.len())?.eq_ignore_ascii_case(&prefix) {
+                &path[prefix.len()..]
+            } else {
+                return None;
+            };
+            let mut relocated = new.to_path_buf();
+            for component in Path::new(suffix).components() {
+                relocated.push(component.as_os_str());
+            }
+            Some(relocated.to_string_lossy().into_owned())
+        }
+        let migrate = || -> Result<(), Box<dyn std::error::Error>> {
+            let tx = self.conn.unchecked_transaction()?;
+            let sources: Vec<(i64, String, String)> = tx
+                .prepare(
+                    "SELECT f.id, f.path, m.scope_json FROM files f JOIN source_metadata m
+                 ON m.file_id=f.id WHERE m.owner IN ('discovery', 'legacy')",
+                )?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, path, scope) in sources {
+                let Some(relocated) = rebase(&path, old, new) else {
+                    continue;
+                };
+                let mut scope: serde_json::Value = serde_json::from_str(&scope)?;
+                if let Some(directory) = scope["directory"].as_str() {
+                    if let Some(directory) = rebase(directory, old, new) {
+                        scope["directory"] = directory.into();
+                    }
+                }
+                // A conflicting source path fails the transaction; do not merge
+                // distinct rule IDs or silently discard an operator's choices.
+                tx.execute(
+                    "UPDATE files SET path=?1 WHERE id=?2",
+                    params![relocated, id],
+                )?;
+                tx.execute(
+                    "UPDATE triples SET source_file=?1 WHERE file_id=?2 AND source_file=?3",
+                    params![relocated, id, path],
+                )?;
+                tx.execute(
+                    "UPDATE source_metadata SET scope_json=?1 WHERE file_id=?2",
+                    params![scope.to_string(), id],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        };
+        migrate().map_err(|e| format!("Could not migrate project source paths: {e}"))
+    }
+
     pub(crate) fn discovered_sources(&self) -> rusqlite::Result<Vec<String>> {
         self.conn.prepare("SELECT f.path FROM files f JOIN source_metadata m ON m.file_id=f.id WHERE m.owner='discovery'")?
             .query_map([], |row| row.get(0))?.collect()
