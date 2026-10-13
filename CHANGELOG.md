@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-10-05
+
+### Fixed
+
+- *(matching)* Canonicalise PowerShell and Monitor's command form as Bash ([#195](https://github.com/taniwhaai/arai/pull/195))
+- *(windows)* Share project state across path spellings ([#197](https://github.com/taniwhaai/arai/pull/197))
+
+
 ## [1.1.3] - 2026-09-17
 
 ### CI
