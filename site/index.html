@@ -177,7 +177,7 @@
         }
         .supported h2 {
             font-size: 1.5rem; font-weight: 700;
-            text-align: center; margin-bottom: 0.75rem;
+            text-align: center; margin-bottom: 0.75rem; scroll-margin-top: 5rem;
         }
         .supported-intro {
             text-align: center; color: var(--text-secondary);
@@ -332,7 +332,7 @@
     <div class="container">
         <div class="eyebrow">Runtime policy enforcement for AI coding agents</div>
         <h1>Instruction files that actually block.</h1>
-        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement: prohibitions block the tool call before it runs, and a tamper-evident audit trail proves, per rule, whether the model obeyed. Native hooks for Claude Code, Grok Build, Codex and Cursor; a git pre-commit gate for everything else. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
+        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement. When a native hook runs, Ārai can block a prohibited tool call before it executes. A tamper-evident audit trail records decisions and tracks compliance per rule. Native hooks for Claude Code, Grok Build, Codex and Cursor; a git pre-commit gate for everything else. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -350,35 +350,35 @@
             <tr><td>No record of what was ignored</td><td>Hash-chained audit log; <code>arai audit --verify</code></td></tr>
             <tr><td>You hope it listened</td><td>Per-rule obeyed / ignored / unclear verdicts</td></tr>
             <tr><td>Rewrite your rules into a new policy format</td><td>Your existing files <em>are</em> the policy</td></tr>
-            <tr><td>One assistant honours it, the next one doesn&rsquo;t</td><td>Same rules in Claude Code, Grok Build, Codex, Cursor &mdash; and at <code>git commit</code> for any tool</td></tr>
+            <tr><td>One assistant honours it, the next one doesn&rsquo;t</td><td>Native tool checks in Claude Code, Grok Build, Codex and Cursor. A local pre-commit hook checks staged diffs from any editor.</td></tr>
         </table>
     </div>
 </section>
 
 <section class="supported">
     <div class="container">
-        <h2>Supported Environments</h2>
-        <p class="supported-intro">Enforcement strength depends on the assistant's integration surface:</p>
+        <h2 id="supported-environments">Supported Environments</h2>
+        <p class="supported-intro">Run <code>arai init</code>, then enable the native hooks in your host to block matching tool calls.</p>
         <div class="supported-grid">
             <div class="supported-item">
                 <strong>Claude Code</strong>
-                <span>Native PreToolUse hooks — full blocking support</span>
+                <span>Native hooks run in trusted workspaces. A <code>tool.check</code> Mod can override a hook deny in sessions without managed settings or a Team or Enterprise <code>/login</code>. <a href="https://github.com/taniwhaai/arai/blob/main/docs/claude.md">Setup and coverage</a></span>
             </div>
             <div class="supported-item">
                 <strong>Grok Build</strong>
-                <span>Native hooks — block when hooks run (needs <code>--trust</code>; advise best-effort)</span>
+                <span>Trust the project via <code>--trust</code> or <code>/hooks-trust</code>. Blocking was verified in headless and ACP sessions on Grok Build 1.0.77. Advisory delivery is best-effort. <a href="https://github.com/taniwhaai/arai/blob/main/docs/upstream/grok-hooks-reverification-2026-11.md">Probe results</a></span>
             </div>
             <div class="supported-item">
-                <strong>Codex <span class="tag">new in v1.1.2</span></strong>
-                <span>Native PreToolUse / PostToolUse / UserPromptSubmit hooks in <code>.codex/hooks.json</code>; shell calls and <code>apply_patch</code> checked per file. You enable the hooks once in Codex via <code>/hooks</code>. <a href="https://github.com/taniwhaai/arai/blob/main/docs/codex.md">Setup and coverage</a></span>
+                <strong>Codex</strong>
+                <span>Trust the project and review its hooks in <code>/hooks</code> or desktop Settings &rarr; Hooks. Ārai checks shell calls and each file in an <code>apply_patch</code>. Codex also supplies MCP tool events to the matcher. <a href="https://github.com/taniwhaai/arai/blob/main/docs/codex.md">Setup and coverage</a></span>
+            </div>
+            <div class="supported-item">
+                <strong>Cursor</strong>
+                <span>Native pre-tool hooks block prohibited calls and fail closed if the hook fails or returns no response. Advisory guidance arrives at session start and after tool calls. <a href="https://github.com/taniwhaai/arai/blob/main/docs/cursor.md">Setup and coverage</a></span>
             </div>
             <div class="supported-item">
                 <strong>Any tool, at <code>git commit</code></strong>
                 <span><code>arai check-diff --cached</code> as a pre-commit hook blocks a violating diff whether Cursor, Copilot, or a human wrote it</span>
-            </div>
-            <div class="supported-item">
-                <strong>Cursor <span class="tag">new</span></strong>
-                <span>Native <code>preToolUse</code> (registered <code>failClosed</code>) / <code>postToolUse</code> / <code>afterFileEdit</code> / <code>sessionStart</code> hooks in <code>.cursor/hooks.json</code>: block at the tool call, advise at session start and after tool calls. <a href="https://github.com/taniwhaai/arai/blob/main/docs/cursor.md">Setup and coverage</a></span>
             </div>
             <div class="supported-item">
                 <strong>Windsurf, Cline &amp; others</strong>
@@ -389,6 +389,7 @@
                 <span>Instruction file ingestion only (plus the pre-commit gate)</span>
             </div>
         </div>
+        <p class="supported-intro" style="margin:1rem auto 0">The <a href="https://github.com/taniwhaai/arai/pull/201">November source update</a> fixes Windows Claude Code hook launches under PowerShell and gives Cursor extra time to read hook responses. <a href="https://github.com/taniwhaai/arai/blob/main/docs/README.md#host-probe-notes">Host probe results</a></p>
     </div>
 </section>
 
@@ -432,7 +433,7 @@
             <div class="feature-grid">
             <div class="feature">
                 <h3>Block, don&rsquo;t just advise</h3>
-                <p>Rules with <code>never</code>/<code>forbids</code>/<code>must_not</code> can deny the tool call in Claude Code, Grok Build, Codex and Cursor when the host runs native PreToolUse hooks. Claude Code runs project hooks only in a trusted workspace. On Grok Build, project hooks need folder trust (<code>--trust</code> / <code>/hooks-trust</code>); advise is best-effort. On Codex you approve the hooks once in <code>/hooks</code>. On Cursor, advise reaches the model at session start and after tool calls rather than at the call. Incremental rollout via <code>ARAI_DENY_MODE=off</code>. Windsurf, Cline and similar hosts use MCP tools (list / add / check_action / recent decisions) &mdash; they do not get automatic tool-call blocking.</p>
+                <p>Rules with <code>never</code>, <code>forbids</code> or <code>must_not</code> can deny a matching tool call through an active native hook. Check the <a href="#supported-environments">setup and limits for your host</a>. For an advisory rollout, start with <code>ARAI_DENY_MODE=off</code>.</p>
             </div>
             <div class="feature">
                 <h3>Gate the diff, not just the tool <span class="tag">new in v1.1.2</span></h3>
@@ -571,8 +572,8 @@
                 <p>No network on the hook hot path. Enforcement, audit, compliance verdicts, and stats all run against the local SQLite + JSONL. Works offline, in restricted environments, and during outages &mdash; nothing to monitor, nothing to vendor-onboard.</p>
             </div>
             <div class="feature">
-                <h3>~30ms latency</h3>
-                <p>End-to-end per tool call, dominated by binary launch. SQLite lookups on the hook path. No network calls. No LLM calls at runtime.</p>
+                <h3>Local hook checks</h3>
+                <p>Policy checks use local SQLite lookups. End-to-end timing depends on how each host launches the hook and reads its response.</p>
             </div>
             <div class="feature">
                 <h3>Supply-chain hardened</h3>
@@ -637,7 +638,7 @@
             <span class="then-label">Plus</span>
             <code>arai init --pre-commit &nbsp;<span style="color:#9CA3AF"># same init, plus a git hook running check-diff</span></code>
         </div>
-        <p class="supported-intro" style="max-width:700px;margin:1rem auto 0;font-size:0.85rem">Codex users: after <code>arai init</code>, open <code>/hooks</code> in Codex and enable the project hooks &mdash; Ārai writes the registration but never grants host trust. Codex support needs Ārai v1.1.2 or newer.</p>
+        <p class="supported-intro" style="max-width:700px;margin:1rem auto 0;font-size:0.85rem">After <code>arai init</code>, follow the <a href="#supported-environments">setup for your host</a>. Codex hooks require Ārai v1.1.2 or later, and Cursor hooks require v1.1.3 or later. In Codex, review updated hooks when their definitions change.</p>
     </div>
 </section>
 
