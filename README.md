@@ -101,25 +101,22 @@ if you already have state created under a different path spelling.
   hooks, so Arai can issue `deny` decisions and actually block tool calls.
 - On **Claude Code**, hooks in `.claude/settings.json` run only once the
   workspace is trusted. Accept the trust prompt for the folder, or the
-  registration stays inactive.
-- On **Grok Build**, block is load-bearing (`decision: deny` + exit 2) when the
-  host invokes hooks (verified on **1.0.0** headless with `--trust`; project
-  hooks stay inactive until the folder is trusted). Advisory text is still
-  emitted as `additionalContext` on allow responses and recorded in the audit
-  log, but Grok's documented PreToolUse contract only specifies
-  `allow` / `deny`+`reason` — so warn/inform injection into the model is
-  **best-effort** until the host surfaces that field. Treat block as the
-  guarantee; treat advise as optional context. See
-  [`docs/upstream/grok-hooks-reverification-1.0.0.md`](docs/upstream/grok-hooks-reverification-1.0.0.md).
+  registration stays inactive. A `tool.check` Mod can override a hook deny in
+  sessions without managed settings or a Team or Enterprise `/login`.
+  See [Claude Code integration](docs/claude.md).
+- On **Grok Build**, project hooks run after workspace trust. The headless
+  and ACP probes on **1.0.77** confirmed `decision: deny` and exit 2 block the
+  call. Arai emits advisory text as `additionalContext` and records it in
+  the audit log. Model delivery of advisory text is best-effort.
+  [Grok Build probe notes](docs/upstream/grok-hooks-reverification-2026-11.md)
 - Codex registers `PreToolUse`, `PostToolUse`, and `UserPromptSubmit` in
   `.codex/hooks.json`. Shell calls use the host's canonical `Bash` payload;
   `apply_patch` is checked per file, including additions and move destinations.
   Enable the hooks with `/hooks` after `arai init`; see [coverage and limits](docs/codex.md).
 - **Cursor** registers `preToolUse` (with `failClosed`), `postToolUse`,
   `afterFileEdit`, and `sessionStart` in `.cursor/hooks.json`. Block is
-  load-bearing on `preToolUse`; advisory text reaches the model through the
-  session-start summary and post-tool context, because Cursor delivers
-  `agent_message` only on deny. See [coverage and limits](docs/cursor.md).
+  load-bearing on `preToolUse`. Advisory text reaches the model through the
+  session-start summary and post-tool context. See [coverage and limits](docs/cursor.md).
 - Arai's integrations for Windsurf, Cline and other MCP clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_check_action`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
@@ -127,6 +124,9 @@ if you already have state created under a different path spelling.
 - Arai does not currently register native GitHub Copilot hooks. Its instruction
   file is still ingested. This describes Arai's adapter coverage, not the
   current hook capabilities of those platforms.
+
+[Host probe notes](docs/README.md#host-probe-notes) record versions, commands,
+decisions and audit evidence.
 
 Arai hooks several more events alongside the standard tool-call events
 **when the host emits them** so the rule set stays accurate to the live

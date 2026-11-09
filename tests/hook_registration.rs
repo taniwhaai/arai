@@ -145,10 +145,12 @@ fn refresh_migrates_old_paths_without_removing_neighbours() {
         assert_eq!(hooks.len(), 4);
         assert!(!hooks.iter().any(|command| command.contains("old install")));
         assert_eq!(commands(&body, "Stop"), ["notify finished"]);
-        assert!(hooks
-            .last()
-            .unwrap()
-            .contains(&env!("CARGO_BIN_EXE_arai").replace('\\', "/")));
+        let registered = hooks.last().unwrap();
+        if cfg!(windows) && path == ".claude/settings.json" {
+            assert!(registered.starts_with("powershell.exe "));
+        } else {
+            assert!(registered.contains(&env!("CARGO_BIN_EXE_arai").replace('\\', "/")));
+        }
         first.push(body);
     }
     fixture.run(&["init"]);
@@ -303,7 +305,7 @@ fn malformed_codex_config_is_not_overwritten() {
 
 #[cfg(windows)]
 #[test]
-fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
+fn windows_command_runs_from_path_with_spaces_and_metacharacters() {
     use std::io::Write;
     use std::process::Stdio;
     let fixture = Fixture::new("windows_command");
@@ -320,6 +322,8 @@ fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
     let command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["commandWindows"]
         .as_str()
         .unwrap();
+    let claude = fixture.read_json(".claude/settings.json");
+    assert_eq!(commands(&claude, "PreToolUse"), [command]);
     let (program, arguments) = command.split_once(' ').unwrap();
     let run = |payload: &[u8]| {
         let mut hook = Command::new(program);
@@ -332,36 +336,118 @@ fn codex_windows_command_runs_from_path_with_spaces_and_metacharacters() {
             .spawn()
             .unwrap();
         child.stdin.take().unwrap().write_all(payload).unwrap();
-        let output = child.wait_with_output().unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let stdout = |payload: &[u8]| {
+        let output = run(payload);
         assert_success(&output);
         output.stdout
     };
     // A malformed deny alone cannot prove stdin was forwarded (an empty
     // stdin denies the same way), so also assert a rule-based deny with
     // its reason and a clean allow for a harmless command.
-    let stdout = run(b"{\"hook_event_name\":\"PreToolUse\",\"tool_input\":{");
-    let response: Value = serde_json::from_slice(&stdout).unwrap();
+    let malformed = stdout(b"{\"hook_event_name\":\"PreToolUse\",\"tool_input\":{");
+    let response: Value = serde_json::from_slice(&malformed).unwrap();
     assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
-    let stdout = run(
+    let deny = stdout(
         br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo clean"}}"#,
     );
-    let response: Value = serde_json::from_slice(&stdout).unwrap();
+    let response: Value = serde_json::from_slice(&deny).unwrap();
     assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
     assert!(response["hookSpecificOutput"]["permissionDecisionReason"]
         .as_str()
         .unwrap()
         .contains("cargo clean"));
-    let stdout = run(
+    let allow = stdout(
         br#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo check"}}"#,
     );
-    assert!(stdout.is_empty(), "{}", String::from_utf8_lossy(&stdout));
+    assert!(allow.is_empty(), "{}", String::from_utf8_lossy(&allow));
     // Refresh and remove encoded Windows handlers as well as their POSIX side.
     let mut init = Command::new(&binary);
     fixture.isolate(&mut init, &fixture.project);
     assert_success(&init.arg("init").output().unwrap());
     assert_eq!(fixture.read_json(".codex/hooks.json"), settings);
+    assert_eq!(fixture.read_json(".claude/settings.json"), claude);
     fixture.run(&["deinit"]);
     assert!(commands(&fixture.read_json(".codex/hooks.json"), "PreToolUse").is_empty());
+    assert!(commands(&fixture.read_json(".claude/settings.json"), "PreToolUse").is_empty());
+    fs::remove_file(binary).unwrap();
+    let missing_binary = run(b"{}");
+    assert_eq!(missing_binary.status.code(), Some(1));
+    assert!(missing_binary.stdout.is_empty());
+}
+
+#[test]
+fn cursor_registered_command_answers_overlapping_pretooluse_calls() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let fixture = Fixture::new("cursor_concurrent");
+    fixture.run(&["init"]);
+    fixture.run(&["add", "Never run cargo clean"]);
+    let settings = fixture.read_json(".cursor/hooks.json");
+    let handler = &settings["hooks"]["preToolUse"][0];
+    assert_eq!(handler["failClosed"], true);
+    let command = handler["command"].as_str().unwrap();
+    let start = || {
+        let mut hook = if cfg!(windows) {
+            let (program, arguments) = command.split_once(' ').unwrap();
+            let mut hook = Command::new(program);
+            hook.args(arguments.split_whitespace());
+            hook
+        } else {
+            let mut hook = Command::new("sh");
+            hook.args(["-c", command]);
+            hook
+        };
+        fixture.isolate(&mut hook, &fixture.project);
+        hook.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let scenarios: Value =
+        serde_json::from_str(include_str!("fixtures/cursor-pre-tool-use.json")).unwrap();
+    let calls = scenarios["scenarios"].as_array().unwrap();
+    // Start both processes before handing either one its input.
+    let mut shell = start();
+    let mut write = start();
+    for (child, call) in [(&mut shell, &calls[0]), (&mut write, &calls[1])] {
+        let mut payload = call["hook"].clone();
+        payload["workspace_roots"] = json!([fixture.project]);
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+    }
+    let deny = shell.wait_with_output().unwrap();
+    let allow = write.wait_with_output().unwrap();
+    assert_success(&deny);
+    assert_success(&allow);
+    let deny: Value = serde_json::from_slice(&deny.stdout).unwrap();
+    let allow: Value = serde_json::from_slice(&allow.stdout).unwrap();
+    assert_eq!(deny["permission"], "deny");
+    assert!(deny["user_message"]
+        .as_str()
+        .unwrap()
+        .contains("cargo clean"));
+    assert_eq!(allow, json!({"permission": "allow"}));
+}
+
+#[test]
+fn grok_dual_event_spelling_replays_as_shell() {
+    let fixture = Fixture::new("grok_replay");
+    fixture.run(&["add", "Never run cargo clean"]);
+    fixture.run(&[
+        "test",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/grok-pre-tool-use.json"
+        ),
+    ]);
 }
 
 /// Cursor's hooks.json is a flat handler array per camelCase event under a
