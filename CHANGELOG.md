@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-09
+
+### Miscellaneous
+
+- *(deps)* Bump rustls ([#199](https://github.com/taniwhaai/arai/pull/199))
+
+
 ## [1.1.4] - 2026-10-05
 
 ### Fixed
