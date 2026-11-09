@@ -777,6 +777,12 @@ pub fn handle_stdin() -> Result<(), String> {
     use std::io::Write;
     let _ = std::io::stdout().flush();
 
+    // Cursor can finish a PreToolUse hook before draining its stdout pipe.
+    // Give the host time to read the decision, especially for parallel calls.
+    if host_hint == Host::Cursor && event_hint == "PreToolUse" && out.emitted {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
     if exit_code == 2 {
         std::process::exit(2);
     }

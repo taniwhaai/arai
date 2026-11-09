@@ -13,7 +13,9 @@ marketing site (`site/index.html`) + main README.
 | [rule-testing.md](rule-testing.md) | `diff`, `lint`, `test`, `record` |
 | [extends.md](extends.md) | `arai:extends`, trust list, signatures, private sources |
 | [mcp.md](mcp.md) | Stdio MCP tools (add / list / check_action / recent_decisions) |
+| [claude.md](claude.md) | Claude Code native hooks, Mods precedence, hook failures |
 | [codex.md](codex.md) | Codex native hooks, `/hooks` trust, `apply_patch` |
+| [cursor.md](cursor.md) | Cursor native hooks, fail-closed behavior, Windows command |
 | [instruction-discovery.md](instruction-discovery.md) | Nested files, Claude `paths`, Cursor `globs`, legacy adoption |
 | [rules-file-spec.md](rules-file-spec.md) | Canonical `arai.toml`; `canonicalize` / `sync` |
 | [enrichment.md](enrichment.md) | Taxonomy / ONNX / LLM classification tiers |
@@ -21,10 +23,17 @@ marketing site (`site/index.html`) + main README.
 | [telemetry-payload.md](telemetry-payload.md) | Self-hosted telemetry event schema |
 | [stack-integration.md](stack-integration.md) | Arai upstream of Kete |
 | [releases.md](releases.md) | Release-plz, tokens, Homebrew |
-| [upstream/grok-hooks-reverification-1.0.0.md](upstream/grok-hooks-reverification-1.0.0.md) | Grok Build 1.0.0 PreToolUse deny evidence |
 | [voice.md](voice.md) | User-facing copy register (committed; do not paraphrase) |
 
 Design notes (not user-facing how-tos): [design-http-hooks-kete-integration.md](design-http-hooks-kete-integration.md).
+
+## Host probe notes
+
+- [Claude Code, November 2026](upstream/claude-hooks-reverification-2026-11.md)
+- [Grok Build, November 2026](upstream/grok-hooks-reverification-2026-11.md)
+- [Codex, November 2026](upstream/codex-hooks-reverification-2026-11.md)
+- [Cursor, November 2026](upstream/cursor-hooks-reverification-2026-11.md)
+- [Grok Build 1.0.0, August 2026](upstream/grok-hooks-reverification-1.0.0.md)
 
 ## Compliance feature inventory
 

@@ -1,0 +1,17 @@
+{
+  "scenarios": [
+    {
+      "name": "Grok shell payload with both event spellings matches the cargo clean rule",
+      "hook": {
+        "hookEventName": "pre_tool_use",
+        "hook_event_name": "PreToolUse",
+        "session_id": "grok-probe",
+        "toolName": "run_terminal_command",
+        "tool_name": "run_terminal_command",
+        "toolInput": { "command": "cargo clean --help", "description": "Probe deny" },
+        "tool_input": { "command": "cargo clean --help", "description": "Probe deny" }
+      },
+      "expect": { "matches_subject": ["Cargo"], "min_matches": 1 }
+    }
+  ]
+}

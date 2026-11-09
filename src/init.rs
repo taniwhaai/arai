@@ -521,14 +521,13 @@ fn arai_hook_handler(kind: HostKind) -> Result<Value, String> {
             HostKind::Codex => {
                 handler["commandWindows"] = Value::String(windows_command(&native));
             }
-            // Cursor has no per-platform field and does not document which
-            // shell runs `command` on Windows.  An explicit PowerShell
-            // invocation with an encoded literal path parses the same under
-            // cmd.exe and PowerShell, unlike the POSIX quoting above.
-            HostKind::Cursor => {
+            // Claude can run the command under Git Bash or PowerShell.
+            // Cursor does not specify its shell on Windows. An explicit
+            // PowerShell invocation works across these shells and cmd.exe.
+            HostKind::Claude | HostKind::Cursor => {
                 handler["command"] = Value::String(windows_command(&native));
             }
-            HostKind::Claude | HostKind::Grok => {}
+            HostKind::Grok => {}
         }
     }
     Ok(handler)
@@ -536,12 +535,14 @@ fn arai_hook_handler(kind: HostKind) -> Result<Value, String> {
 
 const POWERSHELL_PREFIX: &str =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ";
+const POWERSHELL_STOP_ON_ERROR: &str = "$ErrorActionPreference = 'Stop'; ";
 
 fn windows_command(path: &str) -> String {
     // Explicit interpreter and encoded literal path avoid relying on the
     // host's Windows shell or letting metacharacters become shell code.
+    // A launch error must exit nonzero even when no native exit code exists.
     let script = format!(
-        "& '{}' guardrails --match-stdin; exit $LASTEXITCODE",
+        "{POWERSHELL_STOP_ON_ERROR}& '{}' guardrails --match-stdin; exit $LASTEXITCODE",
         path.replace('\'', "''")
     );
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -570,6 +571,9 @@ fn is_arai_windows_command(command: &str) -> bool {
     let Ok(script) = String::from_utf16(&utf16) else {
         return false;
     };
+    let script = script
+        .strip_prefix(POWERSHELL_STOP_ON_ERROR)
+        .unwrap_or(&script);
     let Some(path) = script
         .strip_prefix("& '")
         .and_then(|body| body.strip_suffix("' guardrails --match-stdin; exit $LASTEXITCODE"))
@@ -621,8 +625,8 @@ fn is_arai_command(command: &str, arguments: &str) -> bool {
 
 fn is_arai_handler(handler: &Value) -> bool {
     // Every handler Arai writes carries `type: "command"`, including
-    // Cursor's (where it is the documented default).  On Windows the Cursor
-    // `command` is the encoded PowerShell form, so accept either spelling.
+    // Cursor's (where it is the documented default). Accept both the shell
+    // command and the encoded PowerShell form used on Windows.
     handler.get("type").and_then(Value::as_str) == Some("command")
         && handler
             .get("command")
@@ -815,8 +819,13 @@ mod registration_tests {
             .collect();
         assert_eq!(
             String::from_utf16(&utf16).unwrap(),
-            "& 'C:\\Arai''s $install\\arai.exe' guardrails --match-stdin; exit $LASTEXITCODE"
+            "$ErrorActionPreference = 'Stop'; & 'C:\\Arai''s $install\\arai.exe' guardrails --match-stdin; exit $LASTEXITCODE"
         );
+        let legacy_bytes = &bytes[POWERSHELL_STOP_ON_ERROR.len() * 2..];
+        let legacy = base64::engine::general_purpose::STANDARD.encode(legacy_bytes);
+        assert!(is_arai_windows_command(&format!(
+            "{POWERSHELL_PREFIX}{legacy}"
+        )));
         assert!(!is_arai_windows_command("echo arai"));
         assert!(!is_arai_windows_command(&format!(
             "{POWERSHELL_PREFIX}AA=="

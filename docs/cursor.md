@@ -1,7 +1,6 @@
 # Cursor integration
 
-Native Cursor Agent hooks require an Arai build newer than v1.1.2 (the first
-release that includes this adapter is listed in the CHANGELOG). Older Arai
+Native Cursor Agent hooks require Arai v1.1.3 or later. Older Arai
 versions reach Cursor only through the MCP server (see [mcp.md](mcp.md)) and
 the `arai check-diff` pre-commit gate.
 
@@ -38,13 +37,16 @@ closed by accident.
 
 ## Fail-closed posture
 
-Cursor hooks are fail-open by default: a crash, timeout or non-zero exit other
-than 2 lets the action through. Arai registers `preToolUse` with
-`failClosed: true` so those failures block instead. Under that flag Cursor also
-treats empty stdout as a failure, which is why the handler always writes an
-explicit allow on PreToolUse, including the skip-tool and no-rules fast paths.
-Do not remove `failClosed` from Arai's handler; without it a broken Arai
-binary silently stops enforcing.
+Arai registers `preToolUse` with `failClosed: true` so a crash, timeout or
+empty stdout blocks the action. The handler writes an explicit allow when no
+rule blocks the call, including the skip-tool and no-rules paths.
+
+Cursor has reported that it can miss stdout when a hook process exits just
+after writing its response, especially during concurrent tool calls. Arai
+flushes stdout and holds the process open for 150 ms after emitting a Cursor
+PreToolUse response. This reduces the chance of an empty capture. Cursor
+still blocks if it receives no response.
+[Cursor staff report](https://forum.cursor.com/t/pretooluse-hook-exit-0-but-empty-stdout-under-concurrent-tool-calls-failclosed-blocks/174214/6)
 
 Host identity comes from the payload, never from the environment. Cursor
 exports `CLAUDE_PROJECT_DIR` as a compatibility alias, and a Claude Code,
@@ -61,11 +63,10 @@ recorded Cursor payload exactly as the live hook evaluates it.
 
 ## Boundaries
 
-- The advisory path is narrower than on Claude Code. Cursor delivers
-  `agent_message` only on deny, and `beforeSubmitPrompt` has no model-visible
-  output, so Warn/Inform rules reach the model through the `sessionStart`
-  summary and `postToolUse` context, not at the moment of the call. An
-  advisory `preToolUse` match is still recorded in the audit log as
+- Arai puts the deny reason in `user_message` and supplies `agent_message`
+  as additional context. Delivery of the latter depends on the Cursor build.
+  Warn/Inform rules reach the model through the `sessionStart` summary and
+  `postToolUse` context. An advisory `preToolUse` match is recorded as
   `inject`, but Arai does not mark those rules as seen, so the post-tool
   context carries them in full. Read per-rule compliance ratios for Warn
   rules on Cursor with that in mind. Treat block as the guarantee.
@@ -80,6 +81,11 @@ recorded Cursor payload exactly as the live hook evaluates it.
   reliable post-edit signal.
 - `Delete` is evaluated as an Edit on its path; the rule schema has no
   delete-specific action.
+- Cursor documents `Task` for `preToolUse` and the dedicated `subagentStart`
+  and `subagentStop` events. The documented `subagentStart` payload includes
+  an optional Git branch and has no worktree path, so it cannot verify a
+  worktree destination at spawn time.
+  [Cursor hook events](https://cursor.com/docs/hooks#subagentstart)
 - Cloud agents run command hooks only and skip `sessionStart`, so the
   session-start rescan and summary do not happen there. Project hooks still
   fire for `preToolUse`, `postToolUse` and `afterFileEdit`.
@@ -90,4 +96,5 @@ recorded Cursor payload exactly as the live hook evaluates it.
   Windows has not been probed end to end. Re-run `arai init` after moving
   the binary on any platform.
 
-Protocol reference: [Cursor Agent hooks](https://cursor.com/docs/agent/hooks).
+See the [Cursor probe notes](upstream/cursor-hooks-reverification-2026-11.md)
+and [Cursor Agent hooks reference](https://cursor.com/docs/hooks).
