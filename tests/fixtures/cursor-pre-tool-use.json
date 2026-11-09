@@ -1,0 +1,30 @@
+{
+  "scenarios": [
+    {
+      "name": "Cursor Shell matches the cargo clean rule",
+      "hook": {
+        "hook_event_name": "preToolUse",
+        "cursor_version": "2026.11.05-86047df",
+        "conversation_id": "cursor-probe",
+        "generation_id": "parallel-1",
+        "tool_name": "Shell",
+        "tool_use_id": "shell-1",
+        "tool_input": { "command": "cargo clean" }
+      },
+      "expect": { "matches_subject": ["Cargo"], "min_matches": 1 }
+    },
+    {
+      "name": "Cursor Write in the same generation does not match the shell rule",
+      "hook": {
+        "hook_event_name": "preToolUse",
+        "cursor_version": "2026.11.05-86047df",
+        "conversation_id": "cursor-probe",
+        "generation_id": "parallel-1",
+        "tool_name": "Write",
+        "tool_use_id": "write-1",
+        "tool_input": { "file_path": "notes.txt", "content": "probe" }
+      },
+      "expect": { "max_matches": 0 }
+    }
+  ]
+}

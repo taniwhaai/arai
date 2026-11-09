@@ -108,8 +108,11 @@ fn ac1_grok_pretooluse_block_deny_exits_2_with_grok_deny_stdout() {
     seed_block_rule(&project, &arai_base);
 
     let payload = r#"{
+        "hookEventName": "pre_tool_use",
         "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
+        "toolName": "run_terminal_command",
+        "tool_name": "run_terminal_command",
+        "toolInput": { "command": "git push --force origin main" },
         "tool_input": { "command": "git push --force origin main" },
         "session_id": "verif-ac1-session"
     }"#;
@@ -118,7 +121,7 @@ fn ac1_grok_pretooluse_block_deny_exits_2_with_grok_deny_stdout() {
         payload,
         &project,
         &arai_base,
-        &[("GROK_HOOK_EVENT", "PreToolUse")],
+        &[("GROK_HOOK_EVENT", "pre_tool_use")],
     );
 
     // AC1 exit code requirement

@@ -10,10 +10,10 @@ files and merges Arai's handlers into `.codex/hooks.json`, preserving unrelated
 handlers. Re-running init refreshes old Arai executable paths. `arai deinit`
 removes the Arai registrations without removing other handlers.
 
-In Codex, open `/hooks`, review the project configuration and enable/trust it.
-Codex controls project trust and approval of hook contents; Arai never edits
-that trust state. Review again when Codex asks after configuration changes.
-Use a Codex version that exposes the documented native hooks interface.
+Trust the project in Codex, then review the registered hooks through `/hooks`
+in the CLI or **Settings > Hooks** in the desktop app. Codex tracks trust for
+each hook definition and can request a new review after configuration changes.
+[OpenAI Codex hook trust](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks)
 
 The registration uses the absolute executable path. On Windows,
 `commandWindows` explicitly runs PowerShell with an encoded command so spaces,
@@ -30,6 +30,7 @@ different path requires another `arai init`.
 | `apply_patch` Update File | Checks the original path and changed content as Edit. |
 | `apply_patch` Move to | Also checks the destination as Write and Edit, covering both creation and overwrite policies without relying on a filesystem snapshot. |
 | `apply_patch` Delete File | Checks its path as Edit; the current rule schema has no separate Delete action. |
+| MCP tool call | Uses the host-provided tool name and available arguments with the existing rule matcher. |
 | PostToolUse | Records observations and compliance; accepts Codex's structured `tool_response`. |
 | UserPromptSubmit | Injects applicable prompt-time guidance. |
 | SessionStart (`startup\|resume`) | Spawns a background `arai scan` when an instruction file was added, removed or modified since the last scan, so edits made between sessions are enforced. No output: Codex already receives the active-rules summary on UserPromptSubmit. |
@@ -60,9 +61,9 @@ performed inside a subprocess. Code-mode tool invocations are subject to the
 host's documented nested-call hooks. MCP access alone does not automatically
 intercept or deny arbitrary tools.
 
-Payload and decision behavior is covered by Arai's tests, including launching
-the Windows hook command. Enabling and observing a live Codex session remains
-a host-level verification step, not something `arai init` can silently approve.
+The Windows CLI probe exercised trust review, Bash, `apply_patch`, MCP and
+prompt-time guidance through the native hooks.
+[Codex probe notes](upstream/codex-hooks-reverification-2026-11.md)
 
 Protocol reference: [OpenAI Codex hooks](https://learn.chatgpt.com/docs/hooks).
 
