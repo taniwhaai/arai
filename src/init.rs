@@ -104,7 +104,7 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
     }
 
     println!(
-        "\n  Arai is registered for Claude Code, Codex, Grok Build, and Cursor (PreToolUse hooks)."
+        "\n  Arai is registered for Claude Code, Codex, Grok Build, Cursor, and Copilot (PreToolUse hooks)."
     );
     println!("  Re-run init after moving the Arai binary to refresh registered paths.");
     Ok(())
@@ -231,6 +231,11 @@ enum Layout {
     /// `{"version": 1, "hooks": {event: [handler]}}` with `matcher` and
     /// `failClosed` on the handler itself — Cursor.
     Flat,
+    /// `{"version": 1, "hooks": {event: [handler]}}` with `bash`,
+    /// `powershell`, and `timeoutSec` on the handler — GitHub Copilot.
+    /// Handlers sit in a flat array, like Cursor, but the command fields
+    /// differ and there is no `failClosed` flag.
+    Copilot,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -239,6 +244,7 @@ enum HostKind {
     Codex,
     Grok,
     Cursor,
+    Copilot,
 }
 
 /// Everything `init`, `ensure_hooks` and `deinit` need to know about one
@@ -312,6 +318,16 @@ const CURSOR_REGISTRATIONS: &[Registration] = &[
     reg("sessionStart", ""),
 ];
 
+/// GitHub Copilot command hooks (docs.github.com/copilot/reference/hooks-reference).
+/// `userPromptSubmitted` command output is dropped, so the active-rule
+/// summary is delivered on `sessionStart` instead. `postToolUse` carries
+/// advisory text after the tool has already run.
+const COPILOT_REGISTRATIONS: &[Registration] = &[
+    reg("preToolUse", ""),
+    reg("postToolUse", ""),
+    reg("sessionStart", ""),
+];
+
 const HOSTS: &[HostSpec] = &[
     HostSpec {
         kind: HostKind::Claude,
@@ -352,6 +368,18 @@ const HOSTS: &[HostSpec] = &[
         // compatibility layer that Grok loads.
         optional: true,
     },
+    HostSpec {
+        kind: HostKind::Copilot,
+        label: ".github/hooks/arai.json (native Copilot)",
+        path: config::Config::copilot_hooks_path,
+        layout: Layout::Copilot,
+        registrations: COPILOT_REGISTRATIONS,
+        // Arai's own file. A neighbour handler or any other key keeps it.
+        delete_empty: true,
+        // A failed write must surface: this file is the only hook source
+        // the Copilot cloud agent loads.
+        optional: false,
+    },
 ];
 
 /// What the host still requires from the user after registration.  Writing
@@ -376,6 +404,12 @@ fn trust_guidance(kind: HostKind) -> &'static [&'static str] {
             "Cursor loads project hooks from .cursor/hooks.json; check the Hooks tab",
             "in Cursor settings if a managed or team policy restricts them.",
         ],
+        HostKind::Copilot => &[
+            "Registration does not grant workspace trust. The cloud agent loads only",
+            ".github/hooks from the default branch; a missing arai binary exits 0 and",
+            "does not enforce. The Copilot CLI may also run the Claude registration,",
+            "so one tool call can be evaluated twice.",
+        ],
     }
 }
 
@@ -385,7 +419,7 @@ fn inject_host(spec: &HostSpec, cfg: &config::Config) -> Result<(), String> {
     let root = settings
         .as_object_mut()
         .ok_or("Hook config is not an object")?;
-    if spec.layout == Layout::Flat {
+    if matches!(spec.layout, Layout::Flat | Layout::Copilot) {
         root.entry("version")
             .or_insert_with(|| serde_json::json!(1));
     }
@@ -409,14 +443,20 @@ fn inject_host(spec: &HostSpec, cfg: &config::Config) -> Result<(), String> {
         // more than the tool-call budget so a large tree is not killed
         // mid-check, which would silently leave the rule set stale.
         if registration.event.eq_ignore_ascii_case("sessionstart") {
-            handler["timeout"] = serde_json::json!(10);
+            // Copilot reads `timeoutSec` (it wins over `timeout`). Other
+            // hosts keep the `timeout` field they already document.
+            if spec.kind == HostKind::Copilot {
+                handler["timeoutSec"] = serde_json::json!(10);
+            } else {
+                handler["timeout"] = serde_json::json!(10);
+            }
         }
         match spec.layout {
             Layout::Grouped => entries.push(serde_json::json!({
                 "matcher": registration.matcher,
                 "hooks": [handler]
             })),
-            Layout::Flat => {
+            Layout::Flat | Layout::Copilot => {
                 let mut entry = handler;
                 if !registration.matcher.is_empty() {
                     entry["matcher"] = Value::String(registration.matcher.into());
@@ -446,13 +486,7 @@ fn remove_host(spec: &HostSpec, cfg: &config::Config) -> Result<usize, String> {
         }
     }
     if removed > 0 {
-        let hooks_only = settings.as_object().is_some_and(|object| object.len() == 1)
-            && settings["hooks"].as_object().is_some_and(|hooks| {
-                hooks
-                    .values()
-                    .all(|entries| entries.as_array().is_some_and(Vec::is_empty))
-            });
-        if spec.delete_empty && hooks_only {
+        if spec.delete_empty && owned_file_is_empty(&settings) {
             std::fs::remove_file(&path)
                 .map_err(|e| format!("Could not remove {}: {e}", path.display()))?;
         } else {
@@ -467,12 +501,33 @@ fn remove_host(spec: &HostSpec, cfg: &config::Config) -> Result<usize, String> {
 fn remove_arai_entries(entries: &mut Vec<Value>, layout: Layout) -> usize {
     match layout {
         Layout::Grouped => remove_arai_handlers(entries),
-        Layout::Flat => {
+        Layout::Flat | Layout::Copilot => {
             let before = entries.len();
             entries.retain(|handler| !is_arai_handler(handler));
             before - entries.len()
         }
     }
+}
+
+/// True when the file holds only `hooks` and/or `version`, and every hook
+/// array is empty. A description, a neighbour handler, or any other key
+/// keeps the file. Cursor's shared file is never passed here
+/// (`delete_empty` is false).
+fn owned_file_is_empty(settings: &Value) -> bool {
+    let Some(object) = settings.as_object() else {
+        return false;
+    };
+    if object.keys().any(|key| key != "hooks" && key != "version") {
+        return false;
+    }
+    settings
+        .get("hooks")
+        .and_then(Value::as_object)
+        .is_some_and(|hooks| {
+            hooks
+                .values()
+                .all(|entries| entries.as_array().is_some_and(Vec::is_empty))
+        })
 }
 
 fn read_hooks_file(path: &Path) -> Result<Value, String> {
@@ -510,6 +565,19 @@ fn arai_hook_handler(kind: HostKind) -> Result<Value, String> {
     let path = native.replace('\\', "/");
     #[cfg(not(windows))]
     let path = native.to_string();
+    // Copilot's cloud agent runs `bash` and ignores `powershell`. The local
+    // CLI uses the field for its OS. Omit `command` so neither host falls
+    // through to a single shell string. A missing binary exits 0: an
+    // absolute path that does not exist in the cloud sandbox would otherwise
+    // fail closed on every tool call.
+    if kind == HostKind::Copilot {
+        return Ok(serde_json::json!({
+            "type": "command",
+            "bash": copilot_bash(&path),
+            "powershell": copilot_powershell(&native),
+            "timeoutSec": 3
+        }));
+    }
     let command = format!("'{}' guardrails --match-stdin", path.replace('\'', "'\\''"));
     let mut handler = serde_json::json!({
         "type": "command",
@@ -527,7 +595,7 @@ fn arai_hook_handler(kind: HostKind) -> Result<Value, String> {
             HostKind::Claude | HostKind::Cursor => {
                 handler["command"] = Value::String(windows_command(&native));
             }
-            HostKind::Grok => {}
+            HostKind::Grok | HostKind::Copilot => {}
         }
     }
     Ok(handler)
@@ -537,6 +605,27 @@ const POWERSHELL_PREFIX: &str =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ";
 const POWERSHELL_STOP_ON_ERROR: &str = "$ErrorActionPreference = 'Stop'; ";
 
+fn copilot_bash(path: &str) -> String {
+    let quoted = path.replace('\'', "'\\''");
+    format!("if [ -x '{quoted}' ]; then '{quoted}' guardrails --match-stdin; else exit 0; fi")
+}
+
+fn copilot_powershell(native: &str) -> String {
+    let script = format!(
+        "{POWERSHELL_STOP_ON_ERROR}$bin = '{}'; if (Test-Path -LiteralPath $bin) {{ & $bin guardrails --match-stdin; exit $LASTEXITCODE }} else {{ exit 0 }}",
+        native.replace('\'', "''")
+    );
+    encode_powershell(&script)
+}
+
+fn encode_powershell(script: &str) -> String {
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    format!(
+        "{POWERSHELL_PREFIX}{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
 fn windows_command(path: &str) -> String {
     // Explicit interpreter and encoded literal path avoid relying on the
     // host's Windows shell or letting metacharacters become shell code.
@@ -545,11 +634,7 @@ fn windows_command(path: &str) -> String {
         "{POWERSHELL_STOP_ON_ERROR}& '{}' guardrails --match-stdin; exit $LASTEXITCODE",
         path.replace('\'', "''")
     );
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    format!(
-        "{POWERSHELL_PREFIX}{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    )
+    encode_powershell(&script)
 }
 
 fn is_arai_windows_command(command: &str) -> bool {
@@ -583,7 +668,81 @@ fn is_arai_windows_command(command: &str) -> bool {
     if path.replace("''", "").contains('\'') {
         return false;
     }
+    is_arai_basename(path)
+}
+
+fn unescape_posix_single_quotes(inner: &str) -> Option<String> {
+    if inner.replace("'\\''", "").contains('\'') {
+        return None;
+    }
+    Some(inner.replace("'\\''", "'"))
+}
+
+fn is_arai_basename(path: &str) -> bool {
     matches!(path.rsplit(['/', '\\']).next(), Some("arai" | "arai.exe"))
+}
+
+/// Both copies of the path must be the same `arai` binary, and the suffix
+/// must be the hook invocation with nothing after it.
+fn is_copilot_bash(script: &str) -> bool {
+    let Some(rest) = script.strip_prefix("if [ -x '") else {
+        return false;
+    };
+    let Some((first, rest)) = rest.split_once("' ]; then '") else {
+        return false;
+    };
+    let Some((second, tail)) = rest.split_once("' guardrails --match-stdin; else exit 0; fi")
+    else {
+        return false;
+    };
+    if !tail.is_empty() {
+        return false;
+    }
+    let (Some(first), Some(second)) = (
+        unescape_posix_single_quotes(first),
+        unescape_posix_single_quotes(second),
+    ) else {
+        return false;
+    };
+    first == second && is_arai_basename(&first)
+}
+
+fn decode_powershell_script(command: &str) -> Option<String> {
+    let encoded = command.strip_prefix(POWERSHELL_PREFIX)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let utf16: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&utf16).ok()
+}
+
+fn is_copilot_powershell(command: &str) -> bool {
+    let Some(script) = decode_powershell_script(command) else {
+        return false;
+    };
+    let Some(script) = script.strip_prefix(POWERSHELL_STOP_ON_ERROR) else {
+        return false;
+    };
+    let Some(rest) = script.strip_prefix("$bin = '") else {
+        return false;
+    };
+    let Some((path, tail)) = rest.split_once(
+        "'; if (Test-Path -LiteralPath $bin) { & $bin guardrails --match-stdin; exit $LASTEXITCODE } else { exit 0 }",
+    ) else {
+        return false;
+    };
+    if !tail.is_empty() || path.replace("''", "").contains('\'') {
+        return false;
+    }
+    is_arai_basename(&path.replace("''", "'"))
 }
 
 /// Recognize our complete invocation, never an arbitrary mention of "arai".
@@ -620,24 +779,45 @@ fn is_arai_command(command: &str, arguments: &str) -> bool {
             }
             executable.to_string()
         };
-    matches!(path.rsplit(['/', '\\']).next(), Some("arai" | "arai.exe"))
+    is_arai_basename(&path)
+}
+
+fn command_is_arai(command: &str) -> bool {
+    is_arai_command(command, "guardrails --match-stdin") || is_arai_windows_command(command)
 }
 
 fn is_arai_handler(handler: &Value) -> bool {
     // Every handler Arai writes carries `type: "command"`, including
-    // Cursor's (where it is the documented default). Accept both the shell
-    // command and the encoded PowerShell form used on Windows.
-    handler.get("type").and_then(Value::as_str) == Some("command")
-        && handler
-            .get("command")
+    // Cursor's (where it is the documented default). Accept the shell
+    // command, the encoded PowerShell form used on Windows, and Copilot's
+    // bash/powershell pair (which has no `command` field).
+    if handler.get("type").and_then(Value::as_str) != Some("command") {
+        return false;
+    }
+    if !handler
+        .get("commandWindows")
+        .is_none_or(|command| command.as_str().is_some_and(is_arai_windows_command))
+    {
+        return false;
+    }
+    if handler.get("bash").is_some() || handler.get("powershell").is_some() {
+        let bash_ok = handler
+            .get("bash")
             .and_then(Value::as_str)
-            .is_some_and(|command| {
-                is_arai_command(command, "guardrails --match-stdin")
-                    || is_arai_windows_command(command)
-            })
-        && handler
-            .get("commandWindows")
-            .is_none_or(|command| command.as_str().is_some_and(is_arai_windows_command))
+            .is_some_and(is_copilot_bash);
+        let powershell_ok = handler
+            .get("powershell")
+            .and_then(Value::as_str)
+            .is_some_and(is_copilot_powershell);
+        let command_ok = handler
+            .get("command")
+            .is_none_or(|command| command.as_str().is_some_and(command_is_arai));
+        return bash_ok && powershell_ok && command_ok;
+    }
+    handler
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(command_is_arai)
 }
 
 fn remove_arai_handlers(groups: &mut Vec<Value>) -> usize {
@@ -836,5 +1016,51 @@ mod registration_tests {
         assert!(!is_arai_windows_command(&windows_command(
             "C:\\tools\\unrelated.exe"
         )));
+    }
+
+    #[test]
+    fn copilot_wrapper_requires_both_paths_and_both_shells() {
+        let bash = copilot_bash("/usr/local/bin/arai");
+        let powershell = copilot_powershell(r"C:\tools\arai.exe");
+        let handler = serde_json::json!({
+            "type": "command",
+            "bash": bash,
+            "powershell": powershell,
+            "timeoutSec": 3
+        });
+        assert!(is_copilot_bash(&bash));
+        assert!(is_copilot_powershell(&powershell));
+        assert!(is_arai_handler(&handler));
+
+        let quoted = copilot_bash("/tmp/Arai's install/arai");
+        assert!(is_copilot_bash(&quoted), "{quoted}");
+        let quoted_ps = copilot_powershell(r"C:\Arai's install\arai.exe");
+        assert!(is_copilot_powershell(&quoted_ps));
+
+        let mismatched = "if [ -x '/usr/local/bin/arai' ]; then '/tmp/other/arai' guardrails --match-stdin; else exit 0; fi";
+        assert!(!is_copilot_bash(mismatched));
+        let mut wrong = handler.clone();
+        wrong["bash"] = Value::String(mismatched.into());
+        assert!(!is_arai_handler(&wrong));
+
+        let mention = serde_json::json!({
+            "type": "command",
+            "bash": "echo arai guardrails --match-stdin",
+            "powershell": powershell
+        });
+        assert!(!is_arai_handler(&mention));
+        assert!(is_arai_handler(&serde_json::json!({
+            "type": "command",
+            "command": "'/usr/bin/arai' guardrails --match-stdin"
+        })));
+        assert!(owned_file_is_empty(
+            &serde_json::json!({"version": 1, "hooks": {"preToolUse": []}})
+        ));
+        assert!(!owned_file_is_empty(
+            &serde_json::json!({"version": 1, "hooks": {"preToolUse": []}, "description": "keep"})
+        ));
+        assert!(owned_file_is_empty(
+            &serde_json::json!({"hooks": {"PreToolUse": []}})
+        ));
     }
 }

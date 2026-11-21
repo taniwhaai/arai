@@ -1,0 +1,13 @@
+{
+  "scenarios": [
+    {
+      "name": "Copilot bash string args match the cargo clean rule",
+      "hook": {
+        "sessionId": "copilot-probe",
+        "toolName": "bash",
+        "toolArgs": "{\"command\":\"cargo clean --help\",\"description\":\"probe\"}"
+      },
+      "expect": { "matches_subject": ["Cargo"], "min_matches": 1 }
+    }
+  ]
+}

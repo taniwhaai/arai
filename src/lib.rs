@@ -82,6 +82,7 @@ pub mod store;
 
 // Native host payload normalization is an internal implementation detail.
 mod codex;
+mod copilot;
 mod cursor;
 mod source_scope;
 

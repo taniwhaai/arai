@@ -339,6 +339,15 @@ impl Config {
         self.project_root.join(".cursor").join("hooks.json")
     }
 
+    /// Path to the project's native GitHub Copilot command hooks.
+    /// The cloud agent loads only `.github/hooks/*.json` from the default branch.
+    pub(crate) fn copilot_hooks_path(&self) -> PathBuf {
+        self.project_root
+            .join(".github")
+            .join("hooks")
+            .join("arai.json")
+    }
+
     /// Path to the project's .grok/hooks directory (for native Grok Build hook registration).
     /// We prefer writing arai.json here when the user has a .grok/ project layout.
     pub(crate) fn grok_hooks_dir(&self) -> PathBuf {

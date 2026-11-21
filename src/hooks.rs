@@ -54,6 +54,7 @@ enum Host {
     Claude,
     Grok,
     Cursor,
+    Copilot,
     Unknown,
 }
 
@@ -63,8 +64,14 @@ fn detect_host(hook: &Value) -> Host {
     // CURSOR_VERSION, so the environment cannot tell Cursor apart from
     // Claude Code, Codex or Grok running inside Cursor.  Getting this wrong
     // is fail-open: a Cursor-shaped deny is invisible to Claude Code.
+    // Copilot's CLI can also inherit CLAUDE_PROJECT_DIR, and its camelCase
+    // payload has no event name, so the Copilot marker is checked before
+    // the Claude environment.
     if crate::cursor::is_cursor_payload(hook) {
         return Host::Cursor;
+    }
+    if crate::copilot::is_copilot_payload(hook) {
+        return Host::Copilot;
     }
     // Grok Build injects these on hook invocations.
     if std::env::var("GROK_HOOK_EVENT").is_ok() || std::env::var("GROK_SESSION_ID").is_ok() {
@@ -323,14 +330,16 @@ pub fn match_hook(hook: &Value, cfg: &Config, db: &Store) -> Result<HookMatch, S
     // handler, so `arai test` scenarios and library embedders see exactly
     // what the live hook sees.  Only Cursor-shaped input pays for the clone.
     let canonical: Value;
-    let hook = if crate::cursor::needs_canonicalize(hook) {
-        let mut rewritten = hook.clone();
-        crate::cursor::canonicalize(&mut rewritten);
-        canonical = rewritten;
-        &canonical
-    } else {
-        hook
-    };
+    let hook =
+        if crate::cursor::needs_canonicalize(hook) || crate::copilot::needs_canonicalize(hook) {
+            let mut rewritten = hook.clone();
+            crate::cursor::canonicalize(&mut rewritten);
+            crate::copilot::canonicalize(&mut rewritten);
+            canonical = rewritten;
+            &canonical
+        } else {
+            hook
+        };
     validate_hook_input(hook)?;
     // Canonicalise before any timing/response comparison.  Grok Build
     // sends snake_case (`pre_tool_use`); the matcher and deny path are
@@ -633,6 +642,20 @@ fn decision_for(host: Host, allow: bool, reason: Option<&str>, context: &str) ->
                 crate::cursor::deny(reason.unwrap_or(DENY_FALLBACK), context)
             }
         }
+        // An explicit allow suppresses Copilot's own permission prompt, so
+        // the allow arm stays empty. Deny carries the rule quote in
+        // `permissionDecisionReason` and nothing else.
+        Host::Copilot => {
+            if allow {
+                if context.is_empty() {
+                    serde_json::json!({})
+                } else {
+                    crate::copilot::additional_context(context)
+                }
+            } else {
+                crate::copilot::deny(reason.unwrap_or(DENY_FALLBACK))
+            }
+        }
         Host::Claude | Host::Unknown => emit_claude_decision(allow, reason, context),
     }
 }
@@ -718,6 +741,125 @@ fn desired_exit_code(host: Host, event: &str, deny_outcome: bool) -> i32 {
     }
 }
 
+struct ReadFailure {
+    message: String,
+    raw: String,
+}
+
+enum HookProgress {
+    Value(Value),
+    NeedMore,
+    Oversize,
+    Invalid(String),
+}
+
+fn read_failure(buf: &[u8], message: impl Into<String>) -> ReadFailure {
+    ReadFailure {
+        message: message.into(),
+        raw: String::from_utf8_lossy(buf).into_owned(),
+    }
+}
+
+fn hook_input_cap_message() -> String {
+    format!("Hook input exceeded {MAX_HOOK_INPUT_BYTES}-byte cap")
+}
+
+/// Parse progress for one JSON value. Objects are self-delineated, so the
+/// iterator returns the value without reading past it and without requiring
+/// EOF. Trailing bytes in the same read are left unparsed.
+fn classify_hook_bytes(buf: &[u8]) -> HookProgress {
+    let mut stream = serde_json::Deserializer::from_slice(buf).into_iter::<Value>();
+    match stream.next() {
+        Some(Ok(value)) => {
+            if stream.byte_offset() as u64 > MAX_HOOK_INPUT_BYTES {
+                HookProgress::Oversize
+            } else {
+                HookProgress::Value(value)
+            }
+        }
+        Some(Err(err)) if err.is_eof() => HookProgress::NeedMore,
+        Some(Err(err)) => HookProgress::Invalid(format!("Invalid hook JSON: {err}")),
+        None => HookProgress::NeedMore,
+    }
+}
+
+/// Read one hook value without waiting for EOF. A complete value is returned
+/// as soon as it parses. The cap is the value's own size, not the size of
+/// whatever else is still in the pipe.
+fn read_hook_value() -> Result<Value, ReadFailure> {
+    let mut stdin = std::io::stdin().lock();
+    let mut buf: Vec<u8> = Vec::with_capacity(8192);
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = stdin
+            .read(&mut chunk)
+            .map_err(|e| read_failure(&buf, format!("Could not read stdin: {e}")))?;
+        if n == 0 {
+            if buf.is_empty() {
+                return Err(read_failure(&buf, "Invalid hook JSON: empty input"));
+            }
+            return match classify_hook_bytes(&buf) {
+                HookProgress::Value(value) => Ok(value),
+                HookProgress::NeedMore => Err(read_failure(
+                    &buf,
+                    "Invalid hook JSON: unexpected end of input",
+                )),
+                HookProgress::Oversize => Err(read_failure(&buf, hook_input_cap_message())),
+                HookProgress::Invalid(message) => Err(read_failure(&buf, message)),
+            };
+        }
+        let room = (MAX_HOOK_INPUT_BYTES as usize)
+            .saturating_add(1)
+            .saturating_sub(buf.len());
+        if room == 0 {
+            return Err(read_failure(&buf, hook_input_cap_message()));
+        }
+        let take = n.min(room);
+        buf.extend_from_slice(&chunk[..take]);
+        match classify_hook_bytes(&buf) {
+            HookProgress::Value(value) => return Ok(value),
+            HookProgress::NeedMore => {
+                if buf.len() as u64 > MAX_HOOK_INPUT_BYTES {
+                    return Err(read_failure(&buf, hook_input_cap_message()));
+                }
+            }
+            HookProgress::Oversize => return Err(read_failure(&buf, hook_input_cap_message())),
+            HookProgress::Invalid(message) => return Err(read_failure(&buf, message)),
+        }
+    }
+}
+
+/// Unparseable bytes can still name the host. Cursor's deny shape and
+/// Copilot's deny shape are different, and a truncated payload should get
+/// the one the bytes asked for.
+///
+/// `"toolArgs"` alone is not enough. A Claude or Grok tool argument can
+/// carry that key, and those hosts' error paths must keep their own deny
+/// shape. Claude Code ignores a non-zero hook exit, so labeling that
+/// failure as Copilot (exit 2) would fail open.
+fn host_from_raw(raw: &str) -> Option<Host> {
+    if raw.contains("\"cursor_version\"") {
+        Some(Host::Cursor)
+    } else if raw_names_copilot(raw) {
+        Some(Host::Copilot)
+    } else {
+        None
+    }
+}
+
+fn raw_names_copilot(raw: &str) -> bool {
+    raw.contains("\"toolArgs\"")
+        && ![
+            "\"hook_event_name\"",
+            "\"hookEventName\"",
+            "\"cursor_version\"",
+            "\"tool_input\"",
+            "\"toolInput\"",
+        ]
+        .iter()
+        .any(|marker| raw.contains(marker))
+}
+
 /// Read one hook payload from stdin, run the match pipeline, and emit the
 /// hook response on stdout — the side-effectful counterpart of
 /// [`match_hook`].  Owns everything the pure path doesn't: the audit write,
@@ -764,9 +906,16 @@ pub fn handle_stdin() -> Result<(), String> {
                 let reason = format!("{INTERNAL_ERROR_DENY} ({detail}).");
                 let _ = out.emit(&decision_for(host_hint, false, Some(&reason), ""));
                 // Grok PreToolUse error: fail-closed with exit 2.
+                // Copilot preToolUse treats a non-zero exit as deny even when
+                // stdout is unusable, so the error path exits 2 as well as
+                // writing the deny object. A successful deny stays at exit 0.
                 // Claude/Unknown/Cursor: always exit 0 (Claude treats
                 // non-zero as "hook broken", defeating the deny above).
-                desired_exit_code(host_hint, "PreToolUse", true)
+                if host_hint == Host::Copilot {
+                    2
+                } else {
+                    desired_exit_code(host_hint, "PreToolUse", true)
+                }
             } else {
                 0
             }
@@ -795,37 +944,23 @@ fn handle_stdin_impl(
     out: &mut Emitter,
 ) -> Result<i32, String> {
     let start = std::time::Instant::now();
-    // Read up to MAX_HOOK_INPUT_BYTES + 1 so we can distinguish "natural EOF"
-    // from "hit the cap mid-stream".  Reject overruns rather than silently
-    // truncating the JSON (a partial JSON would parse-fail anyway, but being
-    // explicit gives a clearer error and prevents memory exhaustion by a
-    // hostile pipe before the parse step).
-    let mut buf: Vec<u8> = Vec::with_capacity(8192);
-    std::io::stdin()
-        .lock()
-        .take(MAX_HOOK_INPUT_BYTES + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("Could not read stdin: {e}"))?;
-    if buf.len() as u64 > MAX_HOOK_INPUT_BYTES {
-        return Err(format!(
-            "Hook input exceeded {MAX_HOOK_INPUT_BYTES}-byte cap"
-        ));
-    }
-    let input =
-        String::from_utf8(buf).map_err(|e| format!("Hook input was not valid UTF-8: {e}"))?;
-
-    let mut hook: Value = serde_json::from_str(&input).map_err(|e| {
-        // Unparseable, but the bytes still say which host sent them; a
-        // truncated Cursor payload should get Cursor's deny shape and reason.
-        if input.contains("\"cursor_version\"") {
-            *host_hint = Host::Cursor;
+    // One JSON value, not a read-to-EOF. Copilot's CLI has left the hook
+    // stdin write-end open (github.com/github/copilot-cli/issues/4034); a
+    // reader that waits for EOF then sits until the host's fail-open timeout.
+    let mut hook = match read_hook_value() {
+        Ok(value) => value,
+        Err(failure) => {
+            if let Some(host) = host_from_raw(&failure.raw) {
+                *host_hint = host;
+            }
+            return Err(failure.message);
         }
-        format!("Invalid hook JSON: {e}")
-    })?;
-    // Cursor payloads are rewritten into the canonical envelope here, and
-    // again (idempotently) inside `match_hook`, so the side-effect paths
-    // below (session recording, event gating) and the pure matcher agree.
+    };
+    // Cursor and Copilot payloads are rewritten into the canonical envelope
+    // here, and again (idempotently) inside `match_hook`, so the side-effect
+    // paths below (session recording, event gating) and the pure matcher agree.
     crate::cursor::canonicalize(&mut hook);
+    crate::copilot::canonicalize(&mut hook);
     // Detect the calling host once, from the payload, before validation:
     // a fail-closed deny for a malformed Cursor payload must be Cursor-
     // shaped.  Grok expects a flat {"decision", "reason"} shape, Cursor a
@@ -974,13 +1109,15 @@ fn handle_stdin_impl(
     }
 
     // SessionStart: registered on Codex (matcher `startup|resume`), Grok
-    // Build and Cursor, none of which emit FileChanged / InstructionsLoaded.
-    // When an instruction file changed since the last scan, refresh the rule
-    // set in the background so an AGENTS.md edited between sessions is
-    // enforced without a manual `arai scan`.  Cursor additionally gets a
-    // one-line summary of the active domain rules here, because its prompt
-    // event has no model-visible slot; Codex already receives that summary
-    // on every UserPromptSubmit and Grok ignores stdout on passive events.
+    // Build, Cursor and Copilot, none of which emit FileChanged /
+    // InstructionsLoaded. When an instruction file changed since the last
+    // scan, refresh the rule set in the background so an AGENTS.md edited
+    // between sessions is enforced without a manual `arai scan`. Cursor and
+    // Copilot get a one-line summary of the active domain rules here:
+    // Cursor's prompt event has no model-visible slot, and Copilot drops
+    // command output on userPromptSubmitted. Codex already receives that
+    // summary on every UserPromptSubmit and Grok ignores stdout on passive
+    // events.
     if event == "SessionStart" {
         let Ok(cfg) = config::Config::load() else {
             return Ok(0);
@@ -994,12 +1131,17 @@ fn handle_stdin_impl(
         // Read before any scan is spawned so the summary never races the
         // child's writes.  The probe is the real payload with only the event
         // renamed, so `cwd` still selects directory-scoped rules.
-        if host == Host::Cursor {
+        if host == Host::Cursor || host == Host::Copilot {
             let mut probe = hook.clone();
             probe["hook_event_name"] = Value::String("UserPromptSubmit".into());
             let result = match_hook(&probe, &cfg, &db)?;
             if let Some(summary) = prompt_summary(&result) {
-                out.emit(&crate::cursor::context(&summary))?;
+                let response = if host == Host::Cursor {
+                    crate::cursor::context(&summary)
+                } else {
+                    crate::copilot::additional_context(&summary)
+                };
+                out.emit(&response)?;
             }
         }
         if instruction_files_changed(&cfg, &db) {
@@ -1333,9 +1475,12 @@ fn handle_stdin_impl(
     // them.  Done after the audit write so a panic between match and write
     // doesn't permanently suppress a rule the model never actually saw.
     // Cursor drops advisory context on an allowed call (`agent_message` is
-    // deny-only), so an advisory PreToolUse there is not a delivery: leave
+    // deny-only). Copilot's preToolUse command hook has no advisory field,
+    // and an explicit allow would suppress Copilot's own prompt, so a
+    // non-blocking PreToolUse stays silent. Neither is a delivery: leave
     // the rules unseen so the post-tool context still carries them in full.
-    let delivered = !(host == Host::Cursor && is_pretooluse && !blocking);
+    let delivered =
+        !((host == Host::Cursor || host == Host::Copilot) && is_pretooluse && !blocking);
     if !unseen.is_empty() && delivered {
         session::mark_rules_seen(&cfg.arai_base_dir, &result.session_id, &unseen);
     }
@@ -1364,11 +1509,19 @@ fn handle_stdin_impl(
             let reason = format!("{block_glyph} {raw_reason}");
             decision_for(host, false, Some(&reason), &prefixed_context)
         }
-        ("PreToolUse", false) => decision_for(host, true, None, &prefixed_context),
+        ("PreToolUse", false) => {
+            // Silence is the non-blocking Copilot answer. Emitting
+            // `permissionDecision: allow` would skip Copilot's own prompt.
+            if host == Host::Copilot {
+                return Ok(0);
+            }
+            decision_for(host, true, None, &prefixed_context)
+        }
         ("PostToolUse", _) => {
             let text = format!("[Post-action] {prefixed_context}");
             match host {
                 Host::Cursor => crate::cursor::context(&text),
+                Host::Copilot => crate::copilot::additional_context(&text),
                 _ => serde_json::json!({
                     "hookSpecificOutput": {
                         "hookEventName": "PostToolUse",
@@ -2438,7 +2591,12 @@ mod tests {
             "AC6: Grok UserPromptSubmit allow must be exit 0"
         );
         // Exhaustive: allow is always 0 for every host/event except Grok+Pre+deny
-        for host in [Host::Grok, Host::Claude, Host::Unknown] {
+        assert_eq!(
+            desired_exit_code(Host::Copilot, "PreToolUse", true),
+            0,
+            "Copilot successful deny stays exit 0; exit 2 is the error path only"
+        );
+        for host in [Host::Grok, Host::Claude, Host::Unknown, Host::Copilot] {
             for event in ["PreToolUse", "PostToolUse", "UserPromptSubmit"] {
                 for deny in [false, true] {
                     let code = desired_exit_code(host, event, deny);
@@ -2489,5 +2647,50 @@ mod tests {
 
         // Neither GROK nor CLAUDE vars; no hook_event_name → Unknown.
         assert_eq!(detect_host(&Value::Null), Host::Unknown);
+
+        // Copilot's CLI can inherit CLAUDE_PROJECT_DIR. The camelCase shape
+        // still selects Copilot, including after the marker is stamped.
+        std::env::set_var("CLAUDE_PROJECT_DIR", "/tmp/project");
+        let copilot = serde_json::json!({
+            "sessionId": "s",
+            "toolName": "bash",
+            "toolArgs": {"command": "ls"}
+        });
+        assert_eq!(detect_host(&copilot), Host::Copilot);
+        let mut stamped = copilot.clone();
+        crate::copilot::canonicalize(&mut stamped);
+        assert_eq!(detect_host(&stamped), Host::Copilot);
+        let cursor = serde_json::json!({
+            "cursor_version": "1",
+            "hook_event_name": "preToolUse",
+            "tool_name": "Shell",
+            "tool_input": {"command": "ls"}
+        });
+        assert_eq!(detect_host(&cursor), Host::Cursor);
+        std::env::remove_var("CLAUDE_PROJECT_DIR");
+    }
+
+    #[test]
+    fn unparsed_tool_args_is_copilot_only_without_other_host_markers() {
+        assert_eq!(
+            host_from_raw(r#"{"toolName":"bash","toolArgs":{"command":"ls"}"#),
+            Some(Host::Copilot)
+        );
+        assert_eq!(
+            host_from_raw(
+                r#"{"hook_event_name":"PreToolUse","tool_input":{"command":"x","toolArgs":{"command":"ls"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            host_from_raw(
+                r#"{"hookEventName":"pre_tool_use","toolInput":{"toolArgs":{"command":"ls"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            host_from_raw(r#"{"cursor_version":"1","toolArgs":{}"#),
+            Some(Host::Cursor)
+        );
     }
 }

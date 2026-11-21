@@ -83,6 +83,24 @@ fn pretooluse_malformed_json_produces_deny() {
     );
 }
 
+/// A Claude body can contain a structural `toolArgs` key inside the tool
+/// input. That substring must not relabel the parse failure as Copilot:
+/// Copilot's error path exits 2, and Claude Code ignores a non-zero exit.
+#[test]
+fn claude_parse_failure_with_tool_args_stays_exit_zero() {
+    let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"x","toolArgs":{"command":"cargo clean"}"#;
+    let (stdout, _stderr, code) = run_hook(payload, &[]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("\"hookEventName\":\"PreToolUse\""),
+        "expected Claude deny shape, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("\"permissionDecision\":\"deny\""),
+        "expected deny in stdout, got: {stdout:?}"
+    );
+}
+
 /// A spoofed `hook_event_name` like `"PreToolUseFOO"` used to defeat the
 /// fail-closed wrapper because `event_hint` was overwritten with whatever
 /// string the JSON contained.  The fix pins `event_hint` to PreToolUse for

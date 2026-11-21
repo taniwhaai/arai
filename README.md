@@ -81,7 +81,7 @@ Every firing is written to a local audit log, and every PostToolUse is correlate
 | `~/.grok/` AGENTS.* files | Grok Build (global) | Hooks (block; advise best-effort) |
 | `.cursorrules` / `.cursor/rules` | Cursor | Hooks (block; advise at session start and after tool calls) |
 | `.windsurfrules` | Windsurf | MCP (advise) |
-| `.github/copilot-instructions.md` | GitHub Copilot | Ingest only |
+| `.github/copilot-instructions.md` | GitHub Copilot | Hooks (block; advise at session start) |
 
 Rules from every file are parsed, classified, and stored the same way — but
 enforcement strength depends on what surface the assistant exposes.
@@ -117,13 +117,18 @@ if you already have state created under a different path spelling.
   `afterFileEdit`, and `sessionStart` in `.cursor/hooks.json`. Block is
   load-bearing on `preToolUse`. Advisory text reaches the model through the
   session-start summary and post-tool context. See [coverage and limits](docs/cursor.md).
+- **GitHub Copilot** registers `preToolUse`, `postToolUse`, and `sessionStart`
+  in `.github/hooks/arai.json`. A block is a flat `permissionDecision: deny`.
+  Advisory text reaches the model at session start. `postToolUse` records the
+  call and uses `additionalContext` when a rule matches that event.
+  The Copilot cloud agent enforces only when the `arai` binary exists at the
+  path `arai init` recorded; a missing binary exits 0. This follows the
+  published hooks reference and was not probed against a live Copilot CLI.
+  See [coverage and limits](docs/copilot.md).
 - Arai's integrations for Windsurf, Cline and other MCP clients provide **agent-facing tools**
   (`arai_list_guards`, `arai_add_guard`, `arai_check_action`, `arai_recent_decisions`) — not
   automatic tool-call inject/deny. Blocking still needs a native PreToolUse
   host.
-- Arai does not currently register native GitHub Copilot hooks. Its instruction
-  file is still ingested. This describes Arai's adapter coverage, not the
-  current hook capabilities of those platforms.
 
 [Host probe notes](docs/README.md#host-probe-notes) record versions, commands,
 decisions and audit evidence.
@@ -132,7 +137,7 @@ Arai hooks several more events alongside the standard tool-call events
 **when the host emits them** so the rule set stays accurate to the live
 working tree:
 
-- **`SessionStart`** (Codex, Grok Build, Cursor) — those hosts do not emit
+- **`SessionStart`** (Codex, Grok Build, Cursor, Copilot) — those hosts do not emit
   instruction-change events, so at session start Arai checks whether an
   instruction file was added, removed or modified since the last scan and,
   only then, re-scans in the background. An `AGENTS.md` edited between
