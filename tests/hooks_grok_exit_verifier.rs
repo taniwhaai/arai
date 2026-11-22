@@ -265,6 +265,34 @@ fn ac4_grok_malformed_json_exits_2_with_grok_deny() {
     let _ = std::fs::remove_dir_all(project.parent().unwrap());
 }
 
+/// A Grok body can contain a structural `toolArgs` key. The error path must
+/// stay Grok-shaped and exit 2. Relabeling it as Copilot would emit
+/// `permissionDecision` instead of `decision`.
+#[test]
+fn grok_malformed_json_with_nested_tool_args_stays_grok() {
+    let (project, arai_base) = fresh_env("ac4toolargs");
+    let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"x","toolArgs":{"command":"cargo clean"}"#;
+    let (stdout, stderr, code) = run_hook(
+        payload,
+        &project,
+        &arai_base,
+        &[("GROK_HOOK_EVENT", "PreToolUse")],
+    );
+    assert_eq!(
+        code, 2,
+        "Grok malformed stdin with nested toolArgs must exit 2; stderr={stderr:?} stdout={stdout:?}"
+    );
+    assert!(
+        stdout.contains(r#""decision":"deny""#) || stdout.contains(r#""decision": "deny""#),
+        "expected Grok deny shape, got stdout={stdout:?}"
+    );
+    assert!(
+        !stdout.contains("permissionDecision"),
+        "Copilot deny shape must not replace the Grok deny; stdout={stdout:?}"
+    );
+    let _ = std::fs::remove_dir_all(project.parent().unwrap());
+}
+
 /// AC4 (oversize variant): Grok + stdin exceeding 1 MiB → exit 2 + Grok deny.
 #[test]
 fn ac4_grok_oversize_stdin_exits_2_with_grok_deny() {
