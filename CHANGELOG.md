@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-22
+
+### Added
+
+- *(hooks)* Register native GitHub Copilot preToolUse hooks ([#204](https://github.com/taniwhaai/arai/pull/204))
+
+### Fixed
+
+- *(hooks)* Harden Windows launch and Cursor response delivery ([#201](https://github.com/taniwhaai/arai/pull/201))
+
+### Miscellaneous
+
+- *(deps)* Bump rustls ([#199](https://github.com/taniwhaai/arai/pull/199))
+
+
 ## [1.1.4] - 2026-10-05
 
 ### Fixed
