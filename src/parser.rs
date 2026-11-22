@@ -1103,10 +1103,7 @@ fn is_code_reference(text: &str) -> bool {
     // file:line reference
     static FILE_LINE_RE: OnceLock<Regex> = OnceLock::new();
     let re = FILE_LINE_RE.get_or_init(|| Regex::new(r"^[\w./\\-]+:\d+$").expect("valid regex"));
-    if re.is_match(trimmed) {
-        return true;
-    }
-    false
+    re.is_match(trimmed)
 }
 
 fn extract_subject(lower_text: &str, section_context: &Option<String>) -> String {
