@@ -16,6 +16,7 @@ marketing site (`site/index.html`) + main README.
 | [claude.md](claude.md) | Claude Code native hooks, Mods precedence, hook failures |
 | [codex.md](codex.md) | Codex native hooks, `/hooks` trust, `apply_patch` |
 | [cursor.md](cursor.md) | Cursor native hooks, fail-closed behavior, Windows command |
+| [copilot.md](copilot.md) | GitHub Copilot native hooks, cloud agent, open stdin |
 | [instruction-discovery.md](instruction-discovery.md) | Nested files, Claude `paths`, Cursor `globs`, legacy adoption |
 | [rules-file-spec.md](rules-file-spec.md) | Canonical `arai.toml`; `canonicalize` / `sync` |
 | [enrichment.md](enrichment.md) | Taxonomy / ONNX / LLM classification tiers |

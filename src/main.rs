@@ -517,12 +517,13 @@ fn cmd_status() -> Result<(), String> {
     println!("  Sources:    {} file(s)", files.len());
 
     println!("  {}", style::structural("Integration", col));
-    println!("    Native:   Claude Code, Grok Build, Codex, Cursor");
+    println!("    Native:   Claude Code, Grok Build, Codex, Cursor, Copilot");
     for path in [
         ".claude/settings.json",
         ".grok/hooks/arai.json",
         ".codex/hooks.json",
         ".cursor/hooks.json",
+        ".github/hooks/arai.json",
     ] {
         let state = if cfg.project_root.join(path).is_file() {
             "config present"
@@ -533,7 +534,7 @@ fn cmd_status() -> Result<(), String> {
     }
     println!("    Host trust and hook activation must be checked in the host:");
     println!(
-        "    Claude Code: workspace trust; Codex: /hooks; Grok Build: /hooks-trust or --trust"
+        "    Claude Code: workspace trust; Codex: /hooks; Grok Build: /hooks-trust or --trust; Copilot: workspace trust"
     );
     for f in &files {
         println!("    - {f}");
