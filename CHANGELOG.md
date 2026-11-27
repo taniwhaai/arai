@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-27
+
+### Fixed
+
+- Report effective policy and assert replay decisions ([#206](https://github.com/taniwhaai/arai/pull/206))
+
+
 ## [1.2.0] - 2026-11-22
 
 ### Added
