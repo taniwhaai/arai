@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ārai — Instruction files that actually work</title>
-    <meta name="description" content="Your AI assistant ignores CLAUDE.md when it matters. Ārai turns instruction files into enforced guardrails — blocked tool calls, a tamper-evident audit trail, per-rule compliance stats. One command. Local. Zero cost.">
+    <meta name="description" content="Your AI assistant ignores CLAUDE.md when it matters. Ārai turns instruction files into enforced guardrails — blocked tool calls, a hash-chained audit trail, heuristic compliance stats. One command. Local. Zero cost.">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -332,7 +332,7 @@
     <div class="container">
         <div class="eyebrow">Runtime policy enforcement for AI coding agents</div>
         <h1>Instruction files that actually block.</h1>
-        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement. When a native hook runs, Ārai can block a prohibited tool call before it executes. A tamper-evident audit trail records decisions and tracks compliance per rule. Native hooks for Claude Code, Grok Build, Codex and Cursor; a git pre-commit gate for everything else. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
+        <p>Your assistant reads CLAUDE.md and ignores it when it matters. Ārai turns the instruction files <strong>you already have</strong> &mdash; CLAUDE.md, AGENTS.md, .cursorrules &mdash; into enforcement. When a native hook runs, Ārai can block a prohibited tool call before it executes. A hash-chained audit trail records observed firings and heuristic compliance verdicts. Native hooks for Claude Code, Grok Build, Codex and Cursor; a git pre-commit gate for everything else. Nothing to rewrite. No new format. One command. Local. Zero cost.</p>
         <div class="install-box" onclick="copyInstall(this)">
             <span class="prompt">$</span>
             <span>curl -sSf https://arai.taniwha.ai/install | sh</span>
@@ -410,7 +410,7 @@
 
 <section class="example">
     <div class="container">
-        <h2>And then prove it &mdash; per-rule compliance, locally</h2>
+        <h2>Review per-rule compliance, locally</h2>
         <div class="example-block">
             <span class="dim">$ arai stats --by-rule --since=7d</span><br><br>
             <span class="accent">Per-rule compliance</span><br>
@@ -418,9 +418,9 @@
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;12&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;11&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;&nbsp;<span class="accent">92%</span>&nbsp;&nbsp;alembic must_not: hand-write migrations<br>
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;9&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;0&nbsp;&nbsp;&nbsp;<span class="accent">100%</span>&nbsp;&nbsp;cargo always: test before commit<br>
             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;4&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3&nbsp;&nbsp;&nbsp;&nbsp;<span class="warm">57%</span>&nbsp;&nbsp;git must_not: --no-verify&nbsp;&nbsp;<span class="warm">&#x26A0;</span><br><br>
-            <span class="dim"># PostToolUse correlation produces obeyed / ignored / unclear verdicts per rule.</span><br>
-            <span class="dim"># Tamper-evident JSONL audit log — SHA-256 hash-chained; `arai audit --verify` proves it.</span><br>
-            <span class="dim"># No SIEM. Audit stays local (no audit egress). grep + jq, done.</span>
+            <span class="dim"># Best-effort PostToolUse correlation estimates obeyed / ignored / unclear per rule.</span><br>
+            <span class="dim"># SHA-256 hash-chained JSONL; `arai audit --verify` checks existing records and links.</span><br>
+            <span class="dim"># Audit stays local by default; shipping to your collector is explicit opt-in.</span>
         </div>
     </div>
 </section>
@@ -462,7 +462,7 @@
             </div>
             <div class="feature">
                 <h3>Rule set stays live</h3>
-                <p>On hosts that emit the events (Claude Code today): edit CLAUDE.md and Ārai re-scans in the background &mdash; the next tool call enforces the new wording, no manual rescan. <code>cd</code> into a monorepo subpackage and matching switches to that project&rsquo;s rules. Grok Build, Codex and Cursor don&rsquo;t emit file events, so there Ārai checks at session start whether an instruction file changed since the last scan and re-scans only then; after a mid-session instruction-file edit you run <code>arai scan</code>. A re-scan replaces its snapshot in one transaction: deleted files drop out, a failed scan keeps the previous rule set, and severity pins survive.</p>
+                <p>On hosts that emit the events (Claude Code today), editing CLAUDE.md starts a background scan. Updated wording becomes available after the scan finishes. <code>cd</code> into a monorepo subpackage and Ārai starts a scan for that project. Grok Build, Codex and Cursor check for instruction changes at session start and scan in the background when needed. Run <code>arai scan</code> for an immediate refresh or after a mid-session edit on those hosts. A re-scan replaces its snapshot in one transaction; deleted files drop out, a failed scan keeps the previous rule set, and severity pins survive.</p>
             </div>
             <div class="feature">
                 <h3>Zero noise</h3>
@@ -471,20 +471,20 @@
             </div>
         </div>
         <div class="feature-group">
-            <h3 class="group-title">Know what happened &mdash; and prove it</h3>
-            <p class="group-blurb">A tamper-evident record of every firing, correlated with what the model actually did.</p>
+            <h3 class="group-title">Review the enforcement trail</h3>
+            <p class="group-blurb">A best-effort record of observed firings and events, with hash-chain checks and heuristic compliance verdicts.</p>
             <div class="feature-grid">
             <div class="feature">
                 <h3>Hash-chained audit log</h3>
-                <p>Every audit-log line carries <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes); a per-day sidecar anchors the chain tip. <code>arai audit --verify</code> walks every day-bucket and exits non-zero on any tamper, reorder, or deletion. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). Retention is policy, not accident: <code>arai audit --purge --older=90</code> sweeps whole day-buckets only, so retained days keep a valid chain. Parallel sessions are safe: writers serialise across processes and resume from the canonical tail, never a stale head.</p>
+                <p>New audit-log lines carry <code>prev_hash</code> + <code>hash</code> (SHA-256 over canonical bytes). <code>arai audit --verify</code> checks hashes and links within existing day-buckets and exits non-zero on detected issues. The command validates the existing bucket contents. Detecting removed complete tails or whole buckets requires separately retained checkpoints and bucket inventory. Owner-only on disk (0700/0600 on Unix; <code>icacls</code>-pinned on Windows). <code>arai audit --purge --older=90</code> removes whole day-buckets, preserving chains on retained days. Writers serialise across processes and resume from the log tail.</p>
             </div>
             <div class="feature">
                 <h3>Compliance tracking</h3>
-                <p>Every PostToolUse is correlated against its PreToolUse firings. Each rule gets an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict. <code>arai audit --outcome=ignored</code> tells you which rules the model keeps flouting; filter to a specific rule with <code>--rule</code>.</p>
+                <p>PostToolUse handling searches up to 50 PreToolUse entries for the same tool within five minutes, then filters by session. Word-level evidence estimates an <em>obeyed</em>, <em>ignored</em>, or <em>unclear</em> verdict per rule. Correlation keys are session, tool and time window, so parallel calls can overlap. Review patterns with <code>arai audit --outcome=ignored</code> and filter rules with <code>--rule</code>.</p>
             </div>
             <div class="feature">
                 <h3>Per-rule compliance ratios</h3>
-                <p><code>arai stats</code> rolls up the audit log into <em>fires / obeyed / ignored / ratio</em> per rule. Now you can answer "is this rule actually working?" &mdash; not "is it firing?" The &#x26A0; flag highlights low-ratio rules with enough volume to mean it.</p>
+                <p><code>arai stats</code> rolls up recorded firings and heuristic verdicts into <em>fires / obeyed / ignored / ratio</em> per rule. The &#x26A0; flag highlights low-ratio rules for review.</p>
             </div>
             <div class="feature">
                 <h3>Derivation trace</h3>
@@ -492,7 +492,7 @@
             </div>
             <div class="feature">
                 <h3>Token economics</h3>
-                <p>Repeat firings of the same rule in a session emit a compact one-liner instead of re-injecting the full payload. <code>arai stats</code> surfaces a calibrated <em>tokens saved</em> estimate from suppressed repeats plus denied-and-honored mistakes &mdash; secondary signal, primary mission stays correctness.</p>
+                <p>Repeat firings of the same rule in a session emit a compact one-liner instead of re-injecting the full payload. <code>arai stats</code> estimates <em>tokens saved</em> from suppressed repeats and heuristic compliance outcomes using fixed token-cost assumptions.</p>
             </div>
             </div>
         </div>
@@ -510,7 +510,7 @@
             </div>
             <div class="feature">
                 <h3>Know it&rsquo;s actually running</h3>
-                <p><code>init</code>, <code>scan</code> and <code>status</code> share effective block eligible, advise eligible, documentary/inert and inactive counts, separate from extracted/stored totals. Eligibility is conditional on scope and the actual call. Status reports config presence and the last recorded firing; neither proves current host trust or activation. Registration means a configuration write. Advisory-only mode cannot deny; hard bypass disables enforcement.</p>
+                <p>With v1.2.1 or newer, <code>init</code>, <code>scan</code> and <code>status</code> share effective block eligible, advise eligible, documentary/inert and inactive counts, separate from extracted/stored totals. Eligibility is conditional on scope and the actual call. Status reports config presence and the last recorded firing; neither proves current host trust or activation. Registration means a configuration write. Advisory-only mode cannot deny; hard bypass disables enforcement.</p>
             </div>
             <div class="feature">
                 <h3>Diff before save</h3>
@@ -518,7 +518,7 @@
             </div>
             <div class="feature">
                 <h3>Rule regression tests</h3>
-                <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. Catch rule behaviour drift before a real session does. CI-friendly JSON output.</p>
+                <p><code>arai test</code> replays synthetic hook payloads through the live match pipeline. With v1.2.1 or newer, scenarios can assert effective <code>expect.decision</code> values of deny, advise or allow. CI-friendly JSON output helps catch rule behaviour drift.</p>
             </div>
             <div class="feature">
                 <h3>Capture to replay</h3>
@@ -548,7 +548,7 @@
             </div>
             <div class="feature">
                 <h3>Ship the evidence &mdash; to your collector</h3>
-                <p><code>arai audit --ship</code> sends day-buckets <em>with their chain heads</em> to your own HTTPS endpoint, so the hash chain verifies server-side too. Resume cursor, idempotent re-ship, bearer auth via env var. Explicit opt-in only &mdash; local-first stays the default.</p>
+                <p><code>arai audit --ship</code> sends day-buckets <em>with their chain heads</em> to your own HTTPS endpoint for verification by your collector. Resume cursor, idempotent re-ship, bearer auth via env var. Explicit opt-in only &mdash; local-first stays the default.</p>
             </div>
             <div class="feature">
                 <h3>Self-hosted telemetry</h3>
@@ -578,7 +578,7 @@
             </div>
             <div class="feature">
                 <h3>Supply-chain hardened</h3>
-                <p>Downloads verified against SHA-256 <code>checksums.txt</code> on every install path (curl, npm, cargo). <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects &mdash; and cached upstream files carry a SHA-256 sidecar so an at-rest tamper is detected before the rules reach the parser. MCP-source rules capped per project to bound a malfunctioning agent.</p>
+                <p><code>install.sh</code> and npm verify downloaded binaries against SHA-256 <code>checksums.txt</code> by default. <code>arai:extends</code> upstream policy fetches refuse loopback, RFC1918, link-local, cloud metadata, and redirects &mdash; and cached upstream files carry a SHA-256 sidecar so an at-rest tamper is detected before the rules reach the parser. MCP-source rules capped per project to bound a malfunctioning agent.</p>
             </div>
             <div class="feature">
                 <h3>Embeddable library</h3>
@@ -599,10 +599,10 @@
         <p>Ārai gives you the evidence trail and the controls your InfoSec / procurement team will ask for. Ārai itself is not a certified product &mdash; the certification is yours to pursue. The controls are designed to align with the <strong>SOC 2 Trust Service Criteria</strong>:</p>
         <ul class="compliance-list">
             <li><strong>CC6.1 logical access</strong> &mdash; audit dir locked to owner (0700/0600 on Unix; <code>icacls</code>-pinned on Windows).</li>
-            <li><strong>CC6.6 supply chain</strong> &mdash; SHA-256 binary verification on every install path; <code>arai:extends</code> SSRF-hardened transport plus cache-at-rest signature.</li>
-            <li><strong>CC7.2 monitoring</strong> &mdash; per-firing JSONL audit log, hash-chained (<code>prev_hash</code> + <code>hash</code>) so tampering is detected by <code>arai audit --verify</code>; <code>arai audit --ship</code> centralises the trail on your own collector with the chain heads attached, so integrity verifies server-side too.</li>
+            <li><strong>CC6.6 supply chain</strong> &mdash; SHA-256 download verification in <code>install.sh</code> and npm; <code>arai:extends</code> SSRF-hardened transport plus a cache-at-rest checksum.</li>
+            <li><strong>CC7.2 monitoring</strong> &mdash; best-effort JSONL audit log, hash-chained (<code>prev_hash</code> + <code>hash</code>); <code>arai audit --verify</code> checks existing records and links. Explicit <code>arai audit --ship</code> sends day-buckets and chain heads to your collector for its own verification.</li>
             <li><strong>CC6.5 data disposal</strong> &mdash; <code>arai audit --purge</code> gives age-based (<code>--older=90</code>) and project-scoped retention sweeps with <code>--dry-run</code> review; whole day-buckets only, so retained days keep a valid chain.</li>
-            <li><strong>CC7.3 detection</strong> &mdash; Pre/Post correlation produces obeyed / ignored / unclear verdicts per rule. Evidence of <em>effectiveness</em>, not just attempts.</li>
+            <li><strong>CC7.3 detection</strong> &mdash; best-effort Pre/Post correlation estimates obeyed / ignored / unclear verdicts per rule for review across sessions.</li>
             <li><strong>CC8.1 change management</strong> &mdash; <code>arai diff</code>, <code>arai test</code>, <code>arai record</code>, and the synthetic parser-coverage corpus turn rule edits into CI assertions.</li>
             <li><strong>CC9.2 vendor management</strong> &mdash; MCP server supports an optional shared-secret (<code>ARAI_MCP_AUTH_TOKEN</code>); input caps bound a misbehaving agent.</li>
         </ul>
