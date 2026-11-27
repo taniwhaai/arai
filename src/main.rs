@@ -97,7 +97,8 @@ enum Commands {
     /// refused by default (they would print `Added:` and never fire).  Pass
     /// `--allow-inert` to keep them as documentary rules.
     Add {
-        /// The rule text (e.g. "Never force-push to main")
+        /// The rule text (e.g. "Never hand-write alembic migration files").
+        /// Classification alone does not prove a match; test the actual call.
         rule: String,
         /// Keep rules that cannot map to an enforceable tool domain
         /// (documentary only — they will never block a tool call).
@@ -339,13 +340,11 @@ enum Commands {
     /// Extract rules from existing instruction files (CLAUDE.md, .cursorrules,
     /// AGENTS.md, ...) into a canonical `arai.toml` matching
     /// `docs/rules-file-spec.md`.  Lossy-but-honest: only what the parser
-    /// recognises as a rule survives; review and refine `when.tool` /
-    /// `when.path` / `when.command_pattern` on the generated file before
-    /// treating it as authoritative.
+    /// recognises as a rule survives. Canonical v1 selectors/actions are
+    /// projection data, not directly executed native policy.
     ///
-    /// The matcher is unchanged.  `arai.toml` is an output artefact for
-    /// adoption planning — `arai sync` (#77) and a canonical loader land
-    /// separately.
+    /// `arai sync` projects this data into managed prose in existing
+    /// instruction files. Native matching uses that prose; test its outcome.
     ///
     /// Examples:
     ///   arai canonicalize                       # writes ./arai.toml
@@ -364,6 +363,8 @@ enum Commands {
     /// from a canonical `arai.toml`.  Only files that already exist in
     /// the project are touched — sync never creates a new tool's
     /// instruction file the team didn't already choose.
+    /// v1 projects prose; selectors/actions and authored IDs are not direct
+    /// native enforcement or stable authored audit identity.
     ///
     /// Hand-edits are preserved: content outside the
     /// `<!-- BEGIN ARAI MANAGED RULES -->` / `<!-- END ARAI MANAGED RULES -->`
@@ -507,14 +508,13 @@ fn cmd_status() -> Result<(), String> {
     let cfg = config::Config::load()?;
     let db = store::Store::open(&cfg.db_path())?;
     let files = db.list_files().map_err(|e| e.to_string())?;
-    let count = db.guardrail_count().map_err(|e| e.to_string())?;
+    let summary = init::enforceability_summary(&cfg, &db)?;
     let last_scan = db.get_meta("last_scan").map_err(|e| e.to_string())?;
 
     let col = style::should_colorize(style::Stream::Stdout);
 
     println!("{}", style::structural("Arai status", col));
-    println!("  Rules:      {count}");
-    println!("  Sources:    {} file(s)", files.len());
+    init::render_enforceability_summary(&summary);
 
     println!("  {}", style::structural("Integration", col));
     println!("    Native:   Claude Code, Grok Build, Codex, Cursor, Copilot");
@@ -534,7 +534,7 @@ fn cmd_status() -> Result<(), String> {
     }
     println!("    Host trust and hook activation must be checked in the host:");
     println!(
-        "    Claude Code: workspace trust; Codex: /hooks; Grok Build: /hooks-trust or --trust; Copilot: workspace trust"
+        "    Claude Code: workspace trust; Codex: /hooks; Grok Build: /hooks-trust or --trust; Cursor: hook settings; Copilot: workspace trust"
     );
     for f in &files {
         println!("    - {f}");
@@ -665,8 +665,10 @@ fn cmd_scan(
 
     db.set_meta("last_scan", &scan_started)
         .map_err(|e| e.to_string())?;
-    println!("\n  {total_rules} rule(s) from {} file(s)", files.len());
-    warn_inert_rules(&db)?;
+    println!(
+        "\n  Extracted: {total_rules} rule(s) from {} file(s)",
+        files.len()
+    );
 
     if code {
         scan_code_graph(&cfg, &db)?;
@@ -707,33 +709,7 @@ fn cmd_scan(
         println!("    \u{2713} {enriched} rules imported");
     }
 
-    Ok(())
-}
-
-/// Warn on instruction-file rules that will never fire on a tool call.
-/// Does not fail the scan — CLAUDE.md is allowed to contain principles.
-fn warn_inert_rules(db: &store::Store) -> Result<(), String> {
-    let rules = db.load_guardrails().map_err(|e| e.to_string())?;
-    let inert: Vec<_> = rules
-        .iter()
-        .filter(|g| g.intent.as_ref().map(intent::is_inert).unwrap_or(false))
-        .collect();
-    if inert.is_empty() {
-        return Ok(());
-    }
-    eprintln!(
-        "  {} rule(s) will never fire on tool calls (no known tool / principle timing):",
-        inert.len()
-    );
-    for g in inert.iter().take(10) {
-        eprintln!(
-            "    - {} {}: {}  ({})",
-            g.subject, g.predicate, g.object, g.file_path
-        );
-    }
-    if inert.len() > 10 {
-        eprintln!("    … {} more", inert.len() - 10);
-    }
+    init::render_enforceability_summary(&init::enforceability_summary(&cfg, &db)?);
     Ok(())
 }
 
@@ -895,7 +871,7 @@ fn cmd_add_inner(rule: &str, allow_inert: bool) -> Result<(), String> {
 
     if triples.is_empty() {
         return Err(format!(
-            "Could not extract a rule from: \"{rule}\"\nPhrase it as an imperative, e.g. \"Never force-push to main\"."
+            "Could not extract a rule from: \"{rule}\"\nPhrase it as an imperative, e.g. \"Never hand-write alembic migration files\"."
         ));
     }
 
@@ -1421,7 +1397,7 @@ fn cmd_lint(path: &str, json: bool) -> Result<(), String> {
 
     if triples.is_empty() {
         println!("No rules extracted from {path}.");
-        println!("  Try phrasing list items as imperatives: \"- Never force-push to main\"");
+        println!("  Try phrasing list items as imperatives: \"- Never hand-write alembic migration files\"");
         return Ok(());
     }
 

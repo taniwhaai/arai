@@ -1,6 +1,6 @@
 # Arai
 
-An instruction file is advice — the model can read CLAUDE.md and still force-push anyway. Arai turns instruction files (CLAUDE.md, AGENTS.md, .cursorrules, and others) into enforcement via native hooks: rules derived from prohibitive language **block the tool call outright**, advisory rules inject the relevant constraint at the point it applies, and a tamper-evident audit log records, per rule, whether the model actually complied.
+An instruction file is advice — the model can read CLAUDE.md and still skip a rule. Arai extracts rules from instruction files (CLAUDE.md, AGENTS.md, .cursorrules, and others). Eligible prohibitions can block matching calls through enabled native hooks; advisory rules inject context, and a tamper-evident audit log records observed firings and compliance.
 
 ![Arai blocking a forbidden command at the PreToolUse hook](demos/block.gif)
 
@@ -8,13 +8,18 @@ An instruction file is advice — the model can read CLAUDE.md and still force-p
 ## Quick Start
 
 ```bash
+# Unix
 curl -sSf https://arai.taniwha.ai/install | sh
+# Windows x64: npm install -g @taniwhaai/arai
+arai --version
 
 cd your-project
 arai init
 ```
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
+
+`init`, `scan` and `status` show the same effective policy summary: stored sources and actionable rules, block eligible, advise eligible, documentary/inert and inactive counts. Extracted totals describe ingestion, not active enforcement. Eligibility remains conditional on scope and the actual tool call. `ARAI_DENY_MODE=off` makes otherwise blocking rules advisory; hard bypass (`ARAI_DISABLED=1`) disables enforcement and is shown separately. A successful registration only proves a configuration write; check trust and invocation in your host.
 
 Codex support and the hardening described below require **v1.1.2 or newer** (released 2026-09-16). Every install path below serves it; to build from source instead, run `cargo install --path . --locked` from this checkout.
 
@@ -41,20 +46,28 @@ repos:
 
 ## What It Does
 
-When your AI coding assistant (Claude Code, Grok Build, Codex, or Cursor) is about to do something your rules cover, Arai injects the relevant guardrail — right when it matters. Rules derived from prohibitive predicates (`never`, `forbids`, `must_not`) actually **block the tool call** when the host has enabled the hooks.
+When your AI coding assistant (Claude Code, Grok Build, Codex, or Cursor) is about to do something your rules cover, Arai injects the relevant guardrail. Prohibitive predicates (`never`, `forbids`, `must_not`) can **block a matching tool call** with effective block severity, deny mode enabled and trusted hooks active.
 
 ```
 You: "Create a new database migration"
 
-  PreToolUse: Write migrations/versions/001_add_users.py
+  PreToolUse: Write alembic/versions/001_example.py (empty content)
   → Arai: deny
     reason: "Alembic never: hand-write migration files"
-            [from your rules:12, layer-1 imperative]
+            [from CLAUDE.md:3, layer-1 imperative]
 
 Assistant: "I should use alembic revision --autogenerate instead..."
 ```
 
-Rules only fire when relevant. No noise on `ls`. No repeating principles already in your instruction files.
+This example is reproducible in a fresh project with these exact `CLAUDE.md` bytes (including the blank line):
+
+```markdown
+## Alembic
+
+- Never hand-write migration files
+```
+
+Run `arai scan`, then replay the Write with empty content under `alembic/`. An unrelated Write to `app/example.py` has no match. The complete [fixture and replay instructions](docs/rule-testing.md#fresh-alembic-fixture) include a scenario asserting deny for the migration Write and allow for the unrelated Write and skipped Read. Scenario decisions describe effective policy. Native stdin replay proves the handler response, while live host enforcement requires separate host evidence.
 
 Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
 
@@ -163,8 +176,8 @@ the file events.
 
 Arai doesn't just do keyword matching. It understands your rules:
 
-- **Intent classification** — "never hand-write migration files" only fires on Write, not Edit (editing existing migrations is fine)
-- **Code graph** — writing to `migrations/versions/` triggers alembic rules even if the file doesn't mention alembic, because sibling files import it
+- **Intent classification** — the Alembic heading and migration rule above classify as a creation prohibition; eligibility alone does not prove a match
+- **Code graph** — scanned imports can supply tool context; a `migrations/` path alone does not prove an Alembic match
 - **Content sniffing** — detects `from alembic import op` in file content being written
 - **Session awareness** — "never push without running tests" suppresses after tests have been run
 - **Timing routing** — domain rules fire on tool calls, principles stay silent (already in CLAUDE.md)
@@ -195,7 +208,7 @@ arai scan                  # Re-scan instruction files
 arai scan --code           # Also scan source code (tree-sitter AST)
 arai scan --enrich-llm     # Enhance rules via LLM CLI
 arai scan --enrich-api     # Enhance rules via API (OpenAI-compatible)
-arai add "Never X"         # Add a rule manually (refuses rules that can never fire)
+arai add "Never hand-write alembic migration files" # Add a rule; test the actual call
 arai add --allow-inert "…" # Keep a documentary rule that will not enforce
 arai disable 42            # Silence a rule by triple-id (survives rescan)
 arai enable 42             # Re-enable a previously disabled rule
@@ -264,7 +277,8 @@ the enforcement.
   ship a rule set in advise mode and escalate one at a time.
   `ARAI_DENY_MODE=off` is the project-wide rollback path.
 - **Regression-tested policy** — `arai test` replays scenarios through the
-  live `match_hook` pipeline; `arai record` captures real firings as
+  live matching and effective decision logic with `deny` / `advise` / `allow`
+  assertions; `arai record` captures real firings as
   fixtures. Rule changes become CI assertions, not vibes.
 - **No data egress** — no network on the hook hot path. Anonymous opt-out
   telemetry is architecturally separate from the audit log; they share no
@@ -294,14 +308,15 @@ The Word source (`.docx`) is committed alongside it for editing.
 ## Installation
 
 ```bash
-# Install script (recommended)
+# Unix install script
 curl -sSf https://arai.taniwha.ai/install | sh
 
 # Full binary (with local sentence transformer)
 curl -sSf https://arai.taniwha.ai/install | ARAI_FULL=1 sh
 
-# npm
+# npm (supported Windows x64 route, also available on Unix)
 npm install -g @taniwhaai/arai
+arai --version
 
 # Cargo
 cargo install arai
@@ -316,6 +331,8 @@ docker run --rm -i -v "$(pwd)/.taniwha/arai:/home/arai/.taniwha/arai" arai
 # Or via compose with a persistent named volume:
 docker compose run --rm arai
 ```
+
+Native Windows ARM64 is not supplied by the npm installer; use its x64 emulation or source-build instructions. The Unix script is not a PowerShell installer. Cargo is the existing source alternative. When measuring the five-minute first-run journey target, record installation and sign-in time separately; five minutes is not a runtime timeout.
 
 ### Verifying release binaries with cosign
 

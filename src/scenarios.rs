@@ -85,29 +85,102 @@ pub struct ScenarioResult {
 /// Run every scenario in the file against the current project's guardrail
 /// set.  Returns one result per scenario.
 pub fn run_file(path: &Path, cfg: &Config, db: &Store) -> Result<Vec<ScenarioResult>, String> {
+    Ok(run_file_reports(path, cfg, db)?
+        .into_iter()
+        .map(|(result, _)| result)
+        .collect())
+}
+
+// Keep decision reporting separate from the public, constructible legacy records.
+type ScenarioReport = (ScenarioResult, Option<&'static str>);
+
+fn run_file_reports(path: &Path, cfg: &Config, db: &Store) -> Result<Vec<ScenarioReport>, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Could not read scenario file {}: {e}", path.display()))?;
-    let file: ScenarioFile =
+    let raw: Value =
         serde_json::from_str(&content).map_err(|e| format!("Invalid scenario JSON: {e}"))?;
+    if !raw.is_object() {
+        return Err(format!(
+            "Invalid scenario JSON at {}: expected an object",
+            path.display()
+        ));
+    }
+    let file: ScenarioFile = serde_json::from_value(raw.clone())
+        .map_err(|e| format!("Invalid scenario JSON at {}: {e}", path.display()))?;
+
+    // Validate the entire assertion set before evaluating any scenario.
+    let mut decisions = Vec::with_capacity(file.scenarios.len());
+    for (index, scenario) in file.scenarios.iter().enumerate() {
+        if !raw["scenarios"][index].is_object() {
+            return Err(format!(
+                "Invalid scenario JSON at scenarios[{index}]: expected an object"
+            ));
+        }
+        let expect = &raw["scenarios"][index]["expect"];
+        if raw["scenarios"][index].get("expect").is_some() && !expect.is_object() {
+            return Err(format!(
+                "Scenario {:?}: expect must be an object",
+                scenario.name
+            ));
+        }
+        let mut decision = None;
+        if let Some(fields) = expect.as_object() {
+            for (key, value) in fields {
+                match key.as_str() {
+                    "matches_subject"
+                    | "does_not_match_subject"
+                    | "min_matches"
+                    | "max_matches" => {}
+                    "decision" => {
+                        let supplied = value.as_str().filter(|s| matches!(*s, "deny" | "advise" | "allow"))
+                            .ok_or_else(|| format!("Scenario {:?}: invalid expect.decision {value}; expected deny, advise or allow", scenario.name))?;
+                        let event = hooks::replay_event(&scenario.hook);
+                        if event != "PreToolUse" {
+                            return Err(format!(
+                                "Scenario {:?}: expect.decision is unsupported for {event}",
+                                scenario.name
+                            ));
+                        }
+                        decision = Some(supplied.to_owned());
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Scenario {:?}: unknown assertion expect.{key}",
+                            scenario.name
+                        ))
+                    }
+                }
+            }
+        }
+        decisions.push(decision);
+    }
 
     let mut results = Vec::with_capacity(file.scenarios.len());
-    for scenario in file.scenarios {
-        results.push(run_one(&scenario, cfg, db));
+    for (scenario, decision) in file.scenarios.iter().zip(decisions) {
+        results.push(run_one(scenario, decision.as_deref(), cfg, db));
     }
     Ok(results)
 }
 
-fn run_one(scenario: &Scenario, cfg: &Config, db: &Store) -> ScenarioResult {
+fn run_one(
+    scenario: &Scenario,
+    expected_decision: Option<&str>,
+    cfg: &Config,
+    db: &Store,
+) -> ScenarioReport {
     let mut failures = Vec::new();
     let matched = match hooks::match_hook(&scenario.hook, cfg, db) {
         Ok(m) => m,
         Err(e) => {
-            return ScenarioResult {
-                name: scenario.name.clone(),
-                passed: false,
-                failures: vec![format!("match_hook error: {e}")],
-                matched_subjects: Vec::new(),
-            };
+            return (
+                ScenarioResult {
+                    name: scenario.name.clone(),
+                    passed: false,
+                    failures: vec![format!("match_hook error: {e}")],
+                    matched_subjects: Vec::new(),
+                },
+                None,
+            );
         }
     };
 
@@ -118,13 +191,25 @@ fn run_one(scenario: &Scenario, cfg: &Config, db: &Store) -> ScenarioResult {
         .collect();
 
     check_expectations(&scenario.expect, &matched.matched, &mut failures);
-
-    ScenarioResult {
-        name: scenario.name.clone(),
-        passed: failures.is_empty(),
-        failures,
-        matched_subjects,
+    let decision = hooks::effective_disposition(&matched);
+    if let Some(expected) = expected_decision {
+        if decision != Some(expected) {
+            failures.push(format!(
+                "expected decision {expected}, got {}",
+                decision.unwrap_or("unsupported")
+            ));
+        }
     }
+
+    (
+        ScenarioResult {
+            name: scenario.name.clone(),
+            passed: failures.is_empty(),
+            failures,
+            matched_subjects,
+        },
+        decision,
+    )
 }
 
 fn check_expectations(expect: &Expect, matched: &[(Guardrail, u8)], failures: &mut Vec<String>) {
@@ -167,18 +252,22 @@ pub fn run(path: &Path, json: bool) -> Result<(), String> {
         );
     }
     let db = Store::open(&db_path)?;
-    let results = run_file(path, &cfg, &db)?;
+    let reports = run_file_reports(path, &cfg, &db)?;
 
     if json {
-        let out: Vec<Value> = results
+        let out: Vec<Value> = reports
             .iter()
-            .map(|r| {
-                serde_json::json!({
+            .map(|(r, decision)| {
+                let mut row = serde_json::json!({
                     "name": r.name,
                     "passed": r.passed,
                     "failures": r.failures,
                     "matched_subjects": r.matched_subjects,
-                })
+                });
+                if let Some(decision) = decision {
+                    row["decision"] = json!(decision);
+                }
+                row
             })
             .collect();
         println!(
@@ -186,17 +275,18 @@ pub fn run(path: &Path, json: bool) -> Result<(), String> {
             serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
         );
     } else {
+        let results: Vec<_> = reports.iter().map(|(r, _)| r).collect();
         print_results(&results);
     }
 
-    let failed = results.iter().filter(|r| !r.passed).count();
+    let failed = reports.iter().filter(|(r, _)| !r.passed).count();
     if failed > 0 {
         return Err(format!("{failed} scenario(s) failed"));
     }
     Ok(())
 }
 
-fn print_results(results: &[ScenarioResult]) {
+fn print_results(results: &[&ScenarioResult]) {
     for r in results {
         let status = if r.passed { "PASS" } else { "FAIL" };
         println!("  {status}  {}", r.name);

@@ -26,7 +26,7 @@ const DENY_MODE_ENV: &str = "ARAI_DENY_MODE";
 /// from "Arai was disabled".
 const DISABLED_ENV: &str = "ARAI_DISABLED";
 
-fn deny_mode_enabled() -> bool {
+pub(crate) fn deny_mode_enabled() -> bool {
     match std::env::var(DENY_MODE_ENV) {
         Ok(v) => {
             let v = v.to_lowercase();
@@ -36,7 +36,7 @@ fn deny_mode_enabled() -> bool {
     }
 }
 
-fn is_disabled_via_env() -> bool {
+pub(crate) fn is_disabled_via_env() -> bool {
     match std::env::var(DISABLED_ENV) {
         Ok(v) => {
             let v = v.to_lowercase();
@@ -146,6 +146,16 @@ fn canonical_hook_event(raw: &str) -> &'static str {
     known_hook_event(raw).unwrap_or("PreToolUse")
 }
 
+/// Use the same host translation and event defaults as matching, without IO.
+pub(crate) fn replay_event(hook: &Value) -> &'static str {
+    let mut canonical = hook.clone();
+    crate::cursor::canonicalize(&mut canonical);
+    crate::copilot::canonicalize(&mut canonical);
+    canonical_hook_event(
+        hook_field_str(&canonical, "hook_event_name", "hookEventName").unwrap_or("PreToolUse"),
+    )
+}
+
 /// Does this absolute path look like an AI-coding-assistant instruction
 /// file Arai cares about?  Used by the FileChanged / InstructionsLoaded
 /// handlers to decide whether to trigger a background rescan.  Kept
@@ -227,6 +237,22 @@ pub fn highest_severity(matched: &[(Guardrail, u8)]) -> Severity {
         }
     }
     highest
+}
+
+/// Policy outcome only; transport and production effects belong to the caller.
+pub(crate) fn effective_disposition(result: &HookMatch) -> Option<&'static str> {
+    if result.event != "PreToolUse" {
+        return None;
+    }
+    Some(
+        if is_disabled_via_env() || result.skipped || result.matched.is_empty() {
+            "allow"
+        } else if deny_mode_enabled() && highest_severity(&result.matched) == Severity::Block {
+            "deny"
+        } else {
+            "advise"
+        },
+    )
 }
 
 /// Result of matching a hook payload against the current guardrail set.
@@ -1433,8 +1459,7 @@ fn handle_stdin_impl(
     // reflects the actual outcome the hook emitted.
     let top_severity = highest_severity(&result.matched);
     let is_pretooluse = result.event == "PreToolUse";
-    let deny_enabled = deny_mode_enabled();
-    let blocking = is_pretooluse && top_severity == Severity::Block && deny_enabled;
+    let blocking = effective_disposition(&result) == Some("deny");
 
     // Local audit log — records every firing for `arai audit` / `arai stats`
     let tool_input = hook_field(&hook, "tool_input", "toolInput")

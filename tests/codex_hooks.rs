@@ -123,6 +123,8 @@ fn patch_add_is_write_and_existing_update_is_edit() {
         json!({"file_path":"alembic/notes.txt","old_string":"old","new_string":"new"})
     ));
     assert!(p.denies("apply_patch", json!({"file_path":"README.md", "command":"*** Begin Patch\n*** Add File: alembic/new.py\n+hello\n*** End Patch"})));
+    // An unrelated first update must not hide a later blocked move destination.
+    assert!(p.denies("apply_patch", json!({"command":"*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** Update File: scratch.py\n*** Move to: alembic/new.py\n@@\n-old\n+new\n*** End Patch"})));
     #[cfg(windows)]
     assert!(p.denies(
         "apply_patch",

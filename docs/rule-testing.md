@@ -43,47 +43,123 @@ applies to.
 ## Test — regression harness for rules
 
 `arai test` replays synthetic hook payloads through the *same*
-`match_hook` pipeline the live hook handler uses, so rule changes get
-caught before they affect a real session.
+`match_hook` pipeline and effective disposition calculation the live hook
+handler uses. It reads the current store, source scopes, graph and session;
+it writes no audit, session observations, seen-rule state, telemetry, host
+responses, registrations or policy state.
 
-The canonical [alembic example](scenarios/alembic-migration.json) is
-checked in — run it after `arai init` on any repo with an alembic rule
-in CLAUDE.md:
+### Fresh Alembic fixture
 
-```bash
-arai test scenarios/alembic-migration.json
+Use a fresh project with a `.git` directory, an empty isolated home and
+state directory, no enrichment model/configuration, and exactly this
+`CLAUDE.md` (the blank line and final newline are part of the fixture):
+
+```markdown
+## Alembic
+
+- Never hand-write migration files
 ```
 
-Scenario files are JSON:
+The checked-in [fixture](../tests/fixtures/card_a_alembic/CLAUDE.md) needs
+no source files or import graph. Set `HOME`, `USERPROFILE` on Windows,
+and `ARAI_BASE_DIR` to the isolated directories, and `DO_NOT_TRACK=1`.
+Remove inherited Arai configuration, API/enrichment and host-identity
+variables in this isolated process; keep deny enabled and bypass absent.
+From the fixture project, using absolute paths to the binary and
+[scenario](../scenarios/alembic-migration.json), run:
+
+```bash
+arai scan
+arai test /absolute/path/to/arai/scenarios/alembic-migration.json --json
+```
+
+For native handler proof, pass each complete JSON input to
+`arai guardrails --match-stdin`, replacing `<absolute fixture root>`
+with that same project directory:
 
 ```json
 {
-  "scenarios": [
-    {
-      "name": "force-push triggers the git guardrail",
-      "hook": {
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": { "command": "git push --force origin master" }
-      },
-      "expect": {
-        "matches_subject": ["git"],
-        "does_not_match_subject": ["alembic"],
-        "min_matches": 1
-      }
-    }
-  ]
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {"file_path": "alembic/versions/001_example.py", "content": ""},
+  "session_id": "",
+  "cwd": "<absolute fixture root>"
 }
 ```
+
+With host identity absent, the denied Write emits Claude-compatible
+`hookSpecificOutput.permissionDecision: "deny"`, citing `CLAUDE.md:3`,
+and exits 0 as required by that native protocol. Repeat with only
+`file_path` changed to `app/example.py`: it exits 0 without a match or
+stdout. These results are local stdin replay evidence, not live host
+trust or execution evidence. Other hosts have their own response and
+exit contracts. Successful hook registration only establishes a write.
+
+The scenario asserts `decision: "deny"`, `matches_subject: ["Alembic"]`
+and `min_matches: 1` for the first Write. The unrelated Write and skipped
+Read assert `decision: "allow"` and `max_matches: 0`.
+
+### Assertion schema and decisions
+
+The file is a JSON object with a default-empty `scenarios` array; top-level
+metadata such as `_comment` is accepted. Each scenario requires a string
+`name` and native `hook` payload. Omitted `expect` defaults to `{}`.
+The only supported assertion keys are:
+
+| Key | Value and meaning |
+| --- | --- |
+| `matches_subject` | Array of strings; every substring must occur in a matched subject. |
+| `does_not_match_subject` | Array of strings; none may occur in a matched subject. |
+| `min_matches` / `max_matches` | Inclusive nonnegative integer bounds; omitted or explicit `null` means no bound. |
+| `decision` | Exactly `"deny"`, `"advise"` or `"allow"`; supported only for PreToolUse. |
+
+Subject substrings are case-sensitive. Assertions combine: a decision and
+all supplied count/subject checks must pass. Unknown keys (including
+`rule_ids`), wrong types, invalid decision strings and `decision: null`
+fail validation. Known non-PreToolUse events, including PostToolUse and
+UserPromptSubmit, cannot assert a decision. The whole file's assertions
+are validated before replay; invalid files fail with a scenario or input
+location diagnostic. Native aliases and absent-event defaults still apply.
+Empty `expect` checks evaluation success. Empty scenario lists succeed.
+
+Successful PreToolUse JSON results retain `name`, `passed`, `failures` and
+`matched_subjects`, adding `decision`. Evaluation errors fail the scenario
+without a decision. Other events retain legacy matching without a decision.
+Failed assertions report expected/actual values; valid scenarios remain in
+input order. Validation, evaluation, assertion, missing-store and command
+errors cause a nonzero command exit; JSON results are printed for assertion
+or evaluation failures, while validation errors prevent result evaluation.
+
+`allow` means hard bypass, a skipped tool, or no matches remaining after
+scope, inactive-rule and prerequisite filtering. An effective block with
+denial enabled yields `deny`; remaining matches yield `advise`. Attached
+severity overrides take precedence over predicate fallback. A previously
+seen rule remains active. `ARAI_DENY_MODE=off`, `0`, `false` or `no`
+(case-insensitive) makes blocking policy advisory; `ARAI_DISABLED=1`,
+`true`, `on` or `yes` yields allow. The configuration `guardrails_mode`
+field does not control production denial. Counts can still describe legacy
+matches during hard bypass even when the effective decision is allow.
+
+These are policy outcomes for the current effective context. Replay does
+not execute tools, prove host trust/delivery, or turn transport failures
+into policy denials. `advise` does not promise that every adapter can
+deliver advisory context. Capture native protocol output and exits
+separately, and qualify live host enforcement separately. Repeated replay
+reads existing prerequisite/session context without accumulating state.
+Authored rule IDs and executable canonical selectors are not supported.
 
 ```bash
 arai test scenarios/guards.json
 arai test scenarios/guards.json --json   # structured pass/fail for CI
 ```
 
-Exit code is non-zero when any scenario fails. Matches are checked by
-subject substring because full SPO triples tend to drift across
-re-ingest.
+Exit code is non-zero when any scenario fails. `init`, `scan` and
+`status` share effective counts and runtime-mode labels. Extracted and
+stored totals are distinct from block/advise eligibility, which is
+conditional on scope and the actual call. Documentary rules such as
+bare `Never force-push to main` remain inert. Advisory-only mode cannot
+deny, and hard bypass has no enforcement. Test your own exact rule,
+paths, content and import context rather than generalizing this fixture.
 
 
 ## Record — seed scenarios from real firings

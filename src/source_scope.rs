@@ -99,6 +99,14 @@ impl SourceScope {
         self.inactive.as_deref()
     }
 
+    pub(crate) fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
+    pub(crate) fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self
             .directory

@@ -398,12 +398,13 @@
         <h2>Rules fire when they matter &mdash; and actually block</h2>
         <div class="example-block">
             <span class="dim">You: "Create a new database migration"</span><br><br>
-            <span class="accent">PreToolUse:</span> Write migrations/versions/001_add_users.py<br>
+            <span class="accent">PreToolUse:</span> Write alembic/versions/001_example.py (empty content)<br>
             <span class="warm">&rarr; Ārai: <strong>deny</strong></span><br>
             <span class="warm">&nbsp;&nbsp;reason: "Alembic never: hand-write migration files"</span><br>
-            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from your rules:12, layer-1 imperative]</span><br><br>
+            <span class="warm">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[from CLAUDE.md:3, layer-1 imperative]</span><br><br>
             <span class="dim">Assistant: "I should use alembic revision --autogenerate instead..."</span>
         </div>
+        <p>Fresh replay fixture: <code>CLAUDE.md</code> contains <code>## Alembic</code>, a blank line, then <code>- Never hand-write migration files</code>. After <code>arai scan</code>, this Write emits deny; an unrelated Write to <code>app/example.py</code> has no match. No import graph is needed. <a href="https://github.com/taniwhaai/arai/blob/main/docs/rule-testing.md#fresh-alembic-fixture">Exact fixture and replay instructions</a>. Stdin replay does not prove live host trust or execution.</p>
     </div>
 </section>
 
@@ -445,15 +446,15 @@
             </div>
             <div class="feature">
                 <h3>Intent-aware</h3>
-                <p>"Never hand-write migrations" fires on Write but not Edit. Editing existing migrations is fine.</p>
+                <p>The Alembic heading and migration rule above classify as a creation prohibition. A match still depends on the actual call and scope. Bare <code>Never force-push to main</code> remains documentary/inert.</p>
             </div>
             <div class="feature">
                 <h3>Rules scoped to where they live <span class="tag">new in v1.1.2</span></h3>
-                <p>A nested <code>CLAUDE.md</code> or <code>AGENTS.md</code> applies inside its directory. <code>.claude/rules/**/*.md</code> honours <code>paths:</code>, and <code>.cursor/rules/*.mdc</code> honours <code>globs:</code> / <code>alwaysApply:</code>, so a <code>paths:</code> rule about <code>migrations/</code> fires on file writes there and nowhere else. Global rules under <code>~/.claude/rules/</code> are picked up too. Invalid scope syntax aborts the scan rather than silently widening a rule.</p>
+                <p>A nested <code>CLAUDE.md</code> or <code>AGENTS.md</code> applies inside its directory. <code>.claude/rules/**/*.md</code> honours <code>paths:</code>, and <code>.cursor/rules/*.mdc</code> honours <code>globs:</code> / <code>alwaysApply:</code>. These constrain eligibility; the actual tool call must still match. Global rules under <code>~/.claude/rules/</code> are picked up too. Invalid scope syntax aborts the scan rather than silently widening a rule.</p>
             </div>
             <div class="feature">
                 <h3>Code graph</h3>
-                <p>tree-sitter scans your codebase. Writing to migrations/ triggers alembic rules even without "alembic" in the file.</p>
+                <p>tree-sitter scans imports that can supply tool context. A <code>migrations/</code> path alone does not prove an Alembic match; test the exact rule, paths and content.</p>
             </div>
             <div class="feature">
                 <h3>Session tracking</h3>
@@ -509,7 +510,7 @@
             </div>
             <div class="feature">
                 <h3>Know it&rsquo;s actually running</h3>
-                <p><code>arai status</code> reports the last recorded firing, so "hooks registered but never invoked" shows up without reading JSONL. It reports what it can see &mdash; config present, firings observed &mdash; and says plainly that host trust and hook activation must be checked in the host itself.</p>
+                <p><code>init</code>, <code>scan</code> and <code>status</code> share effective block eligible, advise eligible, documentary/inert and inactive counts, separate from extracted/stored totals. Eligibility is conditional on scope and the actual call. Status reports config presence and the last recorded firing; neither proves current host trust or activation. Registration means a configuration write. Advisory-only mode cannot deny; hard bypass disables enforcement.</p>
             </div>
             <div class="feature">
                 <h3>Diff before save</h3>
@@ -525,7 +526,7 @@
             </div>
             <div class="feature">
                 <h3>Per-rule rollout</h3>
-                <p><code>arai severity alembic block</code> pins one rule to deny while the rest of the set stays in advise. Survives <code>arai scan</code>. Ship the set in advise mode, watch which rules earn the trust, then flip them one at a time.</p>
+                <p><code>arai severity alembic block</code> pins effective severity and survives <code>arai scan</code>. Denial still requires deny mode enabled, a matching call and trusted active hooks. With <code>ARAI_DENY_MODE=off</code>, even block severity is advisory.</p>
             </div>
             <div class="feature">
                 <h3>Self-pruning rules</h3>
@@ -614,11 +615,11 @@
         <h2>Install</h2>
         <div class="methods-grid">
             <div class="method">
-                <div class="label">Script</div>
+                <div class="label">Unix script</div>
                 <code>curl -sSf https://arai.taniwha.ai/install | sh</code>
             </div>
             <div class="method">
-                <div class="label">npm</div>
+                <div class="label">npm &mdash; Windows x64 or Unix</div>
                 <code>npm install -g @taniwhaai/arai</code>
             </div>
             <div class="method">
@@ -630,6 +631,7 @@
                 <code>brew install taniwhaai/tap/arai</code>
             </div>
         </div>
+        <p>Check <code>arai --version</code> after installation. Windows npm supplies x64; native Windows ARM64 requires the installer&rsquo;s x64 emulation or source-build route. Cargo is the source alternative. Installation and sign-in time should be measured separately from the five-minute first-run journey target; it is not a timeout.</p>
         <div class="then-line">
             <span class="then-label">Then</span>
             <code>cd your-project &amp;&amp; arai init</code>

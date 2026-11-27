@@ -436,6 +436,29 @@ impl Store {
         Ok(guardrails)
     }
 
+    /// Complete actionable inventory for the read-only CLI summary. Keep the
+    /// native row mapper and database-date/content-key exclusions authoritative.
+    pub(crate) fn enforceability_inventory(&self) -> rusqlite::Result<Vec<EnforceabilityRow>> {
+        self.conn
+            .prepare(&format!(
+                "SELECT inventory.*, t.line_end,
+                        EXISTS (SELECT 1 FROM disabled_rules d
+                                WHERE d.s=t.s AND d.p=t.p AND d.o=t.o),
+                        t.expires_at IS NOT NULL AND t.expires_at < date('now')
+                 FROM ({GUARDRAIL_SELECT_PREDICATE_FILTERED}) inventory
+                 JOIN triples t ON t.id=inventory.id"
+            ))?
+            .query_map([], |row| {
+                Ok(EnforceabilityRow {
+                    guardrail: guardrail_from_row(row)?,
+                    line_end: row.get(20)?,
+                    disabled: row.get(21)?,
+                    expired: row.get(22)?,
+                })
+            })?
+            .collect()
+    }
+
     /// Mark a rule (by content) as disabled — `load_guardrails` will skip it
     /// on every subsequent read.  Returns `true` if a new row was inserted,
     /// `false` if the rule was already disabled (idempotent).
@@ -1098,6 +1121,13 @@ fn parse_intent_from_row(
         enriched_by,
         severity: effective,
     }))
+}
+
+pub(crate) struct EnforceabilityRow {
+    pub(crate) guardrail: Guardrail,
+    pub(crate) line_end: Option<i64>,
+    pub(crate) disabled: bool,
+    pub(crate) expired: bool,
 }
 
 /// One active rule as loaded from the store — a [`Triple`] joined with its
