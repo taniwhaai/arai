@@ -19,9 +19,9 @@ arai init
 
 Arai discovers your instruction files, extracts the rules, classifies their intent, scans your codebase for context, and registers native hooks. In Codex, review and enable the project hooks through `/hooks`; writing the configuration does not grant host trust. See [Codex setup and coverage](docs/codex.md).
 
-`init`, `scan` and `status` show the same effective policy summary: stored sources and actionable rules, block eligible, advise eligible, documentary/inert and inactive counts. Extracted totals describe ingestion, not active enforcement. Eligibility remains conditional on scope and the actual tool call. `ARAI_DENY_MODE=off` makes otherwise blocking rules advisory; hard bypass (`ARAI_DISABLED=1`) disables enforcement and is shown separately. A successful registration only proves a configuration write; check trust and invocation in your host.
+With **v1.2.1 or newer**, `init`, `scan` and `status` show the same effective policy summary: stored sources and actionable rules, block eligible, advise eligible, documentary/inert and inactive counts. Extracted totals describe ingestion, not active enforcement. Eligibility remains conditional on scope and the actual tool call. `ARAI_DENY_MODE=off` makes otherwise blocking rules advisory; hard bypass (`ARAI_DISABLED=1`) disables enforcement and is shown separately. A successful registration only proves a configuration write; check trust and invocation in your host. Scenario `expect.decision` assertions also require v1.2.1 or newer.
 
-Codex support and the hardening described below require **v1.1.2 or newer** (released 2026-09-16). Every install path below serves it; to build from source instead, run `cargo install --path . --locked` from this checkout.
+Codex hook support requires **v1.1.2 or newer**. Check `arai --version` after installing; to build from source, run `cargo install --path . --locked` from this checkout.
 
 To also block violating diffs at `git commit` (universal across tools that have no PreToolUse hook):
 
@@ -69,7 +69,7 @@ This example is reproducible in a fresh project with these exact `CLAUDE.md` byt
 
 Run `arai scan`, then replay the Write with empty content under `alembic/`. An unrelated Write to `app/example.py` has no match. The complete [fixture and replay instructions](docs/rule-testing.md#fresh-alembic-fixture) include a scenario asserting deny for the migration Write and allow for the unrelated Write and skipped Read. Scenario decisions describe effective policy. Native stdin replay proves the handler response, while live host enforcement requires separate host evidence.
 
-Every firing is written to a local audit log, and every PostToolUse is correlated with the matching PreToolUse to produce a **compliance verdict** — so you can measure whether the model actually honours the rules you wrote.
+Arai records observed rule firings in a local audit log on a best-effort basis. PostToolUse handling can produce **Obeyed / Ignored / Unclear** verdicts using recent firings and word-level evidence. These heuristics help review patterns across sessions.
 
 
 ## How It Works
@@ -153,20 +153,19 @@ working tree:
 - **`SessionStart`** (Codex, Grok Build, Cursor, Copilot) — those hosts do not emit
   instruction-change events, so at session start Arai checks whether an
   instruction file was added, removed or modified since the last scan and,
-  only then, re-scans in the background. An `AGENTS.md` edited between
-  sessions is enforced without a manual `arai scan`; an edit made
-  mid-session still needs one.
+  only then, re-scans in the background. Updated rules become available
+  after that scan finishes. Run `arai scan` for an immediate refresh or
+  after a mid-session edit on these hosts.
 - **`FileChanged` + `InstructionsLoaded`** (Claude Code) — when an instruction file
   (CLAUDE.md, rules-dir, memory file, ...) is edited on disk or loaded
-  into context, Arai spawns an `arai scan` in the background. The next
-  tool-call hook sees the updated guardrails — no manual rescan.
+  into context, Arai spawns an `arai scan` in the background. Tool-call
+  hooks see the updated guardrails after the scan finishes.
 - **`CwdChanged`** (Claude Code) — when Claude `cd`s into a different directory
   (monorepo navigation), Arai re-scans rooted at the new directory so
-  the next tool call matches against the right project's rules.
+  subsequent tool calls use the refreshed rules after the scan finishes.
 - **`PostToolBatch`** (Claude Code) — when Claude does a batch of parallel tool calls,
-  Arai correlates each call individually against any PreToolUse firings
-  in the same session, so per-rule compliance verdicts (Obeyed /
-  Ignored / Unclear) stay accurate on parallel workloads.
+  Arai applies the same best-effort compliance correlation to each call.
+  Correlation uses session, tool and time; parallel calls can overlap.
 
 Run `arai scan` after editing instruction files mid-session on hosts without
 the file events.
@@ -237,24 +236,23 @@ arai upgrade --full        # Switch to full binary (with ONNX enrichment)
 
 ## Compliance & audit
 
-Beyond firing rules, Arai produces a tamper-evident local record of *every*
-guardrail decision and correlates it with what the model actually did. This
-is what tech leads and compliance reviewers want to see — the trail behind
-the enforcement.
+Arai keeps a best-effort local record of observed rule firings and selected
+events, with hash-chain checks and heuristic compliance verdicts for review.
 
 - **Local JSONL audit log** — one line per firing at
   `~/.taniwha/arai/audit/<project>/<YYYYMMDD>.jsonl`. Append-only, day-bucketed,
   queryable with `arai audit` (filters: `--since`, `--tool`, `--event`,
   `--outcome`, `--rule`). Owner-only on disk (0700 dir / 0600 file on Unix;
   `icacls`-pinned on Windows).
-- **Hash-chained — actually tamper-evident** — every line carries `prev_hash`
-  and `hash` (SHA-256 over canonical bytes); the chain is anchored per-day in
-  a `.head.YYYYMMDD` sidecar. `arai audit --verify` walks the chain across
-  every day-bucket and exits non-zero on any tamper / reorder / deletion —
-  drop it in a cron or pre-archive job to gate evidence integrity.
+- **Hash-chain checks** — each new line carries `prev_hash` and `hash`
+  (SHA-256 over canonical bytes). `arai audit --verify` checks hashes and
+  links within existing day-buckets and exits non-zero on detected issues.
+  The command validates the existing bucket contents. Detecting removed
+  complete tails or whole buckets requires separately retained checkpoints
+  and bucket inventory.
 - **Bring your own collector** — `arai audit --ship <url>` sends pending
   day-buckets *with their chain-head sidecars* to your own HTTPS
-  collector, so the hash chain verifies server-side too. Resume cursor,
+  collector for server-side verification. Resume cursor,
   idempotent re-ship, optional bearer auth via env var, explicit opt-in
   only. See [docs/audit-ship.md](docs/audit-ship.md) for the payload
   and a minimal collector.
@@ -268,10 +266,12 @@ the enforcement.
 - **Derivation trace per firing** — each rule entry records source file,
   line number, and parser layer (`from CLAUDE.md:42, layer-1 imperative`).
   Auditors can answer "why did this rule fire?" without code spelunking.
-- **Compliance verdicts** — every PostToolUse is correlated against recent
-  PreToolUse firings to produce **Obeyed / Ignored / Unclear** per rule.
-  `arai stats --by-rule` rolls these up into per-rule ratios with a ⚠ flag
-  on rules the model is routing around.
+- **Compliance verdicts** — PostToolUse handling searches up to 50 recent
+  PreToolUse entries for the same tool within five minutes, then filters by
+  session. Word-level evidence produces **Obeyed / Ignored / Unclear** per
+  rule. Correlation keys are session, tool and time window.
+  `arai stats --by-rule` aggregates these
+  heuristic verdicts into ratios with a ⚠ flag for low-ratio rules.
 - **Graduated enforcement** — severity tiers (Block / Warn / Inform) derive
   from rule predicate; `arai severity` pins individual rules so you can
   ship a rule set in advise mode and escalate one at a time.
@@ -280,12 +280,12 @@ the enforcement.
   live matching and effective decision logic with `deny` / `advise` / `allow`
   assertions; `arai record` captures real firings as
   fixtures. Rule changes become CI assertions, not vibes.
-- **No data egress** — no network on the hook hot path. Anonymous opt-out
-  telemetry is architecturally separate from the audit log; they share no
-  code path. The audit data physically cannot leak via the telemetry
-  channel. The telemetry queue is hard-capped at 2 MiB on disk.
-- **Supply-chain hardened** — every install path verifies the binary
-  against published `checksums.txt` (SHA-256). `arai:extends` upstream
+- **Local audit by default** — audit writes stay local on the hook hot path;
+  shipping to a collector requires explicit configuration and invocation.
+  Anonymous opt-out telemetry uses a separate event schema and queue,
+  hard-capped at 2 MiB on disk.
+- **Download verification** — `install.sh` and npm verify downloaded binaries
+  against published `checksums.txt` (SHA-256) by default. `arai:extends` upstream
   policy fetches refuse loopback / RFC1918 / link-local / cloud metadata
   and disable redirects; **cached upstream policies carry a SHA-256
   sidecar** so a tampered cache file is detected before its rules reach
@@ -349,7 +349,7 @@ running the binary:
 
 ```bash
 # 1. Download the binary, its .cosign.bundle, and (optionally) checksums.txt
-VERSION=v1.1.2
+VERSION=v1.2.1
 FILE=arai-linux-x86_64
 curl -fL -o "$FILE"               "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
 curl -fL -o "${FILE}.cosign.bundle" "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}.cosign.bundle"
@@ -375,26 +375,26 @@ to some attacker's fork. Loosening either flag defeats the point.
 cosign answers *"was this binary signed by this repo's CI?"*. SLSA
 provenance answers the harder question: *"how was this binary built —
 which commit, which workflow, which inputs?"*. Together they cover
-both the signing identity (cosign) and the build process (SLSA), so
-verifiers can detect a tampered build pipeline even if the signing
-identity itself is intact.
+both the signing identity (cosign) and recorded build details (SLSA), so
+verifiers can check the expected source and tag and inspect the recorded
+workflow and inputs.
 
-Releases include a single `<tag>.intoto.jsonl` attestation generated
+Releases include a single `multiple.intoto.jsonl` attestation generated
 by the [SLSA GitHub generator](https://github.com/slsa-framework/slsa-github-generator).
 Verify consumer-side with [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier):
 
 ```bash
 # 1. Download the binary and the release-level provenance attestation
-VERSION=v1.1.2
+VERSION=v1.2.1
 FILE=arai-linux-x86_64
 curl -fL -o "$FILE" \
   "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${FILE}"
-curl -fL -o "${VERSION}.intoto.jsonl" \
-  "https://github.com/taniwhaai/arai/releases/download/${VERSION}/${VERSION}.intoto.jsonl"
+curl -fL -o multiple.intoto.jsonl \
+  "https://github.com/taniwhaai/arai/releases/download/${VERSION}/multiple.intoto.jsonl"
 
 # 2. Verify the binary against the provenance, pinned to this repo + tag
 slsa-verifier verify-artifact \
-  --provenance-path "${VERSION}.intoto.jsonl" \
+  --provenance-path multiple.intoto.jsonl \
   --source-uri github.com/taniwhaai/arai \
   --source-tag "${VERSION}" \
   "$FILE"
@@ -414,7 +414,7 @@ was produced from a build of this repo's source. `--source-tag` (or
 | Corrupted download | ✅ caught | ✅ caught | ✅ caught |
 | Substituted binary at release | ❌ checksums.txt would also be swapped | ✅ certificate identity ≠ this repo's workflow | ✅ provenance source-uri ≠ this repo |
 | Stolen release-pipeline secret | ❌ | ✅ no long-lived secret to steal | ✅ provenance binds to specific workflow run |
-| Tampered build process (compromised toolchain or workflow inputs) | ❌ | ❌ — cosign signs the artifact, not the build | ✅ provenance records the exact workflow, commit, and inputs |
+| Unexpected source or inputs in the build record | ❌ | ❌ | Provenance exposes the recorded workflow, commit, and inputs for inspection |
 
 SHA-256 stays the default in `install.sh` / `npm` because it doesn't
 require any extra tooling client-side. cosign and SLSA are opt-in for
@@ -427,14 +427,12 @@ environments that need the higher tier.
 |-----------|--------|-----|
 | Hook check (skip-tool — Read/Glob/Agent) | ~22 ms | ~36 ms |
 | Hook check (full match pipeline) | ~32 ms | ~55 ms |
-| Full init | <200 ms | — |
 
-End-to-end wall clock per tool call (on supported assistants), measured by
-`bench/hot_path.sh`. Cost is dominated by Rust binary fork+exec
-(~20 ms floor on Linux/WSL); rule matching itself is sub-ms above 200
-rules thanks to the LEFT-JOIN'd intent and Aho-Corasick content sniffing.
-Rule count between 50 and 500 doesn't materially move the median —
-matching is no longer the bottleneck.
+These historical local Linux/WSL subprocess figures need a fresh measurement
+for the current release and host. `bench/hot_path.sh` times direct binary launch, matching
+and exit with synthetic rules. It excludes assistant dispatch and response
+handling, and does not measure full init. Re-run it in your environment to
+compare changes; host and installation timing vary.
 
 
 ## Telemetry
@@ -477,8 +475,8 @@ regardless of endpoint. HTTPS required (plain HTTP allowed only for
 loopback dev collectors), batches retry on failure, and the payload
 schema is documented in
 [docs/telemetry-payload.md](docs/telemetry-payload.md) so you know
-exactly what you're receiving. The audit log remains a separate,
-local-only channel.
+exactly what you're receiving. The audit log remains a separate channel,
+local by default, with explicit opt-in shipping through `arai audit --ship`.
 
 
 ## Going deeper
