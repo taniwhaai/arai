@@ -473,6 +473,11 @@ fn b5_repeat_replay_preserves_all_state_and_reads_prerequisites() {
     let p = Sandbox::new();
     let cfg = p.cfg();
     let db = Store::open(&cfg.db_path()).unwrap();
+    let discovered = db.load_guardrails().unwrap();
+    assert_eq!(discovered.len(), 1);
+    // Replace the source identity recorded by scan: Windows TEMP can use an
+    // 8.3 alias while the CLI stores its canonical long path.
+    let source_path = &discovered[0].file_path;
     let mut t = arai::parser::extract_rules_from_resolved(
         "- Never run git push without running cargo test first\n",
         "claude_md_project",
@@ -482,13 +487,8 @@ fn b5_repeat_replay_preserves_all_state_and_reads_prerequisites() {
     t.subject = "git".into();
     t.predicate = "never".into();
     t.object = "run git push without running cargo test first".into();
-    db.upsert_file(
-        cfg.project_root.join("CLAUDE.md").to_str().unwrap(),
-        "claude_md_project",
-        &[t],
-        "verifier-fallback",
-    )
-    .unwrap();
+    db.upsert_file(source_path, "claude_md_project", &[t], "verifier-fallback")
+        .unwrap();
     assert!(db
         .load_guardrails()
         .unwrap()
