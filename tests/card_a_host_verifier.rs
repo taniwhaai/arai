@@ -436,13 +436,9 @@ fn h4_native_events_wrappers_timeouts_windows_quoting_idempotency() {
                     "command"
                 };
                 let script = powershell_script(h[field].as_str().unwrap());
-                let actual_path = std::env::current_exe()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("arai.exe");
+                // Cargo may place the test harness outside target/debug/deps;
+                // registration uses the CLI invoked by Fixture::cli.
+                let actual_path = Path::new(env!("CARGO_BIN_EXE_arai"));
                 let expected = format!("$ErrorActionPreference = 'Stop'; & '{}' guardrails --match-stdin; exit $LASTEXITCODE", actual_path.to_string_lossy().replace('\'', "''"));
                 assert_eq!(script, expected, "native={native}");
             }
