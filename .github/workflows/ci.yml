@@ -31,6 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Fresh Alembic quick-start decision regression (Linux)
+        run: cargo test --locked --test card_a_commands exact_alembic_native_denial_allowed_control_and_current_scenario
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --no-default-features --test embedding_compat --test audit_concurrency
@@ -50,6 +52,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Fresh Alembic quick-start decision regression (Windows)
+        run: cargo test --locked --test card_a_commands exact_alembic_native_denial_allowed_control_and_current_scenario
       - run: cargo test
 
   release-safety:

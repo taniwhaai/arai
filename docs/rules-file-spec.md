@@ -1,8 +1,9 @@
 # Canonical rules-file spec (v1)
 
-**Status:** shipped. `arai canonicalize` writes this format from existing
-instruction files; `arai sync` fans it out to per-tool files that already
-exist in the project.
+**Status:** v1 projection format shipped. `arai canonicalize` writes this
+format from existing instruction files; `arai sync` renders managed prose
+into per-tool files that already exist in the project. Native enforcement
+matches scanned Markdown policy, not the stored v1 selectors or actions.
 **Scope:** resolves [#75](https://github.com/taniwhaai/arai/issues/75) (format spike), [#76](https://github.com/taniwhaai/arai/issues/76) (schema design), and [#79](https://github.com/taniwhaai/arai/issues/79) (rule-pack accommodation).
 **Still out of scope:** published rule-packs as a distribution channel.
 
@@ -16,9 +17,9 @@ instruction files is `arai canonicalize` (the work originally tracked as #78).
 
 Today, Arai reads rules from whatever instruction file each tool happens to use — `CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.github/copilot-instructions.md`. Each format has its own conventions, and the rules drift: a `should not` added to `CLAUDE.md` to fix a Claude misbehaviour never makes it to Cursor, because the maintainer forgot the second file existed.
 
-A canonical `arai.toml` (the *one* file you commit, version-controlled, schema-checked) is the source of truth for teams that want one file instead of N instruction dialects. `arai canonicalize` extracts whatever the parser already recognises; `arai sync` writes the per-tool files. Review `when.tool` / `when.path` / `when.command_pattern` on the generated file before treating it as authoritative — extraction is lossy-but-honest.
+A canonical `arai.toml` is a version-controlled source for generated prose. `arai canonicalize` extracts whatever the parser already recognises; `arai sync` writes managed blocks in existing per-tool files. Extraction is lossy. Review the generated prose, scan it, then test actual calls; editing a v1 selector does not directly activate native selector matching.
 
-This document is the format those two commands implement. The live matcher is unchanged: instruction files remain valid policy even if you never canonicalize.
+This document describes projection data consumed by those commands. The live matcher is unchanged: instruction files remain valid policy even if you never canonicalize. Authored canonical IDs are headings in generated prose, not stable authored identity in native audit records. No v2 selector engine is activated.
 
 ---
 
@@ -26,7 +27,11 @@ This document is the format those two commands implement. The live matcher is un
 
 The brief recommended TOML; the spike confirms it. Below are the same four rules authored in both formats so a reader can judge.
 
-### Sample rule set: alembic + git push + secrets + test-before-commit
+### Projection-data samples: alembic + git push + secrets + test-before-commit
+
+The TOML/YAML examples below illustrate stored data. Regexes, paths,
+session selectors and actions in them are not executable native policy;
+the implemented canonical loader uses TOML. YAML is a format comparison.
 
 **TOML:**
 
@@ -137,7 +142,7 @@ rules:
 
 YAML's only meaningful win is multi-line strings (`>` folded scalar). TOML handles this with `"""..."""` blocks; that's enough. There is no scenario where YAML is materially easier for a hand-authoring contributor.
 
-**Anchors and includes:** YAML's `&anchor` / `<<: *anchor` looks useful for rule packs (factor a shared `when.path` set and reference it), but the moment a contributor needs to read someone else's anchored YAML they have to learn the syntax. The TOML equivalent is just naming a `[fragments.alembic_paths]` table and referencing it from a code-side composition step (`extends = ["packs/alembic"]`, expanded by `arai sync`). The expansion is explicit, which is the right tradeoff for a policy file.
+**Anchors and includes:** YAML's `&anchor` / `<<: *anchor` could factor shared data, but adds authoring complexity. v1 has no fragment composition or canonical pack expansion in `arai sync`; reserved metadata does not provide that behavior.
 
 **Decision:** `arai.toml`. The schema below assumes TOML throughout.
 
@@ -154,14 +159,11 @@ The v1 schema is what `arai canonicalize` emits and `arai sync` consumes. Anythi
 schema_version = 1               # required; bump on incompatible change
 project = "arai"                 # optional; pure documentation
 
-# Optional — pack references (see Part 3). Each entry is a URL or
-# shorthand recognised by Arai's trust list (`arai trust --add`).
-extends = [
-    "taniwhaai/rules-fastapi-alembic@v1.0.0",
-]
+# Reserved metadata; v1 does not load packs from these references.
+extends = []
 
-# Rules are an array of inline tables.  Order doesn't matter for matching;
-# `arai sync` writes per-tool files in id order.
+# Rules are an array of tables. `arai sync` groups prose by severity,
+# preserving input order within a group.
 [[rule]]
 id = "..."
 ...
@@ -171,21 +173,22 @@ id = "..."
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `id` | string | yes | Stable, kebab-case, project-unique. Survives renames; appears in audit log. |
-| `description` | string | yes | Free-form prose. The human-readable "why this rule exists". Not shown to the agent. |
-| `when.tool` | `[string]` | yes | Arai tool names: `Bash`, `Write`, `Edit`, `NotebookEdit`, `Read`, `Glob`, `Grep`, ... or `"*"`. |
-| `when.path` | `[string]` | no | Glob patterns matched against the tool's target path (Write/Edit/Read). Multiple = OR. |
-| `when.command_pattern` | string (regex) | no | Regex over `Bash` command strings. Mutually exclusive with `when.path`. |
-| `when.content_pattern` | string (regex) | no | Regex over file content being written (Write) or the patch being applied (Edit). |
-| `when.session_lacks` | `[string]` | no | Strings that must NOT have appeared in any Bash invocation in this session. Used for prerequisite rules (e.g. "tests before push"). |
-| `then.action` | `"block" \| "warn" \| "allow"` | yes | What Arai does on match. `block` denies the tool call; `warn` injects context; `allow` is an explicit positive (overrides a more general rule, see "exceptions" below). |
-| `then.message` | string | yes | Shown to the agent as `additionalContext` (warn) or `deny.reason` (block). Plain text; multi-line OK. |
-| `severity` | `"block" \| "warn" \| "inform"` | yes | Routing for the existing severity-aware enforcement in `intent.rs`. Usually matches `then.action`; `severity = "inform"` with `then.action = "warn"` is a soft nudge. |
-| `expires` | string (`YYYY-MM-DD`) | no | Mirrors the existing `(expires YYYY-MM-DD)` annotation; rule is silently dropped after the date. |
+| `id` | string | yes | Author-facing identifier rendered as a heading. No stable authored audit-ID guarantee. |
+| `description` | string | yes | Free-form prose rendered as a blockquote. |
+| `when.tool` | `[string]` | yes | Tool labels rendered in a trigger summary, not directly matched selectors. |
+| `when.path` | `[string]` | no | Stored path patterns rendered as trigger text; no native glob execution. |
+| `when.command_pattern` | string | no | Stored command pattern rendered as text; no native regex execution. |
+| `when.content_pattern` | string | no | Stored content pattern rendered as text; no native regex execution. |
+| `when.session_lacks` | `[string]` | no | Stored metadata; not rendered or executed by v1 sync. Native prose prerequisites are a separate matching feature. |
+| `then.action` | string | yes | Stored action label; sync does not execute it or implement allow precedence. |
+| `then.message` | string | yes | Rendered prose. Subsequent scanning/matching determines its native effect. |
+| `severity` | string | yes | Sync groups entries labelled `block`, `warn`, `inform`; this is not a direct native severity override. |
+| `expires` | string | no | Stored date metadata; sync does not render or execute it. Native prose expiry annotations remain separate. |
 
 ### Exceptions and overrides
 
-A single `[[rule]]` block expresses one positive or negative rule. To say "Edit allowed but Write blocked for a path", write two rules and let action selection resolve them:
+The following is projection data expressing author intent for different
+tools. It does not implement an Edit exception or direct path selection:
 
 ```toml
 [[rule]]
@@ -205,11 +208,16 @@ severity = "inform"
 then.message = "(no-op — editing existing migrations is fine)"
 ```
 
-Conflict resolution: most-specific wins; ties resolved by `action` priority `block > warn > allow`. This matches Arai's existing severity ordering and avoids inventing a new precedence model.
+v1 has no most-specific selector resolution or `allow` override precedence.
+Native matching uses the projected, scanned prose and its effective intent,
+source scope and severity. Test that resulting policy rather than assuming
+the two records create an executable exception.
 
 ### Worked example: alembic end-to-end
 
-A complete `arai.toml` that produces the same enforcement as today's prose CLAUDE.md `Never hand-write Alembic migrations` rule, including the "editing existing migrations is fine" exception, looks like:
+This complete `arai.toml` illustrates projection data for Alembic. It is
+not equivalent native enforcement of the fresh Alembic fixture, and the
+`allow` entry does not establish an executable exception:
 
 ```toml
 [meta]
@@ -237,7 +245,11 @@ then.message = "(no-op — explicit override of alembic-no-handwrite for Edit)"
 severity = "inform"
 ```
 
-`arai sync` will fan this out to `CLAUDE.md`, `.cursorrules`, etc., using each tool's preferred conventions. The `id` is preserved in audit-log entries so post-hoc analysis (`arai audit --rule alembic-no-handwrite`) joins cleanly across tools.
+`arai sync` renders a managed Markdown block into existing instruction
+files. It preserves text outside the managed markers. Run `arai scan`
+after sync, inspect the extracted rules and use `arai test` plus native
+handler replay to establish their behavior. Canonical IDs appear as prose
+headings; native audit identity remains the existing scanned-rule identity.
 
 ---
 
@@ -245,13 +257,13 @@ severity = "inform"
 
 Rule packs (FastAPI + alembic + pytest; Next.js + Prisma; etc.) are explicitly out of scope for v1. But the schema must not need a breaking change when packs ship. Three points to verify:
 
-1. **`extends` field is reserved at the top level.** Already shown above. The array contains entries that are either URLs (HTTPS only, matching `arai:extends` precedent in `src/extends.rs`) or shorthand identifiers resolved against a future registry. v1 parser MUST recognise this field and either inline-expand it (when packs ship) or warn-and-ignore (now). The latter means a user can write `extends = []` today without breakage.
+1. **`extends` is reserved under `[meta]`.** v1 stores the string list but does not resolve or expand canonical pack references.
 
-2. **Pinned-in-canonical vs inherited-from-pack** is distinguished by the `id` namespace. Pack-imported rules use prefixed ids (`fastapi-alembic.no-handwrite`); locally-pinned overrides drop the prefix (`my-no-handwrite`) and `then.action`/`severity` from the local entry wins over the pack version with the same suffix. No new field needed — convention only.
+2. **ID namespaces are authoring conventions.** They do not establish inherited/local override precedence in v1.
 
-3. **Trust model for packs** reuses the existing `arai trust --add` list from #29 / `src/extends.rs`. URL packs are subject to the same HTTPS + 24h-cache + 512 KB cap. Shorthand packs (`taniwhaai/rules-fastapi-alembic`) resolve via a future registry; v1 schema doesn't commit to one, and the parser MUST surface a "shorthand not yet supported" error if it sees one. No silent failure.
+3. **Pack trust/distribution remains future work.** Existing instruction-file URL extension behavior does not make canonical pack metadata executable.
 
-**Conclusion for #79:** the v1 schema accommodates packs without a breaking change. The only thing v1 has to *do* is reserve the `extends` top-level field name and define id-prefix conventions. Both are in this spec.
+The metadata reserves room for pack references without claiming a shipped pack loader.
 
 ---
 
@@ -259,13 +271,14 @@ Rule packs (FastAPI + alembic + pytest; Next.js + Prisma; etc.) are explicitly o
 
 1. The `arai.toml` file format (TOML, per Part 1).
 2. The schema defined in Part 2: per-rule `when` / `then` / `severity` / `expires`.
-3. A reserved `extends` field at the top level and a documented id-prefix convention (Part 3).
-4. Parser warn-and-ignore for any field not in the schema (forwards compatibility for v2 additions).
+3. Reserved `[meta].extends` metadata (Part 3).
+4. TOML deserialization of the stored fields; unknown fields are ignored. This is not an executable selector validator.
 
 What does *not* ship in v1: rule-pack publication, registry resolution, semver version pinning, signature verification on packs. These are tracked in #29 and the pack-publication discussion that grows out of #79.
 
-## Open questions for review
+## Enforcement limits
 
-- **`then.action = "allow"` semantics.** This spec treats it as an explicit positive override (Part 2). Alternative: drop it entirely and rely on absence-of-rule. Keeping it lets the alembic-edits-fine pattern stay explicit, which reads better in code review. Recommended: keep.
-- **Glob vs regex on `when.path`.** Spec says glob. Regex is more powerful but easier to write wrong. Rust crates exist for both (`globset`, `regex`). Recommended: glob; users who need regex use `when.command_pattern` for `Bash` or escalate to v2.
-- **`severity = "inform"` with `then.action = "block"`.** Currently the spec says these usually agree but doesn't forbid the mismatch. Should the schema validate it? Recommended: no — the mismatch is sometimes meaningful (e.g. a block whose audit-log routing should be quiet).
+- Stored selectors/actions are projection data; v1 does not directly execute them.
+- `allow` does not override another native rule. A matched effective block denies when denial is enabled.
+- Stored severity and expiry do not substitute for native scanned intent, overrides or annotations.
+- Authored canonical IDs do not provide stable authored identity in native audits or scenario assertions.

@@ -66,21 +66,31 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         "    \u{2713} {import_count} imports from {file_count} files, {tool_count} unique tools"
     );
 
+    render_enforceability_summary(&enforceability_summary(&cfg, &db)?);
+
     println!("\n  Setting up hooks...");
-    for spec in HOSTS {
-        match inject_host(spec, &cfg) {
-            Ok(()) => {
-                println!("    \u{2713} {} updated", spec.label);
-                for line in trust_guidance(spec.kind) {
-                    println!("      {line}");
-                }
-            }
-            Err(e) if spec.optional => {
-                eprintln!("    \u{26a0} {} registration skipped: {e}", spec.label);
-            }
-            Err(e) => return Err(e),
+    register_default_hosts(&cfg, |outcome| match outcome.state {
+        HostRegistrationState::Registered => {
+            println!(
+                "    ✓ {} registered ({})",
+                outcome.registration_label,
+                outcome.registration_path.display()
+            );
+            println!("      {}", outcome.trust_guidance);
         }
-    }
+        HostRegistrationState::Skipped | HostRegistrationState::Failed => {
+            let state = match outcome.state {
+                HostRegistrationState::Skipped => "skipped",
+                _ => "failed",
+            };
+            eprintln!(
+                "    ⚠ {} registration {state} ({}): {}",
+                outcome.registration_label,
+                outcome.registration_path.display(),
+                outcome.diagnostic.as_deref().unwrap_or_default()
+            );
+        }
+    })?;
 
     // Track init event + flush queued telemetry
     let enrichment = if model_dir.join("model.onnx").exists() {
@@ -103,11 +113,212 @@ pub fn run(pre_commit: bool, force: bool) -> Result<(), String> {
         println!("    \u{2713} Git pre-commit hook → arai check-diff --cached");
     }
 
-    println!(
-        "\n  Arai is registered for Claude Code, Codex, Grok Build, Cursor, and Copilot (PreToolUse hooks)."
-    );
+    println!("\n  Host registration attempts completed; writes do not establish trust or hook execution.");
     println!("  Re-run init after moving the Arai binary to refresh registered paths.");
     Ok(())
+}
+
+/// Render the canonical stored-policy summary without reclassifying rules.
+pub fn render_enforceability_summary(summary: &EnforceabilitySummary) {
+    println!("\n  Effective policy summary");
+    println!("    Stored sources: {}", summary.stored_source_count);
+    println!(
+        "    Stored actionable rules: {}",
+        summary.stored_actionable_rule_count
+    );
+    println!("    Block eligible: {}", summary.block_eligible_count);
+    println!("    Advise eligible: {}", summary.advise_eligible_count);
+    println!("    Documentary/inert: {}", summary.documentary_inert_count);
+    println!("    Inactive: {}", summary.inactive_count);
+    let mode = if summary.hard_bypass {
+        "hard bypass (no enforcement)"
+    } else if summary.advisory_only {
+        "advisory only (deny disabled)"
+    } else {
+        "deny enabled"
+    };
+    println!("    Runtime mode: {mode}");
+    println!(
+        "    Eligibility is conditional on scope and the actual tool call; it is not a match."
+    );
+    for rule in &summary.rules {
+        let class = match rule.classification {
+            EnforceabilityClass::BlockEligible => "block eligible",
+            EnforceabilityClass::AdviseEligible => "advise eligible",
+            EnforceabilityClass::DocumentaryInert => {
+                "documentary/inert — never fires on tool calls"
+            }
+            EnforceabilityClass::Inactive => "inactive",
+        };
+        let mut source = rule
+            .source_path
+            .clone()
+            .unwrap_or_else(|| "source unavailable".into());
+        if let Some(line) = rule.line_start {
+            source.push_str(&format!(":{line}"));
+            if let Some(end) = rule.line_end.filter(|end| *end != line) {
+                source.push_str(&format!("-{end}"));
+            }
+        }
+        println!(
+            "    - rule {}: {class}, severity {} ({source})",
+            rule.triple_id, rule.effective_severity
+        );
+        for reason in &rule.inactive_reasons {
+            let reason = match reason {
+                InactivityReason::Disabled => "disabled",
+                InactivityReason::Expired => "expired",
+                InactivityReason::PermanentSourceInactive => "permanent source inactivity",
+                InactivityReason::RuntimeBypass => "runtime bypass",
+            };
+            println!("      Inactive reason: {reason}");
+        }
+        if let Some(reason) = &rule.source_inactive_reason {
+            println!("      Source diagnostic: {reason}");
+        }
+        if let Some(directory) = &rule.scope_directory {
+            println!("      Conditional directory: {directory}");
+        }
+        if !rule.scope_patterns.is_empty() {
+            println!(
+                "      Conditional paths: {}",
+                rule.scope_patterns.join(", ")
+            );
+        }
+    }
+}
+
+/// Stored policy counts and conditional eligibility, without a tool action.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EnforceabilitySummary {
+    pub stored_source_count: usize,
+    pub stored_actionable_rule_count: usize,
+    pub block_eligible_count: usize,
+    pub advise_eligible_count: usize,
+    pub documentary_inert_count: usize,
+    pub inactive_count: usize,
+    pub advisory_only: bool,
+    pub hard_bypass: bool,
+    pub rules: Vec<RuleEnforceabilityExplanation>,
+}
+
+/// Projection of one stored actionable row and its original scope/provenance.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RuleEnforceabilityExplanation {
+    pub triple_id: i64,
+    pub source_path: Option<String>,
+    pub line_start: Option<usize>,
+    pub line_end: Option<usize>,
+    pub effective_severity: String,
+    pub classification: EnforceabilityClass,
+    pub inactive_reasons: Vec<InactivityReason>,
+    pub scope_directory: Option<String>,
+    pub scope_patterns: Vec<String>,
+    pub source_inactive_reason: Option<String>,
+}
+
+/// Disjoint potential eligibility categories; eligibility is not a match.
+#[derive(Debug, PartialEq, Eq)]
+pub enum EnforceabilityClass {
+    BlockEligible,
+    AdviseEligible,
+    DocumentaryInert,
+    Inactive,
+}
+
+/// Every applicable exclusion, without precedence between stored reasons.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InactivityReason {
+    Disabled,
+    Expired,
+    PermanentSourceInactive,
+    RuntimeBypass,
+}
+
+/// Summarize the complete stored actionable population without changing it.
+/// Runtime modes use the same environment interpretation as native hooks;
+/// configuration's historical guardrails mode does not control denial.
+pub fn enforceability_summary(
+    _cfg: &config::Config,
+    db: &store::Store,
+) -> Result<EnforceabilitySummary, String> {
+    let deny_enabled = crate::hooks::deny_mode_enabled();
+    let hard_bypass = crate::hooks::is_disabled_via_env();
+    let source_count = db.list_files().map_err(|e| e.to_string())?.len();
+    let inventory = db.enforceability_inventory().map_err(|e| e.to_string())?;
+    let scopes = db.source_scopes().map_err(|e| e.to_string())?;
+    let mut summary = EnforceabilitySummary {
+        stored_source_count: source_count,
+        stored_actionable_rule_count: inventory.len(),
+        block_eligible_count: 0,
+        advise_eligible_count: 0,
+        documentary_inert_count: 0,
+        inactive_count: 0,
+        advisory_only: !deny_enabled && !hard_bypass,
+        hard_bypass,
+        rules: Vec::with_capacity(inventory.len()),
+    };
+    for row in inventory {
+        let guard = row.guardrail;
+        let scope = scopes.get(&guard.file_path);
+        let source_inactive_reason = scope
+            .and_then(|scope| scope.inactive_reason())
+            .map(str::to_owned);
+        let mut inactive_reasons = Vec::new();
+        if row.disabled {
+            inactive_reasons.push(InactivityReason::Disabled);
+        }
+        if row.expired {
+            inactive_reasons.push(InactivityReason::Expired);
+        }
+        if source_inactive_reason.is_some() {
+            inactive_reasons.push(InactivityReason::PermanentSourceInactive);
+        }
+        if hard_bypass && inactive_reasons.is_empty() {
+            inactive_reasons.push(InactivityReason::RuntimeBypass);
+        }
+        let severity = guard
+            .intent
+            .as_ref()
+            .map(|intent| intent.severity)
+            .unwrap_or_else(|| crate::intent::Severity::from_predicate(&guard.predicate));
+        let classification = if !inactive_reasons.is_empty() {
+            summary.inactive_count += 1;
+            EnforceabilityClass::Inactive
+        } else if guard.intent.as_ref().is_some_and(crate::intent::is_inert) {
+            summary.documentary_inert_count += 1;
+            EnforceabilityClass::DocumentaryInert
+        } else if severity == crate::intent::Severity::Block && deny_enabled {
+            summary.block_eligible_count += 1;
+            EnforceabilityClass::BlockEligible
+        } else {
+            summary.advise_eligible_count += 1;
+            EnforceabilityClass::AdviseEligible
+        };
+        let source_path = if !guard.file_path.is_empty() {
+            Some(guard.file_path)
+        } else if !guard.source_file.is_empty() {
+            Some(guard.source_file)
+        } else {
+            None
+        };
+        let positive_line = |line: i64| usize::try_from(line).ok().filter(|line| *line > 0);
+        summary.rules.push(RuleEnforceabilityExplanation {
+            triple_id: guard.triple_id,
+            source_path,
+            line_start: guard.line_start.and_then(positive_line),
+            line_end: row.line_end.and_then(positive_line),
+            effective_severity: severity.as_str().to_owned(),
+            classification,
+            inactive_reasons,
+            scope_directory: scope.and_then(|scope| scope.directory()).map(str::to_owned),
+            scope_patterns: scope
+                .map(|scope| scope.patterns().to_vec())
+                .unwrap_or_default(),
+            source_inactive_reason,
+        });
+    }
+    Ok(summary)
 }
 
 /// Automatic enrichment is limited to sources owned by local discovery.
@@ -252,7 +463,6 @@ enum HostKind {
 /// `hooks.rs`; the inject/remove code is shared.
 struct HostSpec {
     kind: HostKind,
-    label: &'static str,
     path: fn(&config::Config) -> PathBuf,
     layout: Layout,
     registrations: &'static [Registration],
@@ -331,7 +541,6 @@ const COPILOT_REGISTRATIONS: &[Registration] = &[
 const HOSTS: &[HostSpec] = &[
     HostSpec {
         kind: HostKind::Claude,
-        label: ".claude/settings.json",
         path: config::Config::claude_settings_path,
         layout: Layout::Grouped,
         registrations: CLAUDE_REGISTRATIONS,
@@ -340,7 +549,6 @@ const HOSTS: &[HostSpec] = &[
     },
     HostSpec {
         kind: HostKind::Codex,
-        label: ".codex/hooks.json (native Codex)",
         path: config::Config::codex_hooks_path,
         layout: Layout::Grouped,
         registrations: CODEX_REGISTRATIONS,
@@ -349,7 +557,6 @@ const HOSTS: &[HostSpec] = &[
     },
     HostSpec {
         kind: HostKind::Cursor,
-        label: ".cursor/hooks.json (native Cursor Agent hooks)",
         path: config::Config::cursor_hooks_path,
         layout: Layout::Flat,
         registrations: CURSOR_REGISTRATIONS,
@@ -358,7 +565,6 @@ const HOSTS: &[HostSpec] = &[
     },
     HostSpec {
         kind: HostKind::Grok,
-        label: ".grok/hooks/arai.json (native Grok Build)",
         path: config::Config::grok_hooks_path,
         layout: Layout::Grouped,
         registrations: GROK_REGISTRATIONS,
@@ -370,7 +576,6 @@ const HOSTS: &[HostSpec] = &[
     },
     HostSpec {
         kind: HostKind::Copilot,
-        label: ".github/hooks/arai.json (native Copilot)",
         path: config::Config::copilot_hooks_path,
         layout: Layout::Copilot,
         registrations: COPILOT_REGISTRATIONS,
@@ -381,6 +586,68 @@ const HOSTS: &[HostSpec] = &[
         optional: false,
     },
 ];
+
+/// Actual result of attempting one project host registration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRegistrationOutcome {
+    /// Stable host identity.
+    pub host: String,
+    /// Project file targeted by the registration.
+    pub registration_path: PathBuf,
+    /// Human-readable host name.
+    pub registration_label: String,
+    /// Whether the write completed, was optionally skipped, or failed setup.
+    pub state: HostRegistrationState,
+    /// Original injection diagnostic, absent after a completed write.
+    pub diagnostic: Option<String>,
+    /// Existing host-specific steps needed beyond writing the project file.
+    pub trust_guidance: String,
+}
+
+/// Registration status only; no state establishes trust or native execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostRegistrationState {
+    /// The project configuration write completed.
+    Registered,
+    /// Optional Grok registration failed; later hosts are still attempted.
+    Skipped,
+    /// Mandatory registration failed; no later host is attempted.
+    Failed,
+}
+
+/// Attempt default registrations in table order, reporting each actual result
+/// synchronously before continuing or returning its unchanged failure.
+pub fn register_default_hosts(
+    cfg: &config::Config,
+    mut report: impl FnMut(&HostRegistrationOutcome),
+) -> Result<(), String> {
+    for spec in HOSTS {
+        let result = inject_host(spec, cfg);
+        let (host, registration_label) = match spec.kind {
+            HostKind::Claude => ("claude", "Claude"),
+            HostKind::Codex => ("codex", "Codex"),
+            HostKind::Cursor => ("cursor", "Cursor"),
+            HostKind::Grok => ("grok", "Grok"),
+            HostKind::Copilot => ("copilot", "Copilot"),
+        };
+        report(&HostRegistrationOutcome {
+            host: host.into(),
+            registration_path: (spec.path)(cfg),
+            registration_label: registration_label.into(),
+            state: match &result {
+                Ok(()) => HostRegistrationState::Registered,
+                Err(_) if spec.optional => HostRegistrationState::Skipped,
+                Err(_) => HostRegistrationState::Failed,
+            },
+            diagnostic: result.as_ref().err().cloned(),
+            trust_guidance: trust_guidance(spec.kind).join(" "),
+        });
+        if !spec.optional {
+            result?;
+        }
+    }
+    Ok(())
+}
 
 /// What the host still requires from the user after registration.  Writing
 /// the file never grants trust; say so where each host gates on it.

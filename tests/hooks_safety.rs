@@ -177,3 +177,15 @@ fn grok_tui_payload_does_not_crash() {
         "unexpected Grok payload output: {stdout:?}"
     );
 }
+
+#[test]
+fn advisory_mode_does_not_turn_invalid_envelopes_into_policy_allow() {
+    // Protocol failure is separate from the shared effective-policy disposition.
+    let (stdout, _, code) = run_hook(
+        r#"{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{}}"#,
+        &[("ARAI_DENY_MODE", "off")],
+    );
+    assert_eq!(code, 0);
+    let response: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+}
